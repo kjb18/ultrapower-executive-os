@@ -1,3 +1,6 @@
+"use client";
+import Shell from "@/components/Shell";
+
 export default function Home() {
-  return <div>Ultra Power Executive OS — Loading</div>;
+  return <Shell />;
 }
