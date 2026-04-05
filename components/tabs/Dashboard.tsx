@@ -6,6 +6,7 @@ import {
   pad, getTodayKey, getResetMs, fmtCountdown, pctColor,
   DEFAULT_OS, DEFAULT_MFP, OSData, MFPDay,
 } from "@/lib/constants";
+import Calendar from "@/components/Calendar";
 
 const Spinner = () => (
   <span style={{
@@ -291,6 +292,9 @@ export default function Dashboard() {
           </button>
           {insight && <div style={{ marginTop:10, padding:"11px 13px", borderRadius:9, background:"#f8f9fb", border:"0.5px solid #e2e6ea", fontSize:12, color:"#1a2332", lineHeight:1.7, borderLeft:"3px solid #185FA5" }}>{insight}</div>}
         </div>
+
+        {/* ClickUp Calendar */}
+        <Calendar timeBlocks={os.tbs} />
 
       </div>
       <div style={{ textAlign:"center", fontSize:9, color:"#c8d0d8", fontFamily:"'DM Mono',monospace", padding:"8px 0 12px" }}>Ultra Power Executive OS · Resets in {timeLeft}</div>
