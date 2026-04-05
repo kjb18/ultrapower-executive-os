@@ -1,0 +1,980 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PhilGEPS Command Center — Ultra Power</title>
+<style>
+@import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Barlow:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --bg:      #f4f5f7;
+  --s1:      #ffffff;
+  --s2:      #f0f1f4;
+  --s3:      #e8eaee;
+  --border:  #dde1e9;
+  --border2: #c8cdd8;
+  --text:    #1a1f2e;
+  --muted:   #7a8499;
+  --muted2:  #4a5268;
+  --accent:  #d4870a;
+  --accent2: #f5a623;
+  --abg:     rgba(212,135,10,0.08);
+  --green:   #1e8a47;
+  --red:     #cc3333;
+  --blue:    #1a6fc4;
+  --purple:  #6b46c1;
+  --teal:    #0d7a6e;
+  --orange:  #c2680a;
+  --mono: 'IBM Plex Mono', monospace;
+  --sans: 'Barlow', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 14px; }
+
+.app { display: grid; grid-template-columns: 200px 1fr; grid-template-rows: 52px 1fr; height: 100vh; overflow: hidden; }
+
+/* TOPBAR */
+.topbar { grid-column: 1/-1; display: flex; align-items: center; padding: 0 20px; gap: 12px; background: var(--s1); border-bottom: 1px solid var(--border); box-shadow: 0 1px 3px rgba(0,0,0,0.06); z-index: 10; }
+.logo { display: flex; align-items: center; gap: 8px; font-size: 14px; font-weight: 600; letter-spacing: -0.3px; color: var(--text); }
+.logo-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent2); flex-shrink: 0; }
+.logo-sub { font-size: 11px; color: var(--muted); font-weight: 400; }
+.tr { margin-left: auto; display: flex; align-items: center; gap: 8px; }
+.ai-badge { font-size: 10px; font-weight: 600; background: var(--abg); color: var(--accent); border: 1px solid rgba(212,135,10,0.2); padding: 3px 8px; border-radius: 4px; font-family: var(--mono); }
+
+/* BUTTONS */
+.btn { padding: 7px 15px; border-radius: 7px; border: 1px solid var(--border2); cursor: pointer; font-family: var(--sans); font-weight: 500; font-size: 13px; transition: all 0.13s; background: var(--s1); color: var(--muted2); }
+.btn:hover { background: var(--s2); color: var(--text); }
+.btn.primary { background: var(--accent2); color: #fff; border-color: var(--accent2); }
+.btn.primary:hover { background: var(--accent); }
+.btn.red { background: #fff0f0; color: var(--red); border-color: #f5c0c0; }
+.btn.red:hover { background: #ffe0e0; }
+.btn.sm { padding: 5px 11px; font-size: 12px; }
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn.spinning { position: relative; color: transparent; }
+.btn.spinning::after { content: ''; position: absolute; width: 13px; height: 13px; top: 50%; left: 50%; margin: -6.5px; border: 2px solid currentColor; border-top-color: var(--accent2); border-radius: 50%; animation: spin 0.7s linear infinite; color: var(--accent2); }
+@keyframes spin { to { transform: rotate(360deg); } }
+
+/* SIDEBAR */
+.sidebar { background: var(--s1); border-right: 1px solid var(--border); padding: 12px 8px; overflow-y: auto; display: flex; flex-direction: column; gap: 1px; }
+.nlbl { font-size: 9px; font-weight: 700; letter-spacing: 1.2px; text-transform: uppercase; color: var(--muted); padding: 8px 8px 4px; }
+.ni { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 7px; cursor: pointer; color: var(--muted2); font-size: 13px; font-weight: 500; transition: all 0.12s; user-select: none; }
+.ni:hover { background: var(--s2); color: var(--text); }
+.ni.active { background: var(--abg); color: var(--accent); }
+.ni.fail-tab.active { background: #fff0f0; color: var(--red); }
+.ni.fail-tab:hover { background: #fff5f5; color: var(--red); }
+.nbadge { margin-left: auto; font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 8px; font-family: var(--mono); }
+.nbadge.a { background: var(--accent2); color: #fff; }
+.nbadge.r { background: var(--red); color: #fff; }
+.ndiv { border: none; border-top: 1px solid var(--border); margin: 7px 4px; }
+
+/* MAIN */
+.main { overflow-y: auto; background: var(--bg); }
+.panel { display: none; padding: 22px 26px; }
+.panel.active { display: block; }
+.ph { display: flex; align-items: flex-start; justify-content: space-between; margin-bottom: 20px; gap: 12px; flex-wrap: wrap; }
+.ptitle { font-size: 18px; font-weight: 600; letter-spacing: -0.3px; color: var(--text); }
+.psub { font-size: 12px; color: var(--muted); margin-top: 3px; }
+
+/* STATS */
+.sgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px,1fr)); gap: 10px; margin-bottom: 20px; }
+.scard { background: var(--s1); border: 1px solid var(--border); border-radius: 10px; padding: 14px 16px; }
+.scard.warn { border-color: #f5c0c0; background: #fff8f8; }
+.snum { font-family: var(--mono); font-size: 26px; font-weight: 500; color: var(--accent); line-height: 1; }
+.scard.warn .snum { color: var(--red); }
+.slbl { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.7px; margin-top: 5px; }
+
+/* CARD */
+.card { background: var(--s1); border: 1px solid var(--border); border-radius: 10px; padding: 16px 18px; margin-bottom: 14px; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+.ctitle { font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.8px; color: var(--muted2); margin-bottom: 12px; display: flex; align-items: center; gap: 6px; }
+.ctitle::before { content:''; width:3px; height:11px; background:var(--accent2); border-radius:2px; flex-shrink:0; }
+.ctitle.red::before { background: var(--red); }
+
+/* CONSOLE */
+.console { background: #1a1f2e; border: 1px solid #2d3447; border-radius: 8px; padding: 14px; font-family: var(--mono); font-size: 12px; color: #a8b2c8; min-height: 140px; max-height: 220px; overflow-y: auto; line-height: 1.8; }
+.cl-kw   { color: #f5a623; }
+.cl-done { color: #4cba74; }
+.cl-err  { color: #f87171; }
+.cl-info { color: #5ba3f5; }
+.progress { height: 3px; background: var(--border); border-radius: 3px; margin-top: 10px; overflow: hidden; }
+.prog-fill { height: 100%; background: var(--accent2); border-radius: 3px; transition: width 0.5s ease; width: 0%; }
+
+/* TABLE */
+.tw { border: 1px solid var(--border); border-radius: 10px; overflow: hidden; box-shadow: 0 1px 3px rgba(0,0,0,0.04); }
+table { width: 100%; border-collapse: collapse; background: var(--s1); }
+th { background: var(--s2); padding: 9px 12px; text-align: left; font-size: 10px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.7px; color: var(--muted); border-bottom: 1px solid var(--border); white-space: nowrap; cursor: pointer; user-select: none; }
+th:hover { color: var(--text); }
+td { padding: 9px 12px; border-bottom: 1px solid var(--border); vertical-align: top; font-size: 12px; color: var(--muted2); }
+tr:last-child td { border-bottom: none; }
+tr:hover td { background: #fafbfc; }
+td a { color: var(--blue); text-decoration: none; font-weight: 500; }
+td a:hover { text-decoration: underline; }
+
+/* BADGES */
+.sb { display: inline-block; padding: 2px 7px; border-radius: 4px; font-family: var(--mono); font-size: 11px; font-weight: 600; min-width: 30px; text-align: center; }
+.sc-hot  { background: #ffeaea; color: var(--red); }
+.sc-high { background: #e8f5ee; color: var(--green); }
+.sc-med  { background: #fff4e0; color: var(--orange); }
+.sc-low  { background: var(--s2); color: var(--muted); }
+.rb { font-size: 10px; padding: 2px 6px; border-radius: 3px; font-weight: 600; }
+.rb-out { background: #e8f5ee; color: var(--green); }
+.rb-ncr { background: var(--s2); color: var(--muted); }
+.fb-b { font-size: 10px; padding: 2px 7px; border-radius: 3px; font-weight: 700; white-space: nowrap; }
+.fb-multi  { background: #ffeaea; color: var(--red); }
+.fb-single { background: #fff4e0; color: var(--orange); }
+.kw-chip { font-family: var(--mono); font-size: 10px; background: #f0ecff; color: var(--purple); padding: 2px 6px; border-radius: 3px; }
+.abc-val { font-family: var(--mono); font-size: 11px; color: var(--teal); }
+
+/* STAR BTN */
+.star-btn { background: none; border: 1px solid var(--border2); border-radius: 5px; cursor: pointer; padding: 3px 8px; font-size: 12px; color: var(--muted); transition: all 0.12s; }
+.star-btn:hover, .star-btn.on { border-color: var(--accent2); color: var(--accent); background: var(--abg); }
+
+/* KEYWORDS */
+.tags-wrap { display: flex; flex-wrap: wrap; gap: 6px; min-height: 38px; padding: 8px; background: var(--s2); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 10px; }
+.tag { display: inline-flex; align-items: center; gap: 5px; background: var(--s1); border: 1px solid var(--border2); border-radius: 20px; padding: 4px 10px; font-size: 12px; color: var(--muted2); transition: all 0.12s; }
+.tag.fav { background: var(--abg); border-color: rgba(212,135,10,0.3); color: var(--accent); }
+.tag-x { cursor: pointer; color: var(--muted); font-size: 13px; line-height: 1; }
+.tag-x:hover { color: var(--red); }
+.tag-star { cursor: pointer; font-size: 11px; color: var(--muted); }
+.tag.fav .tag-star { color: var(--accent); }
+.input-row { display: flex; gap: 8px; }
+.input-row input { flex: 1; }
+
+/* FORM */
+input[type=text], input[type=number], input[type=password], select, textarea {
+  background: var(--s1); border: 1px solid var(--border2); border-radius: 7px;
+  color: var(--text); font-family: var(--sans); font-size: 13px;
+  padding: 8px 12px; outline: none; transition: border-color 0.15s; width: 100%;
+}
+input:focus, select:focus, textarea:focus { border-color: var(--accent2); }
+input::placeholder, textarea::placeholder { color: var(--muted); }
+label.cb { display: flex; align-items: center; gap: 8px; padding: 5px 8px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--muted2); }
+label.cb:hover { background: var(--s2); color: var(--text); }
+label.cb input { accent-color: var(--accent2); width: 14px; height: 14px; cursor: pointer; }
+
+/* HISTORY */
+.hist-row { display: flex; align-items: center; gap: 10px; padding: 10px 12px; background: var(--s1); border: 1px solid var(--border); border-radius: 8px; margin-bottom: 6px; }
+.h-date { font-family: var(--mono); font-size: 11px; color: var(--muted); min-width: 116px; }
+.h-count { font-family: var(--mono); font-size: 14px; font-weight: 600; color: var(--accent); min-width: 28px; }
+.h-lbl { font-size: 12px; color: var(--muted2); flex: 1; }
+.h-tag { font-size: 10px; padding: 2px 7px; border-radius: 4px; font-weight: 600; background: var(--abg); color: var(--accent); }
+
+/* ALERTS */
+.alert { padding: 10px 14px; border-radius: 8px; font-size: 12px; line-height: 1.6; margin-bottom: 14px; }
+.alert.info  { background: var(--abg); border: 1px solid rgba(212,135,10,0.2); color: var(--orange); }
+.alert.red   { background: #fff0f0; border: 1px solid #f5c0c0; color: var(--red); }
+.alert.green { background: #edfaf3; border: 1px solid #b0dfc2; color: var(--green); }
+
+/* EMPTY */
+.empty { text-align: center; padding: 40px 20px; color: var(--muted); }
+.empty-icon { font-size: 30px; margin-bottom: 8px; }
+.empty-title { font-size: 14px; color: var(--muted2); margin-bottom: 4px; }
+
+/* SEARCH ROW */
+.search-row { display: flex; gap: 7px; align-items: center; }
+.search-row input { width: 170px; }
+.search-row select { width: 140px; }
+
+/* TOAST */
+#toast { position: fixed; bottom: 18px; right: 18px; background: var(--text); color: #fff; border-radius: 8px; padding: 10px 16px; font-size: 13px; z-index: 999; opacity: 0; transform: translateY(8px); transition: all 0.2s; pointer-events: none; max-width: 320px; }
+#toast.show { opacity: 1; transform: translateY(0); }
+
+/* SCROLLBAR */
+::-webkit-scrollbar { width: 5px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border2); border-radius: 3px; }
+</style>
+</head>
+<body>
+<div class="app">
+
+<!-- TOPBAR -->
+<header class="topbar">
+  <div class="logo"><div class="logo-dot"></div>PhilGEPS Command Center <span class="logo-sub">Ultra Power</span></div>
+  <span class="ai-badge">AI-Powered</span>
+  <div class="tr">
+    <span id="lastRun" style="font-family:var(--mono);font-size:10px;color:var(--muted)">Last run: —</span>
+    <button class="btn sm" onclick="exportCSV()">⬇ Export CSV</button>
+    <button class="btn red sm" id="btnFailed" onclick="runSearch('failed')">⚠ Hunt Failed Bids</button>
+    <button class="btn primary" id="btnRun" onclick="runSearch('both')">▶ Run Search</button>
+  </div>
+</header>
+
+<!-- SIDEBAR -->
+<nav class="sidebar">
+  <div class="nlbl">Monitor</div>
+  <div class="ni active" onclick="nav('dash',this)">📊 Dashboard</div>
+  <div class="ni" onclick="nav('results',this)">🔍 Results <span class="nbadge a" id="resBadge">0</span></div>
+  <div class="ni fail-tab" onclick="nav('failed',this)">⚠️ Failed Bids <span class="nbadge r" id="fbBadge">0</span></div>
+  <div class="ni" onclick="nav('shortlist',this)">⭐ Shortlisted <span class="nbadge a" id="slBadge">0</span></div>
+  <div class="ni" onclick="nav('history',this)">📅 History</div>
+  <hr class="ndiv">
+  <div class="nlbl">Settings</div>
+  <div class="ni" onclick="nav('keywords',this)">🏷 Keywords</div>
+  <div class="ni" onclick="nav('filters',this)">⚙️ Filters</div>
+  <div class="ni" onclick="nav('clickup',this)">🔗 ClickUp</div>
+</nav>
+
+<!-- MAIN -->
+<div class="main">
+
+<!-- DASHBOARD -->
+<div class="panel active" id="p-dash">
+  <div class="ph">
+    <div><div class="ptitle">Dashboard</div><div class="psub">AI-powered PhilGEPS monitoring for Ultra Power</div></div>
+    <button class="btn primary" onclick="runSearch('both')" id="btnRunDash">▶ Run Full Search</button>
+  </div>
+  <div class="sgrid">
+    <div class="scard"><div class="snum" id="s-reg">0</div><div class="slbl">Regular Opps</div></div>
+    <div class="scard warn"><div class="snum" id="s-fb">0</div><div class="slbl">Failed Bids</div></div>
+    <div class="scard warn"><div class="snum" id="s-fb2">0</div><div class="slbl">2+ Failures</div></div>
+    <div class="scard"><div class="snum" id="s-out">0</div><div class="slbl">Outside NCR</div></div>
+    <div class="scard"><div class="snum" id="s-hi">0</div><div class="slbl">High Score ≥10</div></div>
+    <div class="scard"><div class="snum" id="s-sl">0</div><div class="slbl">Shortlisted</div></div>
+  </div>
+  <div class="card">
+    <div class="ctitle">Search Console</div>
+    <div class="console" id="console"><span class="cl-info">Ready. Click ▶ Run Search to start. Claude AI will search PhilGEPS and extract relevant opportunities.</span></div>
+    <div class="progress"><div class="prog-fill" id="progFill"></div></div>
+    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap;">
+      <button class="btn sm primary" onclick="runSearch('both')">▶ Both</button>
+      <button class="btn sm red" onclick="runSearch('failed')">⚠ Failed Bids Only</button>
+      <button class="btn sm" onclick="runSearch('regular')">Regular Only</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ctitle red">🔴 Priority — Failed Bids (2+ failures)</div>
+    <div id="dashFailed"><div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">Run search to populate</div></div></div>
+  </div>
+  <div class="card">
+    <div class="ctitle">🏆 Top Regular Opportunities</div>
+    <div id="dashTop"><div class="empty"><div class="empty-icon">📡</div><div class="empty-title">Run search to populate</div></div></div>
+  </div>
+</div>
+
+<!-- RESULTS -->
+<div class="panel" id="p-results">
+  <div class="ph">
+    <div><div class="ptitle">Results</div><div class="psub">All regular opportunities</div></div>
+    <div class="search-row">
+      <input type="text" id="rSrch" placeholder="Filter..." oninput="renderResults()">
+      <select id="rReg" onchange="renderResults()">
+        <option value="all">All regions</option>
+        <option value="outside">Outside NCR</option>
+        <option value="ncr">NCR only</option>
+      </select>
+    </div>
+  </div>
+  <div class="tw"><table>
+    <thead><tr><th onclick="sortBy('score')">Score ↕</th><th>Title / Entity</th><th>Region</th><th onclick="sortBy('abc_value')">ABC ↕</th><th>Method</th><th>Closing</th><th>KW</th><th>Link</th><th></th></tr></thead>
+    <tbody id="rBody"></tbody>
+  </table></div>
+</div>
+
+<!-- FAILED BIDS -->
+<div class="panel" id="p-failed">
+  <div class="ph">
+    <div><div class="ptitle">Failed Bids Hunter</div><div class="psub">Projects with zero qualified bidders — Ultra Power's window</div></div>
+    <div class="search-row">
+      <input type="text" id="fbSrch" placeholder="Filter..." oninput="renderFailed()">
+      <select id="fbFilt" onchange="renderFailed()">
+        <option value="all">All failed bids</option>
+        <option value="multi">2+ failures only</option>
+        <option value="lighting">Keyword match</option>
+        <option value="outside">Outside NCR</option>
+      </select>
+    </div>
+  </div>
+  <div class="alert red">⚡ These projects had zero qualified bidders. The more times it has failed, the more motivated the agency is to accept any compliant bid.</div>
+  <div class="tw"><table>
+    <thead><tr><th onclick="sortFB('score')">Score ↕</th><th>Failure</th><th>Title / Entity</th><th>Region</th><th onclick="sortFB('abc_value')">ABC ↕</th><th>Closing</th><th>KW</th><th>Link</th><th></th></tr></thead>
+    <tbody id="fbBody"></tbody>
+  </table></div>
+</div>
+
+<!-- SHORTLIST -->
+<div class="panel" id="p-shortlist">
+  <div class="ph">
+    <div><div class="ptitle">Shortlisted Deals</div><div class="psub">Flagged for follow-up</div></div>
+    <button class="btn primary" onclick="pushToClickUp()">↗ Push All to ClickUp</button>
+  </div>
+  <div id="slAlert"></div>
+  <div class="tw"><table>
+    <thead><tr><th>Score</th><th>Type</th><th>Title</th><th>Region</th><th>ABC</th><th>Closing</th><th>Link</th><th></th></tr></thead>
+    <tbody id="slBody"></tbody>
+  </table></div>
+</div>
+
+<!-- HISTORY -->
+<div class="panel" id="p-history">
+  <div class="ph">
+    <div><div class="ptitle">Run History</div><div class="psub">Log of all past searches</div></div>
+    <button class="btn sm" onclick="clearHistory()" style="color:var(--red);border-color:#f5c0c0;">Clear</button>
+  </div>
+  <div id="histBody"></div>
+</div>
+
+<!-- KEYWORDS -->
+<div class="panel" id="p-keywords">
+  <div class="ph"><div><div class="ptitle">Keywords</div><div class="psub">Changes apply to the next search run immediately.</div></div></div>
+  <div class="card">
+    <div class="ctitle">Active Keywords</div>
+    <div class="tags-wrap" id="kwTags"></div>
+    <div class="input-row">
+      <input type="text" id="kwIn" placeholder="Type keyword and press Enter" onkeydown="if(event.key==='Enter')addKw()">
+      <button class="btn primary" onclick="addKw()">Add</button>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ctitle">⭐ Favorites</div>
+    <div id="favList" style="font-size:13px;color:var(--muted)">None saved — star a keyword above.</div>
+  </div>
+</div>
+
+<!-- FILTERS -->
+<div class="panel" id="p-filters">
+  <div class="ph"><div><div class="ptitle">Filters</div><div class="psub">Saved automatically.</div></div></div>
+  <div class="card">
+    <div class="ctitle">Procurement Methods</div>
+    <div style="display:flex;flex-direction:column;gap:3px;" id="methodCbs">
+      <label class="cb"><input type="checkbox" value="Small Value Procurement" onchange="saveFilters()"><span>Small Value Procurement (≤ ₱2M)</span></label>
+      <label class="cb"><input type="checkbox" value="Shopping" onchange="saveFilters()"><span>Shopping</span></label>
+      <label class="cb"><input type="checkbox" value="Request for Quotation" onchange="saveFilters()"><span>Request for Quotation (RFQ)</span></label>
+      <label class="cb"><input type="checkbox" value="Negotiated Procurement" onchange="saveFilters()"><span>Negotiated Procurement</span></label>
+      <label class="cb"><input type="checkbox" value="Public Bidding" onchange="saveFilters()"><span>Public Bidding (> ₱2M)</span></label>
+    </div>
+  </div>
+  <div class="card">
+    <div class="ctitle">ABC Budget Range</div>
+    <div style="display:flex;align-items:center;gap:8px;">
+      <span style="font-size:12px;color:var(--muted);white-space:nowrap">Min ₱</span>
+      <input type="number" id="abcMin" value="0" style="flex:1" onchange="saveFilters()">
+      <span style="color:var(--muted)">—</span>
+      <span style="font-size:12px;color:var(--muted);white-space:nowrap">Max ₱</span>
+      <input type="number" id="abcMax" value="2000000" style="flex:1" onchange="saveFilters()">
+    </div>
+    <p style="font-size:11px;color:var(--muted);margin-top:6px">Set Max to 0 to remove cap. Failed bids always ignore the cap.</p>
+  </div>
+  <div class="card">
+    <div class="ctitle">Region</div>
+    <div style="display:flex;flex-direction:column;gap:3px;">
+      <label class="cb"><input type="checkbox" id="prioOut" onchange="saveFilters()"><span>Prioritize outside NCR (+3 score bonus)</span></label>
+      <label class="cb"><input type="checkbox" id="excNCR" onchange="saveFilters()"><span>Exclude NCR results from regular results</span></label>
+    </div>
+  </div>
+</div>
+
+<!-- CLICKUP -->
+<div class="panel" id="p-clickup">
+  <div class="ph">
+    <div><div class="ptitle">ClickUp Integration</div><div class="psub">Push shortlisted deals as tasks. Failed bids → Urgent priority.</div></div>
+    <button class="btn primary" onclick="saveClickUp()">Save</button>
+  </div>
+  <div id="cuAlert"></div>
+  <div class="card">
+    <div class="ctitle">Credentials</div>
+    <div style="display:flex;flex-direction:column;gap:12px;">
+      <div>
+        <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:5px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px">API Token</label>
+        <input type="password" id="cuToken" placeholder="pk_xxxxxxxxxxxxxxxx">
+        <p style="font-size:11px;color:var(--muted);margin-top:4px">ClickUp → your avatar → Settings → Apps → API Token</p>
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:5px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px">Main List ID</label>
+        <input type="text" id="cuListId" placeholder="901xxxxxxxxxx">
+        <p style="font-size:11px;color:var(--muted);margin-top:4px">Right-click a ClickUp list → Copy link → number in URL</p>
+      </div>
+      <div>
+        <label style="font-size:10px;color:var(--muted);display:block;margin-bottom:5px;font-weight:700;text-transform:uppercase;letter-spacing:0.6px">Failed Bids List ID <span style="color:var(--red)">(Urgent)</span> — optional</label>
+        <input type="text" id="cuFbListId" placeholder="901xxxxxxxxxx  (falls back to main list)">
+      </div>
+    </div>
+  </div>
+</div>
+
+</div><!-- /main -->
+</div><!-- /app -->
+
+<div id="toast"></div>
+
+<script>
+// ── PERSISTENT STORAGE ────────────────────────────────────────────────────────
+const SK = 'ultrapower_philgeps_hub_v1';
+
+const DEF = {
+  keywords: ['LED','lighting','luminaire','floodlight','streetlight',
+             'emergency light','industrial lighting','Philips','Goodlite',
+             'high bay','low bay','explosion proof','hazardous','lux',
+             'lamp','fixture','illumination'],
+  favorites: [],
+  results: [],
+  shortlisted: [],
+  history: [],
+  filters: { abcMin:0, abcMax:2000000, methods:['Small Value Procurement','Shopping','Request for Quotation'], prioOutside:true, excNCR:false },
+  clickup: { token:'', listId:'', fbListId:'' }
+};
+
+let S = { ...DEF };
+
+async function loadState() {
+  try {
+    const val = await window.storage.get(SK);
+    if (val) S = { ...DEF, ...JSON.parse(val.value) };
+  } catch(e) { /* first run */ }
+}
+
+async function saveState() {
+  try { await window.storage.set(SK, JSON.stringify(S)); } catch(e) {}
+}
+
+// ── INIT ──────────────────────────────────────────────────────────────────────
+async function init() {
+  await loadState();
+  applyConfigToUI();
+  renderAll();
+}
+
+function applyConfigToUI() {
+  renderKw();
+  const methods = S.filters.methods || [];
+  document.querySelectorAll('#methodCbs input').forEach(cb => cb.checked = methods.includes(cb.value));
+  document.getElementById('abcMin').value = S.filters.abcMin || 0;
+  document.getElementById('abcMax').value = S.filters.abcMax || 2000000;
+  document.getElementById('prioOut').checked = S.filters.prioOutside !== false;
+  document.getElementById('excNCR').checked = S.filters.excNCR || false;
+  document.getElementById('cuToken').value   = S.clickup.token || '';
+  document.getElementById('cuListId').value  = S.clickup.listId || '';
+  document.getElementById('cuFbListId').value= S.clickup.fbListId || '';
+}
+
+// ── NAV ───────────────────────────────────────────────────────────────────────
+function nav(id, el) {
+  document.querySelectorAll('.panel').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.ni').forEach(n => n.classList.remove('active'));
+  document.getElementById('p-' + id).classList.add('active');
+  el.classList.add('active');
+  if (id === 'results')   renderResults();
+  if (id === 'failed')    renderFailed();
+  if (id === 'shortlist') renderShortlist();
+  if (id === 'history')   renderHistory();
+  if (id === 'keywords')  renderKw();
+}
+
+// ── CLAUDE AI SEARCH ──────────────────────────────────────────────────────────
+let isRunning = false;
+
+async function runSearch(mode = 'both') {
+  if (isRunning) { toast('Search already running'); return; }
+  isRunning = true;
+  setRunningUI(true);
+  clearConsole();
+
+  const keywords   = S.keywords || [];
+  const abcMax     = S.filters.abcMax || 2000000;
+  const prioOut    = S.filters.prioOutside;
+  const today      = new Date().toISOString().slice(0,10);
+
+  try {
+    if (mode === 'regular' || mode === 'both') {
+      logLine('Starting AI-powered PhilGEPS search...', 'cl-info');
+      logLine(`Keywords: ${keywords.slice(0,6).join(', ')}${keywords.length > 6 ? ' +' + (keywords.length-6) + ' more' : ''}`, 'cl-kw');
+      setProgress(10);
+
+      const regPrompt = buildRegularPrompt(keywords, abcMax);
+      logLine('Querying Claude AI for regular opportunities...', 'cl-info');
+      const regRaw = await callClaude(regPrompt);
+      setProgress(45);
+      const regResults = parseClaudeResults(regRaw, false, keywords);
+      logLine(`✓ ${regResults.length} regular opportunities found`, 'cl-done');
+
+      // Merge (dedup by ref_id)
+      const existingIds = new Set(S.results.filter(r=>!r.is_failed_bid).map(r=>r.ref_id));
+      const newReg = regResults.filter(r => !existingIds.has(r.ref_id));
+      S.results = [...newReg, ...S.results.filter(r=>!r.is_failed_bid)].slice(0, 500);
+      logLine(`  ${newReg.length} new after deduplication`, 'cl-info');
+    }
+
+    if (mode === 'failed' || mode === 'both') {
+      setProgress(55);
+      logLine('Starting failed bids hunt...', 'cl-info');
+      const fbPrompt = buildFailedPrompt(keywords);
+      logLine('Querying Claude AI for failed bid notices...', 'cl-info');
+      const fbRaw = await callClaude(fbPrompt);
+      setProgress(85);
+      const fbResults = parseClaudeResults(fbRaw, true, keywords);
+      logLine(`✓ ${fbResults.length} failed bid opportunities found`, 'cl-done');
+
+      const existingFbIds = new Set(S.results.filter(r=>r.is_failed_bid).map(r=>r.ref_id));
+      const newFb = fbResults.filter(r => !existingFbIds.has(r.ref_id));
+      S.results = [...newFb, ...S.results.filter(r=>r.is_failed_bid), ...S.results.filter(r=>!r.is_failed_bid)].slice(0, 500);
+      logLine(`  ${newFb.length} new failed bids after deduplication`, 'cl-info');
+    }
+
+    // Save history
+    const reg = S.results.filter(r=>!r.is_failed_bid).length;
+    const fb  = S.results.filter(r=>r.is_failed_bid).length;
+    S.history.unshift({ date: new Date().toLocaleString('en-PH'), mode, reg, fb, total: reg+fb });
+    S.history = S.history.slice(0, 60);
+
+    await saveState();
+    setProgress(100);
+    logLine(`✓ Done — ${S.results.length} total results in database`, 'cl-done');
+    renderAll();
+    document.getElementById('lastRun').textContent = 'Last run: ' + new Date().toLocaleTimeString('en-PH',{hour:'2-digit',minute:'2-digit'});
+    toast('Search complete!');
+    setTimeout(() => setProgress(0), 2000);
+
+  } catch(e) {
+    logLine('Error: ' + e.message, 'cl-err');
+    toast('Search error — see console');
+  } finally {
+    isRunning = false;
+    setRunningUI(false);
+  }
+}
+
+function buildRegularPrompt(keywords, abcMax) {
+  const kwList = keywords.join(', ');
+  const cap = abcMax > 0 ? `₱${abcMax.toLocaleString()}` : 'no cap';
+  return `You are a PhilGEPS procurement intelligence assistant for Ultra Power Industrial Resources Inc., a Philippine industrial lighting and equipment distributor.
+
+Search PhilGEPS (notices.philgeps.gov.ph) for current open bid opportunities matching these keywords: ${kwList}
+
+Focus on:
+- Small Value Procurement, Shopping, and Request for Quotation notices
+- ABC (Approved Budget for Contract) up to ${cap}
+- All regions — flag outside-NCR results as higher priority
+- Procurement of electrical equipment, lighting, LED, industrial supplies
+
+For each opportunity found, extract and return a JSON array with this exact structure:
+[
+  {
+    "ref_id": "unique reference ID from PhilGEPS",
+    "title": "full bid notice title",
+    "procuring_entity": "government agency name",
+    "area": "region/city/province",
+    "abc_text": "budget amount as shown e.g. Php 500,000.00",
+    "abc_value": 500000,
+    "procurement_method": "Small Value Procurement / Shopping / RFQ etc",
+    "closing_date": "closing/deadline date",
+    "matched_keyword": "which keyword from the list matched",
+    "detail_url": "full URL to the PhilGEPS notice",
+    "is_outside_ncr": true or false,
+    "scraped_date": "${new Date().toISOString().slice(0,10)}"
+  }
+]
+
+Return ONLY the JSON array, no explanation. If you cannot find results, return an empty array [].
+Aim for at least 15-20 results if available. Prioritize outside-NCR opportunities.`;
+}
+
+function buildFailedPrompt(keywords) {
+  const kwList = keywords.join(', ');
+  return `You are a PhilGEPS failed bids intelligence assistant for Ultra Power Industrial Resources Inc.
+
+Search PhilGEPS (notices.philgeps.gov.ph) for "Failure of Bidding" notices, re-bidding announcements, and re-posted opportunities — especially for:
+- Electrical equipment, LED lighting, luminaires, industrial lighting
+- Any government project where no qualified bidder submitted
+
+Search these terms on PhilGEPS: "failure of bidding", "failed bidding", "no qualified bidder", "re-bidding", "re-posted bid"
+
+Also check if any of these keywords appear in failed notices: ${kwList}
+
+For each failed bid opportunity, return a JSON array:
+[
+  {
+    "ref_id": "unique ID — prefix with FB_ to distinguish from regular",
+    "title": "full notice title",
+    "procuring_entity": "agency name",
+    "area": "region/city/province",
+    "abc_text": "budget e.g. Php 800,000.00",
+    "abc_value": 800000,
+    "procurement_method": "original procurement method",
+    "closing_date": "new closing date if re-posted",
+    "failure_type": "No Bids Submitted / No Qualified Bidder / Post-Qual Failed / Re-bidding",
+    "failure_count": 1 or 2,
+    "matched_keyword": "keyword matched or empty string",
+    "detail_url": "full URL to PhilGEPS notice",
+    "is_outside_ncr": true or false,
+    "is_failed_bid": true,
+    "scraped_date": "${new Date().toISOString().slice(0,10)}"
+  }
+]
+
+Return ONLY the JSON array. Aim for 10+ results. 2+ failure notices are highest priority.`;
+}
+
+async function callClaude(prompt) {
+  const response = await fetch('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: 4000,
+      tools: [{ type: 'web_search_20250305', name: 'web_search' }],
+      messages: [{ role: 'user', content: prompt }]
+    })
+  });
+  if (!response.ok) throw new Error(`API error: ${response.status}`);
+  const data = await response.json();
+  // Extract text from response
+  const textBlock = data.content?.find(b => b.type === 'text');
+  return textBlock?.text || '[]';
+}
+
+function parseClaudeResults(raw, isFailedBid, keywords) {
+  try {
+    // Strip markdown code fences if present
+    let clean = raw.trim();
+    clean = clean.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/i, '');
+    // Find JSON array
+    const start = clean.indexOf('[');
+    const end   = clean.lastIndexOf(']');
+    if (start === -1 || end === -1) return [];
+    const arr = JSON.parse(clean.slice(start, end + 1));
+    // Score and normalize each result
+    return arr.map((r, i) => {
+      r.is_failed_bid   = isFailedBid || r.is_failed_bid || false;
+      r.failure_count   = r.failure_count || (isFailedBid ? 1 : 0);
+      r.failure_type    = r.failure_type || '';
+      r.abc_value       = parseFloat(r.abc_value) || 0;
+      r.is_outside_ncr  = r.is_outside_ncr !== undefined ? r.is_outside_ncr : !isNCR(r.area||'');
+      r.ref_id          = r.ref_id || (isFailedBid ? 'FB_' : 'R_') + Date.now() + '_' + i;
+      r.score           = scoreResult(r, keywords);
+      return r;
+    });
+  } catch(e) {
+    logLine('Parse warning: ' + e.message, 'cl-err');
+    return [];
+  }
+}
+
+const NCR_TERMS = ['metro manila','ncr','national capital region','quezon city','makati','manila','pasig','taguig','mandaluyong','marikina','caloocan','las pinas','muntinlupa','paranaque','pasay','san juan','valenzuela','malabon','navotas','pateros'];
+function isNCR(area) { const a = area.toLowerCase(); return NCR_TERMS.some(n => a.includes(n)); }
+
+function scoreResult(r, keywords) {
+  let score = r.is_failed_bid ? 10 : 0;
+  const title  = (r.title||'').toLowerCase();
+  const method = (r.procurement_method||'').toLowerCase();
+  const abc    = r.abc_value || 0;
+  const fc     = r.failure_count || 0;
+
+  for (const kw of (keywords||[])) {
+    if (kw.toLowerCase() && title.includes(kw.toLowerCase())) score += 3;
+  }
+  if (r.is_failed_bid) score += fc >= 2 ? 5 : 2;
+  else if (abc > 0 && abc <= 2000000) score += 5;
+  if (r.is_outside_ncr) score += 3;
+  if (/small value|shopping|rfq|quotation/.test(method)) score += 2;
+  return score;
+}
+
+// ── UI HELPERS ────────────────────────────────────────────────────────────────
+function setRunningUI(on) {
+  ['btnRun','btnFailed','btnRunDash'].forEach(id => {
+    const b = document.getElementById(id);
+    if (!b) return;
+    if (on) { b.disabled = true; b.classList.add('spinning'); }
+    else    { b.disabled = false; b.classList.remove('spinning'); }
+  });
+}
+
+function clearConsole() { document.getElementById('console').innerHTML = ''; }
+
+function logLine(text, cls='') {
+  const c = document.getElementById('console');
+  const d = document.createElement('div');
+  if (cls) d.className = cls;
+  d.textContent = text;
+  c.appendChild(d);
+  c.scrollTop = c.scrollHeight;
+}
+
+function setProgress(pct) {
+  document.getElementById('progFill').style.width = pct + '%';
+}
+
+// ── RENDER ────────────────────────────────────────────────────────────────────
+function renderAll() {
+  const reg = S.results.filter(r => !r.is_failed_bid);
+  const fb  = S.results.filter(r => r.is_failed_bid);
+  const fb2 = fb.filter(r => (r.failure_count||1) >= 2);
+  const sl  = S.shortlisted || [];
+  document.getElementById('s-reg').textContent = reg.length;
+  document.getElementById('s-fb').textContent  = fb.length;
+  document.getElementById('s-fb2').textContent = fb2.length;
+  document.getElementById('s-out').textContent = S.results.filter(r=>r.is_outside_ncr).length;
+  document.getElementById('s-hi').textContent  = S.results.filter(r=>(r.score||0)>=10).length;
+  document.getElementById('s-sl').textContent  = sl.length;
+  document.getElementById('resBadge').textContent = reg.length;
+  document.getElementById('fbBadge').textContent  = fb.length;
+  document.getElementById('slBadge').textContent  = sl.length;
+  renderDashFailed(fb2);
+  renderDashTop(reg);
+}
+
+function sc(s) { s=+s||0; return s>=15?'sc-hot':s>=10?'sc-high':s>=5?'sc-med':'sc-low'; }
+
+function linkCell(url) {
+  return url ? `<a href="${url}" target="_blank" style="font-size:11px;white-space:nowrap">View ↗</a>` : '—';
+}
+
+function renderDashFailed(items) {
+  const el  = document.getElementById('dashFailed');
+  const top = [...items].sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,5);
+  if (!top.length) { el.innerHTML='<div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">No 2+ failure bids yet</div></div>'; return; }
+  el.innerHTML=`<div class="tw"><table><thead><tr><th>Score</th><th>Failures</th><th>Title</th><th>Region</th><th>ABC</th><th>Link</th></tr></thead><tbody>
+  ${top.map(r=>`<tr>
+    <td><span class="sb sc-hot">${r.score||0}</span></td>
+    <td><span class="fb-b fb-multi">🔴 ${r.failure_count||1}x</span></td>
+    <td><strong style="font-size:12px">${(r.title||'').slice(0,55)}</strong><br><span style="font-size:10px;color:var(--muted)">${(r.procuring_entity||'').slice(0,40)}</span></td>
+    <td><span class="rb ${r.is_outside_ncr?'rb-out':'rb-ncr'}">${r.is_outside_ncr?'Outside NCR':'NCR'}</span></td>
+    <td class="abc-val">${r.abc_text||'N/A'}</td>
+    <td>${linkCell(r.detail_url)}</td>
+  </tr>`).join('')}</tbody></table></div>`;
+}
+
+function renderDashTop(items) {
+  const el  = document.getElementById('dashTop');
+  const top = [...items].sort((a,b)=>(b.score||0)-(a.score||0)).slice(0,5);
+  if (!top.length) { el.innerHTML='<div class="empty"><div class="empty-icon">📡</div><div class="empty-title">Run search to populate</div></div>'; return; }
+  el.innerHTML=`<div class="tw"><table><thead><tr><th>Score</th><th>Title</th><th>Region</th><th>ABC</th><th>Closing</th><th>Link</th></tr></thead><tbody>
+  ${top.map(r=>`<tr>
+    <td><span class="sb ${sc(r.score)}">${r.score||0}</span></td>
+    <td><strong style="font-size:12px">${(r.title||'').slice(0,55)}</strong></td>
+    <td><span class="rb ${r.is_outside_ncr?'rb-out':'rb-ncr'}">${r.is_outside_ncr?'Out NCR':'NCR'}</span></td>
+    <td class="abc-val">${r.abc_text||'N/A'}</td>
+    <td style="font-size:11px">${r.closing_date||''}</td>
+    <td>${linkCell(r.detail_url)}</td>
+  </tr>`).join('')}</tbody></table></div>`;
+}
+
+let sortF='score', sortD=-1;
+function sortBy(f) { sortF===f ? sortD*=-1 : (sortF=f, sortD=-1); renderResults(); }
+
+function renderResults() {
+  const q   = (document.getElementById('rSrch')?.value||'').toLowerCase();
+  const reg = document.getElementById('rReg')?.value||'all';
+  const sl  = new Set((S.shortlisted||[]).map(s=>s.ref_id));
+  let rows  = S.results.filter(r=>!r.is_failed_bid).filter(r=>{
+    if (q && !JSON.stringify(r).toLowerCase().includes(q)) return false;
+    if (reg==='outside' && !r.is_outside_ncr) return false;
+    if (reg==='ncr' && r.is_outside_ncr) return false;
+    return true;
+  }).sort((a,b)=>{
+    let va=a[sortF]||0,vb=b[sortF]||0;
+    if(typeof va==='string'){va=va.toLowerCase();vb=vb.toLowerCase();}
+    return va<vb?sortD:va>vb?-sortD:0;
+  });
+  const tb = document.getElementById('rBody');
+  if (!rows.length) { tb.innerHTML=`<tr><td colspan="9"><div class="empty"><div class="empty-icon">🔍</div><div class="empty-title">No results — run search first</div></div></td></tr>`; return; }
+  tb.innerHTML = rows.map(r=>`<tr>
+    <td><span class="sb ${sc(r.score)}">${r.score||0}</span></td>
+    <td><strong style="font-size:12px;color:var(--text)">${(r.title||'N/A').slice(0,50)}</strong><br><span style="font-size:10px;color:var(--muted)">${(r.procuring_entity||'').slice(0,38)}</span></td>
+    <td><span class="rb ${r.is_outside_ncr?'rb-out':'rb-ncr'}">${r.is_outside_ncr?'Out NCR':'NCR'}</span><br><span style="font-size:10px;color:var(--muted)">${(r.area||'').slice(0,22)}</span></td>
+    <td class="abc-val">${r.abc_text||'N/A'}</td>
+    <td style="font-size:11px">${(r.procurement_method||'').slice(0,20)}</td>
+    <td style="font-size:11px;white-space:nowrap">${r.closing_date||''}</td>
+    <td>${r.matched_keyword?`<span class="kw-chip">${r.matched_keyword}</span>`:''}</td>
+    <td>${linkCell(r.detail_url)}</td>
+    <td><button class="star-btn ${sl.has(r.ref_id)?'on':''}" onclick='toggleSL(${JSON.stringify(r).replace(/'/g,"\\'")} ,this)'>${sl.has(r.ref_id)?'⭐':'☆'}</button></td>
+  </tr>`).join('');
+}
+
+let sortFbF='score', sortFbD=-1;
+function sortFB(f) { sortFbF===f ? sortFbD*=-1 : (sortFbF=f, sortFbD=-1); renderFailed(); }
+
+function renderFailed() {
+  const q    = (document.getElementById('fbSrch')?.value||'').toLowerCase();
+  const filt = document.getElementById('fbFilt')?.value||'all';
+  const sl   = new Set((S.shortlisted||[]).map(s=>s.ref_id));
+  let rows   = S.results.filter(r=>r.is_failed_bid).filter(r=>{
+    if (q && !JSON.stringify(r).toLowerCase().includes(q)) return false;
+    if (filt==='multi'   && (r.failure_count||1)<2)  return false;
+    if (filt==='lighting'&& !r.matched_keyword)       return false;
+    if (filt==='outside' && !r.is_outside_ncr)        return false;
+    return true;
+  }).sort((a,b)=>((+b.failure_count||1)>=2?1:0)-((+a.failure_count||1)>=2?1:0)||(b.score||0)-(a.score||0));
+  const tb = document.getElementById('fbBody');
+  if (!rows.length) { tb.innerHTML=`<tr><td colspan="9"><div class="empty"><div class="empty-icon">⚠️</div><div class="empty-title">No failed bids yet — run search</div></div></td></tr>`; return; }
+  tb.innerHTML = rows.map(r=>{
+    const c=r.failure_count||1;
+    return `<tr>
+      <td><span class="sb sc-hot">${r.score||0}</span></td>
+      <td><span class="fb-b ${c>=2?'fb-multi':'fb-single'}">${c>=2?'🔴 '+c+'x FAILED':'⚠ 1x Failed'}</span><br><span style="font-size:10px;color:var(--muted);margin-top:2px;display:block">${r.failure_type||''}</span></td>
+      <td><strong style="font-size:12px;color:var(--text)">${(r.title||'N/A').slice(0,48)}</strong><br><span style="font-size:10px;color:var(--muted)">${(r.procuring_entity||'').slice(0,36)}</span></td>
+      <td><span class="rb ${r.is_outside_ncr?'rb-out':'rb-ncr'}">${r.is_outside_ncr?'Out NCR':'NCR'}</span><br><span style="font-size:10px;color:var(--muted)">${(r.area||'').slice(0,18)}</span></td>
+      <td class="abc-val">${r.abc_text||'N/A'}</td>
+      <td style="font-size:11px;white-space:nowrap">${r.closing_date||''}</td>
+      <td>${r.matched_keyword?`<span class="kw-chip">${r.matched_keyword}</span>`:'<span style="font-size:10px;color:var(--muted)">general</span>'}</td>
+      <td>${linkCell(r.detail_url)}</td>
+      <td><button class="star-btn ${sl.has(r.ref_id)?'on':''}" onclick='toggleSL(${JSON.stringify(r).replace(/'/g,"\\'")} ,this)'>${sl.has(r.ref_id)?'⭐':'☆'}</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderShortlist() {
+  const sl = S.shortlisted||[];
+  const tb = document.getElementById('slBody');
+  if (!sl.length) { tb.innerHTML=`<tr><td colspan="8"><div class="empty"><div class="empty-icon">⭐</div><div class="empty-title">Nothing shortlisted yet</div></div></td></tr>`; return; }
+  tb.innerHTML = sl.map(r=>{
+    const isFb=r.is_failed_bid; const c=r.failure_count||0;
+    const typeBadge=isFb?`<span class="fb-b ${c>=2?'fb-multi':'fb-single'}">${c>=2?'🔴 '+c+'x':'⚠ Failed'}</span>`:'<span style="font-size:10px;background:var(--abg);color:var(--accent);padding:2px 6px;border-radius:3px;font-weight:600">Regular</span>';
+    return `<tr>
+      <td><span class="sb ${sc(r.score)}">${r.score||0}</span></td>
+      <td>${typeBadge}</td>
+      <td><strong style="font-size:12px;color:var(--text)">${(r.title||'N/A').slice(0,50)}</strong></td>
+      <td><span class="rb ${r.is_outside_ncr?'rb-out':'rb-ncr'}">${r.is_outside_ncr?'Out NCR':'NCR'}</span></td>
+      <td class="abc-val">${r.abc_text||'N/A'}</td>
+      <td style="font-size:11px">${r.closing_date||''}</td>
+      <td>${linkCell(r.detail_url)}</td>
+      <td><button class="star-btn on" onclick='toggleSL(${JSON.stringify(r).replace(/'/g,"\\'")} ,this)'>⭐</button></td>
+    </tr>`;
+  }).join('');
+}
+
+function renderHistory() {
+  const el = document.getElementById('histBody');
+  const h  = S.history||[];
+  if (!h.length) { el.innerHTML='<div class="empty"><div class="empty-icon">📅</div><div class="empty-title">No history yet</div></div>'; return; }
+  el.innerHTML = h.map(r=>`<div class="hist-row">
+    <span class="h-date">${r.date}</span>
+    <span class="h-count">${r.total||0}</span>
+    <span class="h-lbl">${r.reg||0} regular + ${r.fb||0} failed bids</span>
+    <span class="h-tag">${r.mode}</span>
+  </div>`).join('');
+}
+
+async function clearHistory() {
+  if (!confirm('Clear all history?')) return;
+  S.history = [];
+  await saveState();
+  renderHistory();
+  toast('History cleared');
+}
+
+// ── SHORTLIST ─────────────────────────────────────────────────────────────────
+async function toggleSL(item, btn) {
+  const sl     = S.shortlisted||[];
+  const exists = sl.find(s=>s.ref_id===item.ref_id);
+  if (exists) {
+    S.shortlisted = sl.filter(s=>s.ref_id!==item.ref_id);
+    btn.textContent='☆'; btn.classList.remove('on');
+    toast('Removed from shortlist');
+  } else {
+    S.shortlisted = [...sl, item];
+    btn.textContent='⭐'; btn.classList.add('on');
+    toast('Added to shortlist');
+  }
+  document.getElementById('s-sl').textContent = S.shortlisted.length;
+  document.getElementById('slBadge').textContent = S.shortlisted.length;
+  await saveState();
+}
+
+// ── CLICKUP ───────────────────────────────────────────────────────────────────
+async function pushToClickUp() {
+  const sl = S.shortlisted||[];
+  if (!sl.length) { toast('Nothing shortlisted'); return; }
+  const tok = S.clickup.token;
+  if (!tok) { document.getElementById('slAlert').innerHTML='<div class="alert info">Configure ClickUp credentials in the ClickUp panel first.</div>'; return; }
+  const listId   = S.clickup.listId;
+  const fbListId = S.clickup.fbListId || listId;
+  const headers  = { 'Authorization': tok, 'Content-Type': 'application/json' };
+  let pushed=0, failed=0;
+  for (const r of sl) {
+    const isFb = r.is_failed_bid;
+    const cnt  = r.failure_count||0;
+    const targetList = isFb ? fbListId : listId;
+    const priority   = isFb && cnt>=2 ? 1 : isFb ? 2 : 3;
+    const prefix     = isFb && cnt>=2 ? `🔴 ${cnt}x FAILED` : isFb ? '⚠ FAILED BID' : '📋';
+    const desc = `**PhilGEPS ${isFb?'Failed Bid':'Opportunity'}**\n\n`
+      + (isFb ? `Failed ${cnt}x — no qualified bidder. Ultra Power can step in.\n\n` : '')
+      + `- **Entity:** ${r.procuring_entity||'N/A'}\n- **Area:** ${r.area||'N/A'}\n`
+      + `- **ABC:** ${r.abc_text||'N/A'}\n- **Method:** ${r.procurement_method||'N/A'}\n`
+      + `- **Closing:** ${r.closing_date||'N/A'}\n- **Score:** ${r.score||0}\n\n`
+      + `[View on PhilGEPS](${r.detail_url||''})`;
+    try {
+      const res = await fetch(`https://api.clickup.com/api/v2/list/${targetList}/task`, {
+        method:'POST', headers,
+        body: JSON.stringify({ name:`[${prefix}] ${(r.title||'').slice(0,80)}`, description:desc, priority, tags:['philgeps', isFb?'failed-bid':'opportunity'] })
+      });
+      res.ok ? pushed++ : failed++;
+    } catch(e) { failed++; }
+  }
+  document.getElementById('slAlert').innerHTML = `<div class="alert ${failed?'info':'green'}">Pushed ${pushed} tasks to ClickUp${failed?` (${failed} failed)`:''}.</div>`;
+}
+
+async function saveClickUp() {
+  S.clickup = { token:document.getElementById('cuToken').value.trim(), listId:document.getElementById('cuListId').value.trim(), fbListId:document.getElementById('cuFbListId').value.trim() };
+  await saveState();
+  document.getElementById('cuAlert').innerHTML='<div class="alert green">✓ Saved</div>';
+  setTimeout(()=>document.getElementById('cuAlert').innerHTML='',2500);
+}
+
+// ── KEYWORDS ──────────────────────────────────────────────────────────────────
+function renderKw() {
+  const kws  = S.keywords||[];
+  const favs = S.favorites||[];
+  document.getElementById('kwTags').innerHTML = kws.map(k=>{
+    const f=favs.includes(k);
+    return `<span class="tag ${f?'fav':''}"><span class="tag-star" onclick="toggleFav('${k.replace(/'/g,"\\'")}')">★</span>${k}<span class="tag-x" onclick="removeKw('${k.replace(/'/g,"\\'")}')">×</span></span>`;
+  }).join('');
+  const fl = document.getElementById('favList');
+  fl.innerHTML = favs.length ? favs.map(k=>`<span class="tag fav" style="margin:3px">★ ${k}</span>`).join('') : '<span style="font-size:12px;color:var(--muted)">None yet — star a keyword above.</span>';
+}
+
+async function addKw() {
+  const inp=document.getElementById('kwIn'); const k=inp.value.trim();
+  if (!k) return;
+  if ((S.keywords||[]).includes(k)) { toast('Already exists'); return; }
+  S.keywords=[...(S.keywords||[]),k]; inp.value='';
+  await saveState(); renderKw(); toast('Added: '+k);
+}
+
+async function removeKw(k) {
+  S.keywords=(S.keywords||[]).filter(x=>x!==k);
+  S.favorites=(S.favorites||[]).filter(x=>x!==k);
+  await saveState(); renderKw();
+}
+
+async function toggleFav(k) {
+  const favs=S.favorites||[];
+  S.favorites=favs.includes(k)?favs.filter(x=>x!==k):[...favs,k];
+  await saveState(); renderKw();
+}
+
+async function saveFilters() {
+  S.filters = {
+    methods:[...document.querySelectorAll('#methodCbs input:checked')].map(i=>i.value),
+    abcMin:+document.getElementById('abcMin').value||0,
+    abcMax:+document.getElementById('abcMax').value||0,
+    prioOutside:document.getElementById('prioOut').checked,
+    excNCR:document.getElementById('excNCR').checked,
+  };
+  await saveState(); toast('Filters saved');
+}
+
+// ── EXPORT ────────────────────────────────────────────────────────────────────
+function exportCSV() {
+  if (!S.results.length) { toast('No results to export'); return; }
+  const fields=['score','ref_id','title','procuring_entity','area','abc_text','procurement_method','closing_date','is_outside_ncr','is_failed_bid','failure_type','failure_count','matched_keyword','detail_url','scraped_date'];
+  const rows=[fields.join(','),...S.results.map(r=>fields.map(f=>`"${(r[f]||'').toString().replace(/"/g,'""')}"`).join(','))];
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([rows.join('\n')],{type:'text/csv'}));
+  a.download=`philgeps_${new Date().toISOString().slice(0,10)}.csv`; a.click();
+  toast('CSV exported');
+}
+
+// ── TOAST ─────────────────────────────────────────────────────────────────────
+function toast(msg) {
+  const t=document.getElementById('toast');
+  t.textContent=msg; t.classList.add('show');
+  setTimeout(()=>t.classList.remove('show'),2800);
+}
+
+// ── START ─────────────────────────────────────────────────────────────────────
+init();
+</script>
+</body>
+</html>
