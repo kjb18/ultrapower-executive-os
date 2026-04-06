@@ -149,7 +149,7 @@ export default function Calendar({ timeBlocks }: CalendarProps) {
               <div key={i} style={{ minHeight:80, padding:"5px 6px", borderRight:"0.5px solid #f0f2f5", borderBottom:"0.5px solid #f0f2f5", background:isToday?"#F0F6FF":isOtherMonth?"#fafbfc":"#fff", position:"relative" }}>
                 {day && (
                   <>
-                    <div style={{ fontSize:11, fontWeight:isToday?600:400, color:isToday?"#185FA5":"#3a4a5a", marginBottom:3, width:20, height:20, borderRadius:"50%", background:isToday?"#185FA5":"transparent", display:"flex", alignItems:"center", justifyContent:"center", color:isToday?"#fff":"#3a4a5a" }}>{day}</div>
+                    <div style={{ fontSize:11, fontWeight:isToday?600:400, marginBottom:3, width:20, height:20, borderRadius:"50%", background:isToday?"#185FA5":"transparent", display:"flex", alignItems:"center", justifyContent:"center", color:isToday?"#fff":"#3a4a5a" }}>{day}</div>
                     {dayTasks.slice(0,3).map(t => <TaskPill key={t.id} task={t}/>)}
                     {dayTasks.length > 3 && <div style={{ fontSize:9, color:"#b0bec8", fontFamily:"'DM Mono',monospace" }}>+{dayTasks.length-3} more</div>}
                   </>
