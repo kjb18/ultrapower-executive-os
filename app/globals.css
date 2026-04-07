@@ -32,6 +32,7 @@ html, body {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-sans);
+  font-size: 13.5px;
   background: var(--bg);
   color: var(--text-1);
   -webkit-font-smoothing: antialiased;
@@ -39,6 +40,7 @@ html, body {
 
 input, textarea, select, button {
   font-family: var(--font-sans);
+  font-size: 13px;
 }
 
 input:focus, textarea:focus, select:focus {

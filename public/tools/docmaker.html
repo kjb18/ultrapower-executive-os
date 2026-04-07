@@ -213,11 +213,23 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 
 /* ─── PRINT ─── */
 @media print{
+  @page {
+    margin: 10mm 12mm;
+    size: A4;
+    /* Remove all browser headers and footers */
+    margin-top: 10mm;
+    margin-bottom: 10mm;
+  }
+  @page :first { margin-top: 10mm; }
+  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
   .modal-overlay{display:flex!important;position:static;background:none}
   .modal{box-shadow:none;width:100%;max-height:none;border-radius:0}
-  .modal-header,.modal-footer,.sidebar,.topbar,.topbar-actions{display:none!important}
-  #doc-preview{padding:32px 40px}
-  body{background:white}
+  .modal-header,.modal-footer,.sidebar,.topbar,.topbar-actions,.btn,.nav-tabs,.tab-content > .tab-pane:not(.active){display:none!important}
+  #doc-preview{padding:0}
+  body{background:white;margin:0;padding:0}
+  html{margin:0;padding:0}
+  /* Force hide browser chrome - headers/footers/page numbers */
+  head, header, footer, nav { display: none !important; }
 }
 
 .empty-state{text-align:center;padding:64px 24px;color:var(--up-gray)}
@@ -563,7 +575,7 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     </div>
     <div class="modal-footer">
       <button class="btn btn-outline" onclick="closePreview()">Close</button>
-      <button class="btn btn-primary" onclick="window.print()">⊞ Print / Save as PDF</button>
+      <button class="btn btn-primary" onclick="printWithFilename()">⊞ Print / Save as PDF</button>
     </div>
   </div>
 </div>
@@ -1022,6 +1034,22 @@ function clearForm() {
   document.getElementById('doc-date').value = new Date().toISOString().split('T')[0];
   document.getElementById('items-body').innerHTML='';
   itemCount=0; addItem(); recalc();
+}
+
+function printWithFilename() {
+  const docNum = document.getElementById('doc-number').value || '';
+  const docTypeLabels = {
+    quotation: 'Quotation', po: 'PurchaseOrder', rfq: 'RFQResponse',
+    invoice: 'Invoice', delivery: 'DeliveryReceipt'
+  };
+  const typeLabel = docTypeLabels[currentDocType] || 'Document';
+  const filename = docNum
+    ? `UltraPower_${typeLabel}_${docNum.replace(/[^a-zA-Z0-9\-_]/g,'_')}`
+    : `UltraPower_${typeLabel}_${new Date().toISOString().split('T')[0]}`;
+  const originalTitle = document.title;
+  document.title = filename;
+  window.print();
+  setTimeout(() => { document.title = originalTitle; }, 1000);
 }
 </script>
 </body>

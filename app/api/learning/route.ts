@@ -5,11 +5,11 @@ const CATEGORIES = ["Business strategy","Sales & negotiation","Marketing & brand
 function buildPrompt(category: string, usedIds: string[], request: string) {
   const avoid = usedIds.length > 0 ? `\nAvoid these already-used topics: ${usedIds.slice(-20).join(", ")}.` : "";
   const req = request ? `\nFocus today's module on: "${request}".` : "";
-  return `You are a business learning coach generating a daily learning module for Khalil, Engineering Solutions Director at Ultra Power Industrial Resources Inc. in the Philippines — a B2B industrial distributor serving power generation, oil & gas, manufacturing, mining, and government sectors.
+  return `You are a business learning coach generating a daily learning module for Khalil, Engineering Solutions Director at Ultra Power Industrial Resources Inc. in the Philippines, a B2B industrial distributor.
 
 Today's category: ${category}${req}${avoid}
 
-Generate a rich daily learning module in JSON format ONLY. No preamble, no markdown fences, just raw JSON.
+Generate the module in JSON format ONLY. No preamble, no markdown fences, just raw JSON.
 
 Format:
 {
@@ -25,8 +25,25 @@ Format:
   "deepdive": { "heading": "...", "body": "..." },
   "action_item": { "heading": "...", "body": "..." },
   "category": "${category}",
-  "spotlight_id": "unique-slug"
-}`;
+  "spotlight_id": "unique-slug",
+  "diagram": {
+    "type": "pyramid|matrix|steps|cards",
+    "data": {}
+  }
+}
+
+Rules for diagram:
+- Choose the diagram type that best illustrates the core concept.
+- pyramid: use for hierarchies. data = { "labels": ["top level","second","third","fourth"] }
+- matrix: use for 2x2 strategic frameworks. data = { "axes": { "x": "X axis label", "y": "Y axis label", "quadrants": ["top-left","top-right","bottom-left","bottom-right"] } }
+- steps: use for processes or sequences. data = { "steps": ["Step 1","Step 2","Step 3","Step 4"] }
+- cards: use for lists of concepts. data = { "items": [{"label":"Concept","desc":"short description"}] }
+
+Rules for lessons:
+- Each heading must be a punchy insight, not a label.
+- Each body must be 2-3 sentences. No em dashes. Use plain commas or periods instead.
+- Deep dive: 150-200 words exploring one idea from the lessons.
+- Action item: practical and tied to running a small Philippine industrial B2B company.`;
 }
 
 export async function POST(req: NextRequest) {
@@ -36,7 +53,6 @@ export async function POST(req: NextRequest) {
     const pool = CATEGORIES.filter((c: string) => !usedCats.includes(c));
     const available = pool.length > 0 ? pool : CATEGORIES;
     const category = available[Math.floor(Math.random() * available.length)];
-
     const prompt = buildPrompt(category, usedIds, pendingRequest);
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
@@ -55,12 +71,12 @@ export async function POST(req: NextRequest) {
 
     if (!res.ok) {
       const err = await res.text();
-      return NextResponse.json({ error: `API error: ${res.status}` }, { status: 500 });
+      return NextResponse.json({ error: `API error ${res.status}: ${err}` }, { status: 500 });
     }
 
     const data = await res.json();
     const raw = data.content?.find((b: { type: string }) => b.type === "text")?.text || "";
-    if (!raw) return NextResponse.json({ error: "Empty response" }, { status: 500 });
+    if (!raw) return NextResponse.json({ error: "Empty response from API" }, { status: 500 });
 
     const cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
 
@@ -69,7 +85,7 @@ export async function POST(req: NextRequest) {
       parsed = JSON.parse(cleaned);
     } catch {
       const match = cleaned.match(/\{[\s\S]*\}/);
-      if (!match) return NextResponse.json({ error: "No JSON in response" }, { status: 500 });
+      if (!match) return NextResponse.json({ error: "Could not parse JSON from response" }, { status: 500 });
       parsed = JSON.parse(match[0]);
     }
 

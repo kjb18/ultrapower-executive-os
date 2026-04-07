@@ -98,7 +98,7 @@ export default function CRM() {
     <div style={{flex:1,overflow:"auto"}}>
       <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"0 18px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:5,height:52,flexWrap:"wrap"}}>
         <div>
-          <div style={{fontSize:14,fontWeight:600,color:"#1a2332"}}>CRM</div>
+          <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>CRM</div>
           <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Industrial Sales Intelligence</div>
         </div>
         <div style={{display:"flex"}}>

@@ -10,6 +10,7 @@ interface Tool {
   icon: string;
   native?: boolean;
   src?: string;
+  directLink?: string;
   color: { bg: string; fg: string };
 }
 
@@ -39,6 +40,7 @@ const TOOLS: Tool[] = [
     category: "Operations",
     icon: "📄",
     src: "/tools/docmaker.html",
+    directLink: "/tools/docmaker.html",
     color: { bg:"#FFF8EC", fg:"#854F0B" },
   },
 ];
@@ -75,6 +77,14 @@ export default function Tools() {
               <button onClick={() => open(tool)} style={{ marginTop:"auto", width:"100%", padding:"9px", borderRadius:9, border:`0.5px solid ${tool.color.fg}`, background:tool.color.bg, color:tool.color.fg, cursor:"pointer", fontSize:12, fontWeight:600 }}>
                 Launch {tool.name.split(" ")[0]} →
               </button>
+              {tool.directLink && (
+                <a href={tool.directLink} target="_blank" rel="noopener noreferrer"
+                  style={{ display:"block", textAlign:"center", fontSize:11, color:"#b0bec8", marginTop:6, textDecoration:"none", fontFamily:"'DM Mono',monospace" }}
+                  onMouseEnter={e=>(e.currentTarget.style.color="#185FA5")}
+                  onMouseLeave={e=>(e.currentTarget.style.color="#b0bec8")}>
+                  ↗ Open as standalone tab
+                </a>
+              )}
             </div>
           ))}
         </div>
