@@ -110,12 +110,13 @@ export default function Dashboard() {
   };
 
   const callAPI = async (system: string, user: string) => {
-    const res = await fetch("https://api.anthropic.com/v1/messages", {
-      method: "POST", headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ model: "claude-sonnet-4-20250514", max_tokens: 400, system, messages: [{ role:"user", content:user }] })
+    const res = await fetch("/api/claude", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ system, user, max_tokens: 400 }),
     });
     const d = await res.json();
-    return d?.content?.[0]?.text?.trim() || null;
+    return d?.text || null;
   };
 
   const getInsight = async () => {

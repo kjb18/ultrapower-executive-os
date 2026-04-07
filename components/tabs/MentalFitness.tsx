@@ -61,17 +61,18 @@ export default function MentalFitness() {
     setQLoad(true); setQuote(null); setQErr("");
     const mood = moodObj?.label || "not specified";
     try {
-      const res = await fetch("https://api.anthropic.com/v1/messages", {
-        method:"POST", headers:{"Content-Type":"application/json"},
+      const res = await fetch("/api/claude", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
-          model:"claude-sonnet-4-20250514", max_tokens:500,
-          system:`Quote curator like Criminal Minds — surgical precision for this exact moment. Real quote, real person. Respond ONLY valid JSON no markdown: {"quote":"...","author":"...","role":"...","relevance":"..."}`,
-          messages:[{role:"user",content:`Khalil Banares, Engineering Solutions Director, Ultra Power Industrial Resources, Makati PH. Industrial lighting B2B. Clients: EDC NGCP First Gen Aboitiz. Mood: ${mood}. Score: ${mfpScore}/4.`}]
-        })
+          system: `Quote curator like Criminal Minds — surgical precision for this exact moment. Real quote, real person. Respond ONLY valid JSON no markdown: {"quote":"...","author":"...","role":"...","relevance":"..."}`,
+          user: `Khalil Banares, Engineering Solutions Director, Ultra Power Industrial Resources, Makati PH. Industrial lighting B2B. Clients: EDC NGCP First Gen Aboitiz. Mood: ${mood}. Score: ${mfpScore}/4.`,
+          max_tokens: 500,
+        }),
       });
       const d = await res.json();
-      const txt = d?.content?.[0]?.text?.trim();
-      if (txt) setQuote(JSON.parse(txt.replace(/```json|```/g,"")));
+      const txt = d?.text?.trim();
+      if (txt) setQuote(JSON.parse(txt.replace(/```json|```/g, "")));
       else setQErr("Could not get quote. Try again.");
     } catch { setQErr("Connection error."); }
     setQLoad(false);
