@@ -92,11 +92,26 @@ export default function DailyLearning() {
     try {
       const res = await fetch("https://api.anthropic.com/v1/messages", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:1000, messages:[{role:"user",content:buildPrompt(category,usedIds,pendReq)}] })
+        body: JSON.stringify({
+          model:"claude-sonnet-4-20250514",
+          max_tokens:4000,
+          messages:[{role:"user",content:buildPrompt(category,usedIds,pendReq)}]
+        })
       });
+      if (!res.ok) throw new Error(`API error ${res.status}`);
       const data = await res.json();
       const raw = data.content?.find((b: {type:string}) => b.type==="text")?.text || "";
-      const parsed: Module = JSON.parse(raw.replace(/```json|```/g,"").trim());
+      if (!raw) throw new Error("Empty response");
+      const cleaned = raw.replace(/```json\s*/g,"").replace(/```\s*/g,"").trim();
+      let parsed: Module;
+      try {
+        parsed = JSON.parse(cleaned);
+      } catch {
+        // Try to extract JSON object if there is surrounding text
+        const jsonMatch = cleaned.match(/\{[\s\S]*\}/);
+        if (!jsonMatch) throw new Error("No JSON found");
+        parsed = JSON.parse(jsonMatch[0]);
+      }
       parsed.dateLabel = formatDate();
       await kvSet(getTodayKey(), parsed);
       const newHist = [{spotlight_id:parsed.spotlight_id,category:parsed.category,date:getTodayKey(),title:parsed.spotlight.title},...hist].slice(0,60);
@@ -104,7 +119,10 @@ export default function DailyLearning() {
       setHistory(newHist);
       if (pendReq) { await kvDel("learning:request"); setPendingRequest(""); }
       setModule(parsed);
-    } catch { setError("Failed to generate today's module. Please try again."); }
+    } catch (e) {
+      console.error("Daily Learning error:", e);
+      setError("Failed to generate today's module. Please try again.");
+    }
     setLoading(false);
   };
 
