@@ -1,8 +1,4 @@
-* {
-  box-sizing: border-box;
-  margin: 0;
-  padding: 0;
-}
+* { box-sizing: border-box; margin: 0; padding: 0; }
 
 :root {
   --bg:          #f0f2f5;
@@ -23,16 +19,16 @@
   --danger-bg:   #FEF0F0;
   --font-sans:   'Plus Jakarta Sans', 'Segoe UI', sans-serif;
   --font-mono:   'DM Mono', monospace;
-  --r-sm:        7px;
-  --r-md:        10px;
-  --r-lg:        12px;
+  --r-sm:        8px;
+  --r-md:        11px;
+  --r-lg:        13px;
 }
 
 html, body {
   height: 100%;
   overflow: hidden;
   font-family: var(--font-sans);
-  font-size: 13.5px;
+  font-size: 15px;
   background: var(--bg);
   color: var(--text-1);
   -webkit-font-smoothing: antialiased;
@@ -40,7 +36,7 @@ html, body {
 
 input, textarea, select, button {
   font-family: var(--font-sans);
-  font-size: 13px;
+  font-size: 14px;
 }
 
 input:focus, textarea:focus, select:focus {

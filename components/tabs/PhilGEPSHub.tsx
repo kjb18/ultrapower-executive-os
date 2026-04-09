@@ -1,230 +1,142 @@
 "use client";
 import { useState, useEffect } from "react";
 
-interface Bid {
-  id: string;
-  title: string;
-  entity: string;
-  category: string;
-  amount: string;
-  deadline: string;
-  published: string;
-  url: string;
-  status: string;
-}
-
-interface Results {
-  results: Bid[];
-  total: number;
-  page: number;
-  totalPages: number;
-  _mock?: boolean;
-}
-
-const SAVED_KEY = "philgeps-saved";
+interface SavedBid { id: string; title: string; entity: string; amount: string; deadline: string; url: string; notes: string; savedAt: string; }
+const STORAGE_KEY = "philgeps-saved-bids";
 
 export default function PhilGEPSHub() {
-  const [keyword, setKeyword] = useState("LED lighting");
-  const [searchInput, setSearchInput] = useState("LED lighting");
-  const [results, setResults] = useState<Results|null>(null);
-  const [loading, setLoading] = useState(false);
-  const [page, setPage] = useState(1);
-  const [saved, setSaved] = useState<string[]>([]);
-  const [view, setView] = useState<"search"|"saved">("search");
+  const [view, setView] = useState<"browse"|"saved">("browse");
+  const [saved, setSaved] = useState<SavedBid[]>([]);
+  const [showAdd, setShowAdd] = useState(false);
+  const [form, setForm] = useState({title:"",entity:"",amount:"",deadline:"",url:"",notes:""});
+  const [iframeLoaded, setIframeLoaded] = useState(false);
 
   useEffect(() => {
-    try {
-      const s = localStorage.getItem(SAVED_KEY);
-      if (s) setSaved(JSON.parse(s));
-    } catch {}
-    search("LED lighting", 1);
+    try { const s=localStorage.getItem(STORAGE_KEY); if(s) setSaved(JSON.parse(s)); } catch {}
   }, []);
 
-  const search = async (kw: string, pg: number) => {
-    setLoading(true);
-    try {
-      const res = await fetch(`/api/philgeps?keyword=${encodeURIComponent(kw)}&page=${pg}`);
-      const data = await res.json();
-      setResults(data);
-      setPage(pg);
-    } catch {
-      setResults({ results:[], total:0, page:1, totalPages:1 });
-    }
-    setLoading(false);
+  const saveBids = (bids: SavedBid[]) => {
+    setSaved(bids);
+    try { localStorage.setItem(STORAGE_KEY, JSON.stringify(bids)); } catch {}
   };
 
-  const handleSearch = () => {
-    setKeyword(searchInput);
-    search(searchInput, 1);
+  const addBid = () => {
+    if (!form.title.trim()) return;
+    const bid: SavedBid = { ...form, id: Date.now().toString(), savedAt: new Date().toLocaleDateString("en-PH",{year:"numeric",month:"short",day:"numeric"}) };
+    saveBids([bid,...saved]);
+    setForm({title:"",entity:"",amount:"",deadline:"",url:"",notes:""});
+    setShowAdd(false);
   };
 
-  const toggleSave = (id: string) => {
-    const next = saved.includes(id) ? saved.filter(s=>s!==id) : [...saved, id];
-    setSaved(next);
-    try { localStorage.setItem(SAVED_KEY, JSON.stringify(next)); } catch {}
-  };
+  const removeBid = (id:string) => saveBids(saved.filter(b=>b.id!==id));
 
-  const savedBids = results?.results.filter(b => saved.includes(b.id)) || [];
-
-  const S = {
-    panel: { background:"#fff", border:"0.5px solid #e2e6ea", borderRadius:12, overflow:"hidden" } as React.CSSProperties,
-    th: { fontSize:9, fontWeight:600, letterSpacing:"0.1em", textTransform:"uppercase" as const, color:"#b0bec8", padding:"8px 12px", textAlign:"left" as const, borderBottom:"0.5px solid #f0f2f5", background:"#fafbfc", fontFamily:"'DM Mono',monospace", whiteSpace:"nowrap" as const },
-    td: { fontSize:11, color:"#3a4a5a", padding:"8px 12px", borderBottom:"0.5px solid #f0f2f5", verticalAlign:"top" as const } as React.CSSProperties,
-    inp: { fontSize:12, padding:"7px 10px", borderRadius:8, border:"0.5px solid #e2e6ea", background:"#f8f9fb", color:"#1a2332" } as React.CSSProperties,
-    tabBtn: (a:boolean):React.CSSProperties => ({ padding:"8px 16px", border:"none", background:"none", cursor:"pointer", fontSize:12, color:a?"#185FA5":"#8a9ab0", borderBottom:`2px solid ${a?"#185FA5":"transparent"}`, fontWeight:a?600:400 }),
-  };
-
-  const Spinner = () => <span style={{width:14,height:14,border:"2px solid #e2e6ea",borderTopColor:"#185FA5",borderRadius:"50%",animation:"spin 0.7s linear infinite",display:"inline-block"}}/>;
+  const INP:React.CSSProperties = {fontSize:14,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"};
+  const tabBtn=(a:boolean):React.CSSProperties=>({padding:"8px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,color:a?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${a?"#185FA5":"transparent"}`,fontWeight:a?600:400});
 
   return (
-    <div style={{ flex:1, overflow:"auto" }}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
-
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
       {/* Header */}
-      <div style={{ background:"#fff", borderBottom:"0.5px solid #e2e6ea", padding:"0 18px", display:"flex", alignItems:"center", justifyContent:"space-between", position:"sticky", top:0, zIndex:5, height:52 }}>
+      <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,height:56}}>
         <div>
-          <div style={{ fontSize:14, fontWeight:600, color:"#1a2332" }}>PhilGEPS Hub</div>
-          <div style={{ fontSize:10, color:"#b0bec8", fontFamily:"'DM Mono',monospace" }}>Philippine Government Electronic Procurement System</div>
+          <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>PhilGEPS Hub</div>
+          <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Philippine Government Electronic Procurement System</div>
         </div>
-        <div style={{ display:"flex" }}>
-          <button style={S.tabBtn(view==="search")} onClick={()=>setView("search")}>Search</button>
-          <button style={S.tabBtn(view==="saved")} onClick={()=>setView("saved")}>
-            Saved {saved.length>0&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace",marginLeft:4}}>{saved.length}</span>}
+        <div style={{display:"flex"}}>
+          <button style={tabBtn(view==="browse")} onClick={()=>setView("browse")}>Browse Live</button>
+          <button style={tabBtn(view==="saved")} onClick={()=>setView("saved")}>
+            Saved Bids
+            {saved.length>0&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace",marginLeft:6}}>{saved.length}</span>}
           </button>
         </div>
       </div>
 
-      <div style={{ padding:14 }}>
-
-        {view==="search" && <>
-          {/* Search bar */}
-          <div style={{ display:"flex", gap:8, marginBottom:14, flexWrap:"wrap" }}>
-            <input style={{ ...S.inp, flex:1, minWidth:200 }} placeholder="Search keyword e.g. LED lighting, industrial fixtures..."
-              value={searchInput} onChange={e=>setSearchInput(e.target.value)}
-              onKeyDown={e=>e.key==="Enter"&&handleSearch()}/>
-            <button onClick={handleSearch} disabled={loading} style={{ padding:"7px 16px", borderRadius:8, border:"0.5px solid #185FA5", background:"#EBF3FC", color:"#185FA5", cursor:"pointer", fontSize:12, fontWeight:600, display:"flex", alignItems:"center", gap:6 }}>
-              {loading?<Spinner/>:<span>🔍</span>}
-              {loading?"Searching...":"Search PhilGEPS"}
-            </button>
+      {view==="browse"&&(
+        <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+          <div style={{padding:"10px 20px",background:"#f8f9fb",borderBottom:"0.5px solid #e2e6ea",fontSize:13,color:"#4a6a8a",display:"flex",alignItems:"center",gap:10,flexShrink:0}}>
+            <span>🔍</span>
+            <span>Search for bids below. Found a relevant bid? Switch to <strong>Saved Bids</strong> and add it manually.</span>
+            <a href="https://notices.philgeps.gov.ph/GEPSNONPILOT/Tender/SplashOpenOpportunitiesUI.aspx?ClickFrom=OpenOpp&menuIndex=3"
+              target="_blank" rel="noopener noreferrer"
+              style={{marginLeft:"auto",fontSize:12,color:"#185FA5",textDecoration:"none",padding:"5px 12px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",fontWeight:500,whiteSpace:"nowrap"}}>
+              Open in new tab ↗
+            </a>
           </div>
+          <div style={{flex:1,position:"relative"}}>
+            {!iframeLoaded&&(
+              <div style={{position:"absolute",inset:0,display:"flex",alignItems:"center",justifyContent:"center",background:"#f0f2f5",zIndex:1,flexDirection:"column",gap:10}}>
+                <div style={{fontSize:28}}>🏛️</div>
+                <div style={{fontSize:13,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Loading PhilGEPS...</div>
+              </div>
+            )}
+            <iframe
+              src="https://notices.philgeps.gov.ph/GEPSNONPILOT/Tender/SplashOpenOpportunitiesUI.aspx?ClickFrom=OpenOpp&menuIndex=3"
+              style={{width:"100%",height:"100%",border:"none"}}
+              onLoad={()=>setIframeLoaded(true)}
+              title="PhilGEPS Open Opportunities"
+            />
+          </div>
+        </div>
+      )}
 
-          {/* Quick filter chips */}
-          <div style={{ display:"flex", gap:6, marginBottom:14, flexWrap:"wrap" }}>
-            {["LED lighting","industrial lighting","Goodlite","Philips","lighting fixtures","substation","power plant"].map(kw=>(
-              <button key={kw} onClick={()=>{setSearchInput(kw);setKeyword(kw);search(kw,1);}}
-                style={{ fontSize:10, padding:"3px 9px", borderRadius:20, border:`0.5px solid ${keyword===kw?"#185FA5":"#e2e6ea"}`, background:keyword===kw?"#EBF3FC":"#fff", color:keyword===kw?"#185FA5":"#8a9ab0", cursor:"pointer", fontWeight:keyword===kw?600:400 }}>
-                {kw}
+      {view==="saved"&&(
+        <div style={{flex:1,overflow:"auto",padding:16}}>
+          <div style={{maxWidth:800,margin:"0 auto"}}>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+              <div style={{display:"flex",alignItems:"center",gap:8}}>
+                <span style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>Saved Bids</span>
+                <span style={{fontSize:11,padding:"2px 9px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{saved.length}</span>
+              </div>
+              <button onClick={()=>setShowAdd(!showAdd)} style={{fontSize:13,padding:"8px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600}}>
+                {showAdd?"Cancel":"+ Add Bid"}
               </button>
+            </div>
+
+            {showAdd&&(
+              <div style={{background:"#fff",border:"0.5px solid #c5ddf5",borderRadius:13,padding:"18px 20px",marginBottom:16}}>
+                <div style={{fontSize:12,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:14,fontFamily:"'DM Mono',monospace"}}>Add Saved Bid</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:10,marginBottom:12}}>
+                  {([["Bid Title *","title","text","e.g. Supply of LED Fixtures"],["Procuring Entity","entity","text","e.g. EDC"],["Amount (ABC)","amount","text","e.g. ₱2,450,000"],["Deadline","deadline","date",""],["PhilGEPS URL","url","url","https://..."],["Notes","notes","text","Optional notes"]] as [string,string,string,string][]).map(([lbl,k,t,ph])=>(
+                    <div key={k}>
+                      <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>{lbl}</div>
+                      <input style={INP} type={t} placeholder={ph} value={(form as Record<string,string>)[k]} onChange={e=>setForm(f=>({...f,[k]:e.target.value}))}/>
+                    </div>
+                  ))}
+                </div>
+                <button onClick={addBid} style={{fontSize:13,padding:"9px 18px",borderRadius:8,border:"none",background:"#1a2332",color:"#fff",cursor:"pointer",fontWeight:600}}>Save Bid</button>
+              </div>
+            )}
+
+            {saved.length===0&&!showAdd&&(
+              <div style={{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,padding:"40px 24px",textAlign:"center"}}>
+                <div style={{fontSize:28,marginBottom:10}}>🏛️</div>
+                <div style={{fontSize:15,fontWeight:600,color:"#1a2332",marginBottom:6}}>No saved bids yet</div>
+                <div style={{fontSize:13,color:"#8a9ab0",lineHeight:1.6}}>Browse PhilGEPS in the Live tab, then add bids here to track them.</div>
+              </div>
+            )}
+
+            {saved.map((bid,i)=>(
+              <div key={bid.id} style={{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,padding:"16px 18px",marginBottom:10}}>
+                <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",gap:12}}>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:15,fontWeight:600,color:"#1a2332",marginBottom:5,lineHeight:1.4}}>{bid.title}</div>
+                    <div style={{display:"flex",gap:10,flexWrap:"wrap",fontSize:12,color:"#4a6a8a",marginBottom:bid.notes?8:0}}>
+                      {bid.entity&&<span>🏢 {bid.entity}</span>}
+                      {bid.amount&&<span style={{color:"#3B6D11",fontWeight:500}}>₱ {bid.amount.replace("₱","")}</span>}
+                      {bid.deadline&&<span style={{color:"#854F0B"}}>📅 {bid.deadline}</span>}
+                      <span style={{color:"#b0bec8",fontFamily:"'DM Mono',monospace",fontSize:11}}>Saved {bid.savedAt}</span>
+                    </div>
+                    {bid.notes&&<div style={{fontSize:13,color:"#8a9ab0",lineHeight:1.5}}>{bid.notes}</div>}
+                  </div>
+                  <div style={{display:"flex",gap:8,flexShrink:0}}>
+                    {bid.url&&<a href={bid.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,padding:"6px 12px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",textDecoration:"none",fontWeight:500}}>View ↗</a>}
+                    <button onClick={()=>removeBid(bid.id)} style={{fontSize:12,padding:"6px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>Remove</button>
+                  </div>
+                </div>
+              </div>
             ))}
           </div>
-
-          {/* Stats row */}
-          {results && !loading && (
-            <div style={{ display:"flex", gap:12, marginBottom:12, flexWrap:"wrap" }}>
-              <div style={{ fontSize:11, color:"#8a9ab0" }}>
-                <span style={{ fontWeight:600, color:"#1a2332", fontFamily:"'DM Mono',monospace" }}>{results.total}</span> results for "{keyword}"
-                {results._mock && <span style={{ fontSize:9, padding:"1px 7px", borderRadius:20, background:"#FFF8EC", color:"#854F0B", fontFamily:"'DM Mono',monospace", marginLeft:8 }}>Sample data · PhilGEPS offline</span>}
-              </div>
-            </div>
-          )}
-
-          {/* Results table */}
-          {loading && (
-            <div style={{ display:"flex", alignItems:"center", justifyContent:"center", padding:40, gap:10, color:"#b0bec8", fontSize:12 }}>
-              <Spinner/> Searching PhilGEPS...
-            </div>
-          )}
-
-          {!loading && results && (
-            <>
-              <div style={S.panel}>
-                <div style={{ overflowX:"auto" }}>
-                  <table style={{ width:"100%", borderCollapse:"collapse" }}>
-                    <thead><tr>
-                      {["#","Bid Title","Procuring Entity","Category","ABC","Deadline","Published",""].map(h=><th key={h} style={S.th}>{h}</th>)}
-                    </tr></thead>
-                    <tbody>
-                      {results.results.length===0 && (
-                        <tr><td colSpan={8} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>No results found. Try a different keyword.</td></tr>
-                      )}
-                      {results.results.map((bid,i)=>(
-                        <tr key={bid.id} style={{ background:i%2===0?"#fff":"#fafbfc" }}>
-                          <td style={{...S.td,color:"#b0bec8",fontSize:10,whiteSpace:"nowrap"}}>{bid.id}</td>
-                          <td style={{ ...S.td, maxWidth:280 }}>
-                            <a href={bid.url} target="_blank" rel="noopener noreferrer"
-                              style={{ fontSize:12, color:"#185FA5", fontWeight:500, lineHeight:1.4, textDecoration:"none", display:"block" }}
-                              onMouseEnter={e=>(e.currentTarget.style.textDecoration="underline")}
-                              onMouseLeave={e=>(e.currentTarget.style.textDecoration="none")}>
-                              {bid.title}
-                            </a>
-                            <span style={{ fontSize:10, padding:"1px 6px", borderRadius:20, background:"#f0faf5", color:"#3B6D11", fontFamily:"'DM Mono',monospace", marginTop:4, display:"inline-block" }}>{bid.status}</span>
-                          </td>
-                          <td style={{ ...S.td, fontSize:11, color:"#4a6a8a", maxWidth:180 }}>{bid.entity}</td>
-                          <td style={{ ...S.td, whiteSpace:"nowrap" as const }}>
-                            <span style={{ fontSize:10, padding:"2px 7px", borderRadius:20, background:"#EBF3FC", color:"#185FA5", fontFamily:"'DM Mono',monospace" }}>{bid.category}</span>
-                          </td>
-                          <td style={{ ...S.td, fontFamily:"'DM Mono',monospace", fontSize:11, whiteSpace:"nowrap" as const, color:"#3B6D11", fontWeight:500 }}>{bid.amount}</td>
-                          <td style={{ ...S.td, fontFamily:"'DM Mono',monospace", fontSize:10, whiteSpace:"nowrap" as const, color: new Date(bid.deadline) < new Date() ? "#A32D2D" : "#1a2332" }}>{bid.deadline}</td>
-                          <td style={{ ...S.td, fontFamily:"'DM Mono',monospace", fontSize:10, whiteSpace:"nowrap" as const, color:"#b0bec8" }}>{bid.published}</td>
-                          <td style={S.td}>
-                            <button onClick={()=>toggleSave(bid.id)} title={saved.includes(bid.id)?"Remove from saved":"Save bid"}
-                              style={{ fontSize:14, background:"none", border:"none", cursor:"pointer", color:saved.includes(bid.id)?"#185FA5":"#d0d8e0", transition:"color 0.1s" }}>
-                              {saved.includes(bid.id)?"★":"☆"}
-                            </button>
-                          </td>
-                        </tr>
-                      ))}
-                    </tbody>
-                  </table>
-                </div>
-
-                {/* Pagination */}
-                {results.totalPages > 1 && (
-                  <div style={{ display:"flex", alignItems:"center", gap:8, padding:"10px 14px", borderTop:"0.5px solid #f0f2f5" }}>
-                    <button onClick={()=>search(keyword,page-1)} disabled={page<=1||loading}
-                      style={{ fontSize:11, padding:"4px 10px", borderRadius:7, border:"0.5px solid #e2e6ea", background:"#f8f9fb", cursor:"pointer", color:"#4a6a8a" }}>← Prev</button>
-                    <span style={{ fontSize:11, color:"#8a9ab0", fontFamily:"'DM Mono',monospace" }}>Page {results.page} of {results.totalPages} · {results.total} results</span>
-                    <button onClick={()=>search(keyword,page+1)} disabled={page>=results.totalPages||loading}
-                      style={{ fontSize:11, padding:"4px 10px", borderRadius:7, border:"0.5px solid #e2e6ea", background:"#f8f9fb", cursor:"pointer", color:"#4a6a8a" }}>Next →</button>
-                  </div>
-                )}
-              </div>
-            </>
-          )}
-        </>}
-
-        {view==="saved" && (
-          <>
-            <div style={{ display:"flex", alignItems:"center", gap:8, marginBottom:12 }}>
-              <span style={{ fontSize:11, fontWeight:600, color:"#1a2332" }}>Saved Bids</span>
-              <span style={{ fontSize:10, padding:"2px 8px", borderRadius:20, background:"#EBF3FC", color:"#185FA5", fontFamily:"'DM Mono',monospace" }}>{saved.length}</span>
-            </div>
-            <div style={S.panel}>
-              <div style={{ overflowX:"auto" }}>
-                <table style={{ width:"100%", borderCollapse:"collapse" }}>
-                  <thead><tr>{["#","Bid Title","Entity","Amount","Deadline",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-                  <tbody>
-                    {saved.length===0&&<tr><td colSpan={6} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>No saved bids yet. Star a bid from Search to save it here.</td></tr>}
-                    {results?.results.filter(b=>saved.includes(b.id)).map((bid,i)=>(
-                      <tr key={bid.id}>
-                        <td style={{...S.td,color:"#b0bec8",fontSize:10}}>{i+1}</td>
-                        <td style={{ ...S.td, maxWidth:280 }}>
-                          <a href={bid.url} target="_blank" rel="noopener noreferrer" style={{ fontSize:12, color:"#185FA5", fontWeight:500, textDecoration:"none" }}>{bid.title}</a>
-                        </td>
-                        <td style={{ ...S.td, fontSize:11, color:"#4a6a8a" }}>{bid.entity}</td>
-                        <td style={{ ...S.td, fontFamily:"'DM Mono',monospace", fontSize:11, color:"#3B6D11", fontWeight:500 }}>{bid.amount}</td>
-                        <td style={{ ...S.td, fontFamily:"'DM Mono',monospace", fontSize:10 }}>{bid.deadline}</td>
-                        <td style={S.td}><button onClick={()=>toggleSave(bid.id)} style={{ fontSize:14, background:"none", border:"none", cursor:"pointer", color:"#185FA5" }}>★</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
-          </>
-        )}
-
-      </div>
+        </div>
+      )}
     </div>
   );
 }
