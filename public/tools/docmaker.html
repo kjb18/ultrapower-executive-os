@@ -214,22 +214,33 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 /* ─── PRINT ─── */
 @media print{
   @page {
-    margin: 10mm 12mm;
+    margin: 12mm 14mm;
     size: A4;
-    /* Remove all browser headers and footers */
-    margin-top: 10mm;
-    margin-bottom: 10mm;
   }
-  @page :first { margin-top: 10mm; }
-  * { -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
-  .modal-overlay{display:flex!important;position:static;background:none}
-  .modal{box-shadow:none;width:100%;max-height:none;border-radius:0}
-  .modal-header,.modal-footer,.sidebar,.topbar,.topbar-actions,.btn,.nav-tabs,.tab-content > .tab-pane:not(.active){display:none!important}
-  #doc-preview{padding:0}
-  body{background:white;margin:0;padding:0}
-  html{margin:0;padding:0}
-  /* Force hide browser chrome - headers/footers/page numbers */
-  head, header, footer, nav { display: none !important; }
+  /* Hide everything on the page */
+  body > * { display: none !important; }
+  /* Show only the isolated print root */
+  body > #print-root { display: block !important; }
+  #print-root {
+    display: block !important;
+    position: absolute !important;
+    top: 0 !important;
+    left: 0 !important;
+    width: 100% !important;
+    background: white !important;
+    padding: 0 !important;
+    margin: 0 !important;
+  }
+  /* Apply doc-preview styles to print-root content */
+  #print-root, #print-root * {
+    -webkit-print-color-adjust: exact !important;
+    print-color-adjust: exact !important;
+  }
+  body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
 }
 
 .empty-state{text-align:center;padding:64px 24px;color:var(--up-gray)}
@@ -1046,10 +1057,38 @@ function printWithFilename() {
   const filename = docNum
     ? `UltraPower_${typeLabel}_${docNum.replace(/[^a-zA-Z0-9\-_]/g,'_')}`
     : `UltraPower_${typeLabel}_${new Date().toISOString().split('T')[0]}`;
+
+  const preview = document.getElementById('doc-preview');
+  if (!preview || !preview.innerHTML.trim()) {
+    alert('Please generate a document first before printing.');
+    return;
+  }
+
+  // Remove any existing print root
+  const existing = document.getElementById('print-root');
+  if (existing) existing.remove();
+
+  // Clone the preview content with all computed styles preserved
+  const printRoot = document.createElement('div');
+  printRoot.id = 'print-root';
+
+  // Wrap in a div that mimics doc-preview styling
+  const inner = document.createElement('div');
+  inner.style.cssText = 'padding:48px 56px;font-family:\'DM Sans\',sans-serif;color:#1a1a2e;background:white;';
+  inner.innerHTML = preview.innerHTML;
+  printRoot.appendChild(inner);
+  document.body.appendChild(printRoot);
+
   const originalTitle = document.title;
   document.title = filename;
+
   window.print();
-  setTimeout(() => { document.title = originalTitle; }, 1000);
+
+  setTimeout(() => {
+    document.title = originalTitle;
+    const root = document.getElementById('print-root');
+    if (root) root.remove();
+  }, 2000);
 }
 </script>
 </body>
