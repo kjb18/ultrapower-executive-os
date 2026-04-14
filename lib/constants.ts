@@ -103,14 +103,49 @@ export interface MFPDay {
   refl: string; reflDone: boolean;
 }
 
+export interface BrewingItem {
+  id: number;
+  what: string;
+  who: string;
+  since: string;
+  category: "Client"|"Gov"|"Supplier"|"Internal"|"Other";
+}
+
+export interface CrosshairsTarget {
+  id: number;
+  company: string;
+  sector: string;
+  estDeal: string;
+  priority: "High"|"Medium"|"Watch";
+  lastAction: string;
+  nextMove: string;
+}
+
 export interface OSData {
   mits: MIT[];
   okrs: OKR[];
   kpis: KPI[];
   tbs: TimeBlock[];
   brain: BrainItem[];
+  brewing: BrewingItem[];
+  crosshairs: CrosshairsTarget[];
   nid: number;
 }
+
+export const BREWING_CATEGORIES = ["Client","Gov","Supplier","Internal","Other"] as const;
+export const BREWING_COLORS: Record<string,{bg:string;fg:string}> = {
+  Client:   {bg:"#EBF3FC", fg:"#185FA5"},
+  Gov:      {bg:"#FFF8EC", fg:"#854F0B"},
+  Supplier: {bg:"#f0faf5", fg:"#3B6D11"},
+  Internal: {bg:"#F4F3FE", fg:"#534AB7"},
+  Other:    {bg:"#f0f2f5", fg:"#8a9ab0"},
+};
+
+export const CROSSHAIRS_PRIORITY_COLORS: Record<string,{bg:string;fg:string}> = {
+  High:   {bg:"#FEF0F0", fg:"#A32D2D"},
+  Medium: {bg:"#EBF3FC", fg:"#185FA5"},
+  Watch:  {bg:"#f0f2f5", fg:"#8a9ab0"},
+};
 
 export const DEFAULT_OS: OSData = {
   mits: [
@@ -143,6 +178,15 @@ export const DEFAULT_OS: OSData = {
     { id:2, type:"Reference", text:"Philips Signify 2025 industrial catalog — download" },
     { id:3, type:"Decision", text:"Extend warranty as bid differentiator?" },
     { id:4, type:"Task", text:"Update EDC contact info in CRM" },
+  ],
+  brewing: [
+    { id:1, what:"EDC substation LED proposal decision", who:"EDC Procurement", since:"Apr 3", category:"Client" },
+    { id:2, what:"NGCP PhilGEPS bid #881 award", who:"BAC Committee", since:"Mar 28", category:"Gov" },
+  ],
+  crosshairs: [
+    { id:1, company:"Aboitiz Power", sector:"Power Generation", estDeal:"₱3–5M", priority:"High", lastAction:"Sent capability deck Mar 20", nextMove:"Follow up with plant manager" },
+    { id:2, company:"San Miguel Corporation", sector:"Manufacturing", estDeal:"₱2–4M", priority:"Medium", lastAction:"LinkedIn outreach Mar 15", nextMove:"Request facility visit" },
+    { id:3, company:"Pilipinas Shell", sector:"Oil & Gas", estDeal:"₱1–3M", priority:"Watch", lastAction:"No contact yet", nextMove:"Find procurement contact" },
   ],
   nid: 100,
 };
