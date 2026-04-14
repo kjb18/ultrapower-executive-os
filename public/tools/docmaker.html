@@ -387,6 +387,19 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
             <label class="form-label">Subject Line</label>
             <input class="form-input" id="doc-subject" placeholder="e.g. Offer for High Pressure Ball Valves" />
           </div>
+          <div class="form-group">
+            <label class="form-label">Salutation</label>
+            <div style="display:flex;gap:8px;margin-top:4px">
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;cursor:pointer;padding:8px 14px;border:1.5px solid #e0e0de;border-radius:7px;flex:1;transition:all 0.15s" id="sal-sir-lbl">
+                <input type="radio" name="salutation" id="sal-sir" value="Dear Sir," style="accent-color:#0066cc;width:15px;height:15px;cursor:pointer" checked onchange="updateSalutation()">
+                Dear Sir,
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;cursor:pointer;padding:8px 14px;border:1.5px solid #e0e0de;border-radius:7px;flex:1;transition:all 0.15s" id="sal-maam-lbl">
+                <input type="radio" name="salutation" id="sal-maam" value="Dear Ma'am," style="accent-color:#0066cc;width:15px;height:15px;cursor:pointer" onchange="updateSalutation()">
+                Dear Ma'am,
+              </label>
+            </div>
+          </div>
           <div class="form-group full" id="shipping-group" style="display:none">
             <label class="form-label">Shipping / Delivery From</label>
             <input class="form-input" id="shipping-from" placeholder="e.g. Sufa Factory" />
@@ -900,7 +913,7 @@ function openPreview() {
     </div>
 
     ${subject?`<div class="doc-subject"><strong>Subject:</strong> ${subject}</div>`:''}
-    ${introText?`<div class="doc-salutation">Dear Sir/Madam,</div><div class="doc-intro">${introText}</div>`:''}
+    ${introText?`<div class="doc-salutation">${getSalutation()}</div><div class="doc-intro">${introText}</div>`:''}
 
     <table class="doc-table">
       <thead>
@@ -1090,6 +1103,20 @@ function printWithFilename() {
     if (root) root.remove();
   }, 2000);
 }
+
+function getSalutation() {
+  const sal = document.querySelector('input[name="salutation"]:checked');
+  return sal ? sal.value : "Dear Sir,";
+}
+function updateSalutation() {
+  const sirLbl = document.getElementById('sal-sir-lbl');
+  const maamLbl = document.getElementById('sal-maam-lbl');
+  const sal = document.querySelector('input[name="salutation"]:checked');
+  if (sirLbl) sirLbl.style.borderColor = sal && sal.value === "Dear Sir," ? '#0066cc' : '#e0e0de';
+  if (maamLbl) maamLbl.style.borderColor = sal && sal.value !== "Dear Sir," ? '#0066cc' : '#e0e0de';
+}
+// Init on load
+document.addEventListener('DOMContentLoaded', function() { updateSalutation(); });
 </script>
 </body>
 </html>
