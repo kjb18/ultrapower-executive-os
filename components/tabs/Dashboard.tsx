@@ -5,6 +5,8 @@ import {
   MOMENTUM, TB_COLORS, PW, PB,
   pad, getTodayKey, getResetMs, fmtCountdown, pctColor,
   DEFAULT_OS, DEFAULT_MFP, OSData, MFPDay, TimeBlock,
+  BREWING_CATEGORIES, BREWING_COLORS, CROSSHAIRS_PRIORITY_COLORS,
+  BrewingItem, CrosshairsTarget,
 } from "@/lib/constants";
 import Calendar from "@/components/Calendar";
 
@@ -54,13 +56,23 @@ export default function Dashboard() {
   const [editOKR, setEditOKR] = useState<number|null>(null);
   const [editKPI, setEditKPI] = useState<number|null>(null);
   const [editTB, setEditTB] = useState<number|null>(null);
+  const [editBrewing, setEditBrewing] = useState<number|null>(null);
+  const [editCH, setEditCH] = useState<number|null>(null);
   const [insight, setInsight] = useState("");
   const [iLoad, setILoad] = useState(false);
+
+  // Brewing form state
+  const [newBrew, setNewBrew] = useState({what:"",who:"",since:"",category:"Client" as BrewingItem["category"]});
+  const [showBrewForm, setShowBrewForm] = useState(false);
+
+  // Crosshairs form state
+  const [newCH, setNewCH] = useState({company:"",sector:"",estDeal:"",priority:"Medium" as CrosshairsTarget["priority"],lastAction:"",nextMove:""});
+  const [showCHForm, setShowCHForm] = useState(false);
 
   useEffect(() => {
     (async () => {
       const [osData, mfpData] = await Promise.all([kvGet<OSData>("dashboard"), kvGet<MFPDay>(`mfp:${tk}`)]);
-      if (osData) setOSRaw(osData);
+      if (osData) setOSRaw({...DEFAULT_OS,...osData, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]});
       if (mfpData) setMFPRaw(mfpData);
       setLoaded(true);
     })();
@@ -107,16 +119,36 @@ export default function Dashboard() {
   const callAPI = async (system:string,user:string) => { const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system,user,max_tokens:400})}); const d=await res.json(); return d?.text||null; };
   const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.name} ${o.pct}%`).join(", ")}. KPIs: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
 
+  const addBrew = () => {
+    if (!newBrew.what.trim()) return;
+    const id = os.nid||100;
+    setOS({brewing:[...( os.brewing||[]),{...newBrew,id}],nid:id+1});
+    setNewBrew({what:"",who:"",since:"",category:"Client"});
+    setShowBrewForm(false);
+  };
+
+  const addCH = () => {
+    if (!newCH.company.trim()) return;
+    const id = os.nid||100;
+    setOS({crosshairs:[...(os.crosshairs||[]),{...newCH,id}],nid:id+1});
+    setNewCH({company:"",sector:"",estDeal:"",priority:"Medium",lastAction:"",nextMove:""});
+    setShowCHForm(false);
+  };
+
   const P:React.CSSProperties = {background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,padding:"18px 20px"};
   const PL:React.CSSProperties = {fontSize:11,fontWeight:600,letterSpacing:"0.12em",textTransform:"uppercase",color:"#b0bec8",marginBottom:12,fontFamily:"'DM Mono',monospace",display:"flex",alignItems:"center",justifyContent:"space-between"};
   const INP:React.CSSProperties = {fontSize:14,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332"};
   const ABTN:React.CSSProperties = {fontSize:13,padding:"8px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"};
+  const SBTN:React.CSSProperties = {fontSize:11,padding:"3px 9px",borderRadius:20,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",fontWeight:500};
 
   if (!loaded) return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#b0bec8",fontSize:14,fontFamily:"'DM Mono',monospace"}}>Loading dashboard...</div>;
 
+  const brewing = os.brewing||[];
+  const crosshairs = os.crosshairs||[];
+
   return (
     <div style={{flex:1,overflow:"auto"}}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} .del-btn{font-size:12px;color:#d0d8e0;cursor:pointer;padding:0 3px} .del-btn:hover{color:#A32D2D} .okr-item{padding:8px 0;border-bottom:0.5px solid #f0f2f5;cursor:pointer} .okr-item:last-child{border-bottom:none} .kpi-c{background:#f8f9fb;border:0.5px solid #eaecef;border-radius:10px;padding:12px 14px;cursor:pointer} .tb-r{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:0.5px solid #f0f2f5} .tb-r:last-child{border-bottom:none} .ai-b{width:100%;padding:12px;border-radius:10px;border:0.5px solid #e2e6ea;background:#f8f9fb;color:#1a2332;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px} .ai-b:hover:not(:disabled){background:#EBF3FC;border-color:#c5ddf5;color:#185FA5} .ai-b:disabled{opacity:0.6;cursor:not-allowed}`}</style>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} .del-btn{font-size:12px;color:#d0d8e0;cursor:pointer;padding:0 3px} .del-btn:hover{color:#A32D2D} .okr-item{padding:8px 0;border-bottom:0.5px solid #f0f2f5;cursor:pointer} .okr-item:last-child{border-bottom:none} .kpi-c{background:#f8f9fb;border:0.5px solid #eaecef;border-radius:10px;padding:12px 14px;cursor:pointer} .tb-r{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:0.5px solid #f0f2f5} .tb-r:last-child{border-bottom:none} .ai-b{width:100%;padding:12px;border-radius:10px;border:0.5px solid #e2e6ea;background:#f8f9fb;color:#1a2332;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px} .ai-b:hover:not(:disabled){background:#EBF3FC;border-color:#c5ddf5;color:#185FA5} .ai-b:disabled{opacity:0.6;cursor:not-allowed} .brew-row:hover{background:#fafbfc} .ch-row:hover{background:#fafbfc}`}</style>
 
       {/* Topbar */}
       <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"13px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:5}}>
@@ -169,7 +201,6 @@ export default function Dashboard() {
             <option value="">— Select MIT —</option>
             {os.mits.filter(m=>!m.done).map(m=><option key={m.id} value={m.id}>{m.text.slice(0,44)}{m.text.length>44?"…":""}</option>)}
           </select>
-          {/* Timer ring - properly centered */}
           <div style={{position:"relative",width:130,height:130,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12}}>
             <svg width="130" height="130" viewBox="0 0 80 80" style={{position:"absolute",top:0,left:0}}>
               <circle cx="40" cy="40" r="34" fill="none" stroke="#f0f2f5" strokeWidth="5"/>
@@ -222,14 +253,11 @@ export default function Dashboard() {
         <div style={P}>
           <div style={PL}>
             <span>Business KPIs</span>
-            <button onClick={()=>{const id=os.nid||100;setOS({kpis:[...os.kpis,{id,label:"New KPI",value:"—",delta:"0%",up:null}],nid:id+1});setEditKPI(id);}}
-              style={{fontSize:11,padding:"3px 9px",borderRadius:20,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",fontWeight:500}}>
-              + Add KPI
-            </button>
+            <button onClick={()=>{const id=os.nid||100;setOS({kpis:[...os.kpis,{id,label:"New KPI",value:"—",delta:"0%",up:null}],nid:id+1});setEditKPI(id);}} style={SBTN}>+ Add KPI</button>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {os.kpis.map(k=>(
-              <div key={k.id} className="kpi-c" onDoubleClick={()=>setEditKPI(k.id)} style={{position:"relative"}}>
+              <div key={k.id} className="kpi-c" onDoubleClick={()=>setEditKPI(k.id)}>
                 {editKPI===k.id?(
                   <div style={{display:"flex",flexDirection:"column",gap:7}}>
                     <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={k.label} placeholder="Label"
@@ -238,7 +266,6 @@ export default function Dashboard() {
                       onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,value:e.target.value}:x)})}/>
                     <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={k.delta} placeholder="Delta e.g. +12%"
                       onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,delta:e.target.value}:x)})}/>
-                    {/* Up/down/neutral toggle */}
                     <div style={{display:"flex",gap:6}}>
                       {([["▲","up",true,"#3B6D11","#f0faf5"],["→","neutral",null,"#8a9ab0","#f8f9fb"],["▼","down",false,"#A32D2D","#FEF0F0"]] as [string,string,boolean|null,string,string][]).map(([icon,lbl,val,fg,bg])=>(
                         <button key={lbl} onClick={()=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,up:val}:x)})}
@@ -248,23 +275,15 @@ export default function Dashboard() {
                       ))}
                     </div>
                     <div style={{display:"flex",gap:6}}>
-                      <button onClick={()=>setEditKPI(null)}
-                        style={{flex:1,padding:"6px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>
-                        Done
-                      </button>
-                      <button onClick={()=>{setOS({kpis:os.kpis.filter(x=>x.id!==k.id)});setEditKPI(null);}}
-                        style={{padding:"6px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:12}}>
-                        Delete
-                      </button>
+                      <button onClick={()=>setEditKPI(null)} style={{flex:1,padding:"6px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>Done</button>
+                      <button onClick={()=>{setOS({kpis:os.kpis.filter(x=>x.id!==k.id)});setEditKPI(null);}} style={{padding:"6px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:12}}>Delete</button>
                     </div>
                   </div>
                 ):(
                   <>
                     <div style={{fontSize:22,fontWeight:600,color:k.up===true?"#3B6D11":k.up===false?"#A32D2D":"#1a2332",fontFamily:"'DM Mono',monospace"}}>{k.value}</div>
                     <div style={{fontSize:11,color:"#b0bec8",letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:"'DM Mono',monospace",marginTop:3}}>{k.label}</div>
-                    <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",marginTop:4,color:k.up===true?"#3B6D11":k.up===false?"#A32D2D":"#8a9ab0"}}>
-                      {k.up===true?"▲ ":k.up===false?"▼ ":"→ "}{k.delta}
-                    </div>
+                    <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",marginTop:4,color:k.up===true?"#3B6D11":k.up===false?"#A32D2D":"#8a9ab0"}}>{k.up===true?"▲ ":k.up===false?"▼ ":"→ "}{k.delta}</div>
                   </>
                 )}
               </div>
@@ -273,7 +292,7 @@ export default function Dashboard() {
           <div style={{fontSize:11,color:"#b0bec8",marginTop:8,textAlign:"right"}}>double-tap any card to edit</div>
         </div>
 
-        {/* Time Blocks — with inline double-tap editing */}
+        {/* Time Blocks */}
         <div style={{...P,gridColumn:"span 2"}}>
           <div style={PL}>
             <span>Time Blocks — Today</span>
@@ -312,6 +331,155 @@ export default function Dashboard() {
           </div>
         </div>
 
+        {/* BREWING */}
+        <div style={{...P,gridColumn:"span 2"}}>
+          <div style={PL}>
+            <span>Brewing</span>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:11,padding:"2px 9px",borderRadius:20,background:"#f0f2f5",color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{brewing.length} pending</span>
+              <button style={SBTN} onClick={()=>setShowBrewForm(s=>!s)}>{showBrewForm?"Cancel":"+ Add"}</button>
+            </div>
+          </div>
+
+          {showBrewForm&&(
+            <div style={{background:"#f8f9fb",borderRadius:10,padding:"14px",marginBottom:14,border:"0.5px solid #e2e6ea"}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8,marginBottom:10}}>
+                <div>
+                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>What</div>
+                  <input style={{...INP,width:"100%"}} placeholder="What are you waiting on?" value={newBrew.what} onChange={e=>setNewBrew(b=>({...b,what:e.target.value}))}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Who</div>
+                  <input style={{...INP,width:"100%"}} placeholder="Who is responsible?" value={newBrew.who} onChange={e=>setNewBrew(b=>({...b,who:e.target.value}))}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Since</div>
+                  <input style={{...INP,width:"100%"}} placeholder="e.g. Apr 3" value={newBrew.since} onChange={e=>setNewBrew(b=>({...b,since:e.target.value}))}/>
+                </div>
+                <div>
+                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Category</div>
+                  <select style={{...INP,width:"100%"}} value={newBrew.category} onChange={e=>setNewBrew(b=>({...b,category:e.target.value as BrewingItem["category"]}))}>
+                    {BREWING_CATEGORIES.map(c=><option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <button onClick={addBrew} style={{...ABTN,fontSize:13}}>Save</button>
+            </div>
+          )}
+
+          {brewing.length===0&&!showBrewForm&&(
+            <div style={{textAlign:"center",padding:"20px 0",fontSize:13,color:"#b0bec8"}}>Nothing brewing. Add items that are out of your hands but need tracking.</div>
+          )}
+
+          {brewing.map((b,i)=>(
+            <div key={b.id} className="brew-row" style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 0",borderBottom:i===brewing.length-1?"none":"0.5px solid #f0f2f5",cursor:"pointer"}}
+              onDoubleClick={()=>setEditBrewing(b.id)}>
+              {editBrewing===b.id?(
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,flex:1,alignItems:"end"}}>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={b.what} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,what:e.target.value}:x)})} placeholder="What" autoFocus/>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={b.who} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,who:e.target.value}:x)})} placeholder="Who"/>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={b.since} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,since:e.target.value}:x)})} placeholder="Since"/>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>setEditBrewing(null)} style={{flex:1,padding:"7px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>Done</button>
+                    <button onClick={()=>{setOS({brewing:brewing.filter(x=>x.id!==b.id)});setEditBrewing(null);}} style={{padding:"7px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:13}}>✕</button>
+                  </div>
+                </div>
+              ):(
+                <>
+                  <div style={{width:9,height:9,borderRadius:"50%",background:BREWING_COLORS[b.category]?.fg||"#b0bec8",flexShrink:0,marginTop:5}}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:14,color:"#1a2332",fontWeight:500,lineHeight:1.4}}>{b.what}</div>
+                    <div style={{fontSize:11,color:"#8a9ab0",marginTop:2,fontFamily:"'DM Mono',monospace"}}>{b.who}{b.since?` · Since ${b.since}`:""}</div>
+                  </div>
+                  <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:BREWING_COLORS[b.category]?.bg,color:BREWING_COLORS[b.category]?.fg,fontFamily:"'DM Mono',monospace",fontWeight:600,flexShrink:0}}>{b.category}</span>
+                </>
+              )}
+            </div>
+          ))}
+          {brewing.length>0&&<div style={{fontSize:11,color:"#b0bec8",marginTop:6,textAlign:"right"}}>double-tap to edit</div>}
+        </div>
+
+        {/* CROSSHAIRS */}
+        <div style={{...P,gridColumn:"span 2"}}>
+          <div style={PL}>
+            <span>Crosshairs</span>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{fontSize:11,padding:"2px 9px",borderRadius:20,background:"#FEF0F0",color:"#A32D2D",fontFamily:"'DM Mono',monospace"}}>{crosshairs.length} targets</span>
+              <button style={SBTN} onClick={()=>setShowCHForm(s=>!s)}>{showCHForm?"Cancel":"+ Add Target"}</button>
+            </div>
+          </div>
+
+          {showCHForm&&(
+            <div style={{background:"#f8f9fb",borderRadius:10,padding:"14px",marginBottom:14,border:"0.5px solid #e2e6ea"}}>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8,marginBottom:10}}>
+                {([["Company","company","Company name"],["Sector","sector","e.g. Power Generation"],["Est. Deal","estDeal","e.g. ₱2–4M"],["Last Action","lastAction","What happened last?"],["Next Move","nextMove","What will you do next?"]] as [string,string,string][]).map(([lbl,k,ph])=>(
+                  <div key={k}>
+                    <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>{lbl}</div>
+                    <input style={{...INP,width:"100%"}} placeholder={ph} value={(newCH as Record<string,string>)[k]} onChange={e=>setNewCH(c=>({...c,[k]:e.target.value}))}/>
+                  </div>
+                ))}
+                <div>
+                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Priority</div>
+                  <select style={{...INP,width:"100%"}} value={newCH.priority} onChange={e=>setNewCH(c=>({...c,priority:e.target.value as CrosshairsTarget["priority"]}))}>
+                    <option>High</option><option>Medium</option><option>Watch</option>
+                  </select>
+                </div>
+              </div>
+              <button onClick={addCH} style={{...ABTN,fontSize:13}}>Save Target</button>
+            </div>
+          )}
+
+          {crosshairs.length===0&&!showCHForm&&(
+            <div style={{textAlign:"center",padding:"20px 0",fontSize:13,color:"#b0bec8"}}>No targets yet. Add companies you are actively pursuing.</div>
+          )}
+
+          {/* Table header */}
+          {crosshairs.length>0&&(
+            <div style={{display:"grid",gridTemplateColumns:"10px 1fr 90px 1fr 1fr",gap:12,padding:"6px 0 8px",borderBottom:"0.5px solid #f0f2f5",marginBottom:2}}>
+              {["","Company","Priority","Last Action","Next Move"].map(h=>(
+                <div key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</div>
+              ))}
+            </div>
+          )}
+
+          {crosshairs.map((t,i)=>(
+            <div key={t.id} className="ch-row" style={{display:"grid",gridTemplateColumns:"10px 1fr 90px 1fr 1fr",gap:12,padding:"10px 0",borderBottom:i===crosshairs.length-1?"none":"0.5px solid #f0f2f5",alignItems:"start",cursor:"pointer"}}
+              onDoubleClick={()=>setEditCH(t.id)}>
+              {editCH===t.id?(
+                <div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,alignItems:"end"}}>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.company} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,company:e.target.value}:x)})} placeholder="Company" autoFocus/>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.sector} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,sector:e.target.value}:x)})} placeholder="Sector"/>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.estDeal} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,estDeal:e.target.value}:x)})} placeholder="Est. Deal"/>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.lastAction} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,lastAction:e.target.value}:x)})} placeholder="Last Action"/>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.nextMove} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,nextMove:e.target.value}:x)})} placeholder="Next Move"/>
+                  <div style={{display:"flex",gap:6}}>
+                    {(["High","Medium","Watch"] as const).map(p=>(
+                      <button key={p} onClick={()=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,priority:p}:x)})}
+                        style={{flex:1,padding:"6px 0",borderRadius:7,border:`1.5px solid ${t.priority===p?CROSSHAIRS_PRIORITY_COLORS[p].fg:"#e2e6ea"}`,background:t.priority===p?CROSSHAIRS_PRIORITY_COLORS[p].bg:"#fff",color:t.priority===p?CROSSHAIRS_PRIORITY_COLORS[p].fg:"#b0bec8",cursor:"pointer",fontSize:11,fontWeight:600}}>
+                        {p}
+                      </button>
+                    ))}
+                    <button onClick={()=>setEditCH(null)} style={{flex:1,padding:"6px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>Done</button>
+                    <button onClick={()=>{setOS({crosshairs:crosshairs.filter(x=>x.id!==t.id)});setEditCH(null);}} style={{padding:"6px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:13}}>✕</button>
+                  </div>
+                </div>
+              ):(
+                <>
+                  <div style={{width:10,height:10,borderRadius:"50%",background:CROSSHAIRS_PRIORITY_COLORS[t.priority]?.fg||"#b0bec8",marginTop:4}}/>
+                  <div>
+                    <div style={{fontSize:14,fontWeight:500,color:"#1a2332"}}>{t.company}</div>
+                    <div style={{fontSize:11,color:"#8a9ab0",marginTop:2,fontFamily:"'DM Mono',monospace"}}>{t.sector}{t.estDeal?` · ${t.estDeal}`:""}</div>
+                  </div>
+                  <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:CROSSHAIRS_PRIORITY_COLORS[t.priority]?.bg,color:CROSSHAIRS_PRIORITY_COLORS[t.priority]?.fg,fontFamily:"'DM Mono',monospace",fontWeight:600,display:"inline-block"}}>{t.priority}</span>
+                  <div style={{fontSize:13,color:"#4a6a8a",lineHeight:1.5}}>{t.lastAction}</div>
+                  <div style={{fontSize:13,color:"#185FA5",lineHeight:1.5,fontWeight:500}}>{t.nextMove}</div>
+                </>
+              )}
+            </div>
+          ))}
+          {crosshairs.length>0&&<div style={{fontSize:11,color:"#b0bec8",marginTop:6,textAlign:"right"}}>double-tap any row to edit</div>}
+        </div>
+
         {/* Calendar */}
         <Calendar timeBlocks={os.tbs}/>
 
@@ -326,7 +494,7 @@ export default function Dashboard() {
         </div>
 
       </div>
-      <div style={{textAlign:"center",fontSize:11,color:"#c8d0d8",fontFamily:"'DM Mono',monospace",padding:"8px 0 16px"}}>Ultra Power Executive OS · Resets in {timeLeft}</div>
+      <div style={{height:16}}/>
     </div>
   );
 }
