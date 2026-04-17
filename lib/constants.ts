@@ -69,10 +69,12 @@ export const PB = 5 * 60;
 export function pad(n: number) { return String(n).padStart(2, "0"); }
 
 export function getTodayKey() {
-  const n = new Date(), b = new Date(n);
-  b.setHours(3, 0, 0, 0);
-  if (n < b) b.setDate(b.getDate() - 1);
-  return b.toISOString().split("T")[0];
+  // Use Philippine Time (UTC+8) explicitly to ensure consistent key across devices
+  const now = new Date();
+  const ph = new Date(now.toLocaleString("en-US", { timeZone: "Asia/Manila" }));
+  // 3am reset logic
+  if (ph.getHours() < 3) ph.setDate(ph.getDate() - 1);
+  return `${ph.getFullYear()}-${String(ph.getMonth()+1).padStart(2,"0")}-${String(ph.getDate()).padStart(2,"0")}`;
 }
 
 export function getResetMs() {

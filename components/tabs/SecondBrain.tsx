@@ -11,6 +11,8 @@ export default function SecondBrain() {
   const [filter, setFilter] = useState<BrainType|"All">("All");
   const [search, setSearch] = useState("");
   const [nid, setNid] = useState(200);
+  const [editId, setEditId] = useState<number|null>(null);
+  const [editText, setEditText] = useState("");
 
   useEffect(() => {
     (async () => {
@@ -28,9 +30,14 @@ export default function SecondBrain() {
 
   const addItem = () => {
     if (!input.trim()) return;
-    const newItem:BrainItem = {id:nid, type, text:input.trim()};
-    setItems([newItem,...items], nid+1);
+    setItems([{id:nid, type, text:input.trim()}, ...items], nid+1);
     setInput("");
+  };
+
+  const saveEdit = (id:number) => {
+    if (!editText.trim()) return;
+    setItems(items.map(b => b.id===id ? {...b, text:editText.trim()} : b));
+    setEditId(null); setEditText("");
   };
 
   const filtered = items
@@ -48,7 +55,6 @@ export default function SecondBrain() {
           <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>Typed capture — Idea, Decision, Task, Reference, Note</div>
         </div>
         <div style={P}>
-          {/* Type selector */}
           <div style={{display:"flex",gap:6,marginBottom:10,flexWrap:"wrap"}}>
             {BRAIN_TYPES.map(t=>(
               <button key={t} onClick={()=>setType(t)} style={{fontSize:12,padding:"4px 11px",borderRadius:20,border:"0.5px solid #e2e6ea",cursor:"pointer",fontWeight:500,background:type===t?BRAIN_COLORS[t].fg:"#fff",color:type===t?"#fff":"#8a9ab0",borderColor:type===t?BRAIN_COLORS[t].fg:"#e2e6ea"}}>
@@ -56,20 +62,14 @@ export default function SecondBrain() {
               </button>
             ))}
           </div>
-
-          {/* Input row */}
-          <div style={{display:"flex",gap:8,marginBottom:16}}>
+          <div style={{display:"flex",gap:8,marginBottom:14}}>
             <input style={{...INP,flex:1}} placeholder="What's on your mind?" value={input}
               onChange={e=>setInput(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addItem()}/>
             <button onClick={addItem} style={{fontSize:13,padding:"8px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"}}>+ Capture</button>
           </div>
-
-          {/* Search bar */}
           <div style={{marginBottom:12}}>
             <input style={{...INP,width:"100%"}} placeholder="Search your brain..." value={search} onChange={e=>setSearch(e.target.value)}/>
           </div>
-
-          {/* Filter pills */}
           <div style={{display:"flex",gap:6,marginBottom:14,flexWrap:"wrap"}}>
             {(["All",...BRAIN_TYPES] as const).map(t=>(
               <button key={t} onClick={()=>setFilter(t as BrainType|"All")} style={{fontSize:12,padding:"4px 11px",borderRadius:20,border:"0.5px solid #e2e6ea",cursor:"pointer",fontWeight:500,background:filter===t?(t==="All"?"#1a2332":BRAIN_COLORS[t as BrainType].fg):"#fff",color:filter===t?"#fff":"#8a9ab0",borderColor:filter===t?(t==="All"?"#1a2332":BRAIN_COLORS[t as BrainType].fg):"#e2e6ea"}}>
@@ -77,17 +77,31 @@ export default function SecondBrain() {
               </button>
             ))}
           </div>
-
-          {/* Items */}
           {!loaded&&<div style={{fontSize:13,color:"#b0bec8",textAlign:"center",padding:"24px 0"}}>Loading...</div>}
           {loaded&&filtered.length===0&&<div style={{fontSize:13,color:"#b0bec8",textAlign:"center",padding:"24px 0"}}>{search?"No results found.":"Nothing captured yet."}</div>}
           {filtered.map((b,i)=>(
-            <div key={b.id} style={{display:"flex",alignItems:"flex-start",gap:9,padding:"8px 0",borderBottom:i===filtered.length-1?"none":"0.5px solid #f0f2f5"}}>
+            <div key={b.id} style={{display:"flex",alignItems:"flex-start",gap:9,padding:"9px 0",borderBottom:i===filtered.length-1?"none":"0.5px solid #f0f2f5"}}>
               <span style={{fontSize:10,padding:"3px 8px",borderRadius:20,fontWeight:600,fontFamily:"'DM Mono',monospace",flexShrink:0,marginTop:2,background:BRAIN_COLORS[b.type]?.bg,color:BRAIN_COLORS[b.type]?.fg}}>
                 {b.type.toUpperCase()}
               </span>
-              <div style={{fontSize:14,color:"#3a4a5a",lineHeight:1.5,flex:1}}>{b.text}</div>
-              <div onClick={()=>setItems(items.filter(x=>x.id!==b.id))} style={{fontSize:11,color:"#d0d8e0",cursor:"pointer",padding:"0 3px",flexShrink:0}}>✕</div>
+              {editId===b.id ? (
+                <div style={{flex:1,display:"flex",gap:6}}>
+                  <input style={{...INP,flex:1,border:"1px solid #185FA5"}} value={editText}
+                    onChange={e=>setEditText(e.target.value)}
+                    onKeyDown={e=>{if(e.key==="Enter")saveEdit(b.id);if(e.key==="Escape"){setEditId(null);setEditText("");}}}
+                    autoFocus/>
+                  <button onClick={()=>saveEdit(b.id)} style={{fontSize:12,padding:"5px 10px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Save</button>
+                  <button onClick={()=>{setEditId(null);setEditText("");}} style={{fontSize:12,padding:"5px 8px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>✕</button>
+                </div>
+              ) : (
+                <>
+                  <div style={{fontSize:14,color:"#3a4a5a",lineHeight:1.5,flex:1}}>{b.text}</div>
+                  <div style={{display:"flex",gap:4,flexShrink:0}}>
+                    <div onClick={()=>{setEditId(b.id);setEditText(b.text);}} style={{fontSize:11,color:"#b0bec8",cursor:"pointer",padding:"0 3px"}} title="Edit">✏️</div>
+                    <div onClick={()=>setItems(items.filter(x=>x.id!==b.id))} style={{fontSize:11,color:"#d0d8e0",cursor:"pointer",padding:"0 3px"}} title="Delete">✕</div>
+                  </div>
+                </>
+              )}
             </div>
           ))}
         </div>

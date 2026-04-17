@@ -60,6 +60,7 @@ export default function Dashboard() {
   const [editCH, setEditCH] = useState<number|null>(null);
   const [insight, setInsight] = useState("");
   const [iLoad, setILoad] = useState(false);
+  const [collapsed, setCollapsed] = useState<Record<string,boolean>>({});
 
   // Brewing form state
   const [newBrew, setNewBrew] = useState({what:"",who:"",since:"",category:"Client" as BrewingItem["category"]});
@@ -71,9 +72,17 @@ export default function Dashboard() {
 
   useEffect(() => {
     (async () => {
-      const [osData, mfpData] = await Promise.all([kvGet<OSData>("dashboard"), kvGet<MFPDay>(`mfp:${tk}`)]);
-      if (osData) setOSRaw({...DEFAULT_OS,...osData, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]});
+      const [osData, mfpData, pomoData] = await Promise.all([
+        kvGet<OSData>("dashboard"),
+        kvGet<MFPDay>(`mfp:${getTodayKey()}`),
+        kvGet<{sessions:number}>("pomo:sessions"),
+      ]);
+      // Only use defaults if key was truly never set (null), not if data exists but is empty
+      if (osData !== null) {
+        setOSRaw({...DEFAULT_OS,...osData, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]});
+      }
       if (mfpData) setMFPRaw(mfpData);
+      if (pomoData) setPomoSessions(pomoData.sessions||0);
       setLoaded(true);
     })();
   }, [tk]);
@@ -81,6 +90,9 @@ export default function Dashboard() {
   const setOS = useCallback((patch: Partial<OSData>) => {
     setOSRaw(prev => { const next = {...prev,...patch}; kvSet("dashboard",next); return next; });
   }, []);
+
+  const toggleCollapse = (key:string) => setCollapsed(c => ({...c,[key]:!c[key]}));
+  const isCollapsed = (key:string) => !!collapsed[key];
 
   useEffect(() => { const id = setInterval(()=>setNow(new Date()),1000); return ()=>clearInterval(id); }, []);
 
@@ -90,8 +102,10 @@ export default function Dashboard() {
         setPomoSecs(s => {
           if (s <= 1) {
             clearInterval(pomoRef.current!); setPomoActive(false); playChime("end");
-            if (pomoMode==="work") { setPomoSessions(n=>n+1); setPomoMode("break"); setPomoSecs(PB); }
-            else { setPomoMode("work"); setPomoSecs(PW); }
+            if (pomoMode==="work") {
+              setPomoSessions(n => { const next=n+1; kvSet("pomo:sessions",{sessions:next}); return next; });
+              setPomoMode("break"); setPomoSecs(PB);
+            } else { setPomoMode("work"); setPomoSecs(PW); }
             return 0;
           }
           return s-1;
@@ -175,7 +189,13 @@ export default function Dashboard() {
 
         {/* MITs */}
         <div style={P}>
-          <div style={PL}><span>Most Important Tasks</span><span style={{color:mitsDone===mitsTotal?"#3B6D11":"#854F0B"}}>{mitsDone}/{mitsTotal}</span></div>
+          <div style={PL}><span>Most Important Tasks</span>
+            <div style={{display:"flex",alignItems:"center",gap:8}}>
+              <span style={{color:mitsDone===mitsTotal?"#3B6D11":"#854F0B"}}>{mitsDone}/{mitsTotal}</span>
+              <button style={SBTN} onClick={()=>toggleCollapse("mits")}>{isCollapsed("mits")?"Show":"Hide"}</button>
+            </div>
+          </div>
+          {!isCollapsed("mits")&&<>
           {os.mits.map((m,i)=>(
             <div key={m.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"7px 0",borderBottom:i===os.mits.length-1?"none":"0.5px solid #f0f2f5"}}>
               <div onClick={()=>setOS({mits:os.mits.map(x=>x.id===m.id?{...x,done:!x.done}:x)})}
@@ -190,6 +210,7 @@ export default function Dashboard() {
             <input style={{...INP,flex:1}} placeholder="Add a task..." value={newMIT} onChange={e=>setNewMIT(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMIT()}/>
             <button style={ABTN} onClick={addMIT}>+ Add</button>
           </div>
+          </>}
         </div>
 
         {/* Pomodoro */}
@@ -297,11 +318,13 @@ export default function Dashboard() {
           <div style={PL}>
             <span>Time Blocks — Today</span>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              {curBlock&&<span style={{fontSize:11,background:"#EBF3FC",color:"#185FA5",padding:"3px 10px",borderRadius:20,fontFamily:"'DM Mono',monospace"}}>NOW: {curBlock.label}</span>}
+              {curBlock&&!isCollapsed("tbs")&&<span style={{fontSize:11,background:"#EBF3FC",color:"#185FA5",padding:"3px 10px",borderRadius:20,fontFamily:"'DM Mono',monospace"}}>NOW: {curBlock.label}</span>}
+              <button style={SBTN} onClick={()=>{const id=os.nid||100;setOS({tbs:[...os.tbs,{id,time:"09:00",label:"New Block",sub:"",type:"Deep Work"}],nid:id+1});}}>+ Add</button>
+              <button style={SBTN} onClick={()=>toggleCollapse("tbs")}>{isCollapsed("tbs")?"Show":"Hide"}</button>
               <span style={{fontSize:11,color:"#b0bec8"}}>double-tap to edit</span>
             </div>
           </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:2}}>
+          {!isCollapsed("tbs")&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:2}}>
             {os.tbs.map(tb=>(
               <div key={tb.id} className="tb-r" onDoubleClick={()=>setEditTB(tb.id)}>
                 {editTB===tb.id?(
@@ -311,7 +334,9 @@ export default function Dashboard() {
                     <input style={{...INP,flex:1,border:"1px solid #185FA5",fontSize:13}} defaultValue={tb.label}
                       onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,label:e.target.value}:x)})} placeholder="Label"/>
                     <input style={{...INP,flex:2,border:"1px solid #185FA5",fontSize:13}} defaultValue={tb.sub}
-                      onBlur={e=>{setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,sub:e.target.value}:x)});setEditTB(null);}} placeholder="Description · duration"/>
+                      onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,sub:e.target.value}:x)})} placeholder="Description"/>
+                    <button onClick={()=>setEditTB(null)} style={{fontSize:12,padding:"5px 10px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Done</button>
+                    <button onClick={()=>{setOS({tbs:os.tbs.filter(x=>x.id!==tb.id)});setEditTB(null);}} style={{fontSize:12,padding:"5px 8px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>✕</button>
                   </div>
                 ):(
                   <>
@@ -328,7 +353,7 @@ export default function Dashboard() {
                 )}
               </div>
             ))}
-          </div>
+          </div>}
         </div>
 
         {/* BREWING */}

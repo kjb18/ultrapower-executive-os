@@ -293,6 +293,7 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     <div class="topbar-actions">
       <button class="btn btn-outline" onclick="clearForm()">↺ Clear</button>
       <button class="btn btn-primary" onclick="openPreview()">⊞ Preview & Print</button>
+      <button class="btn btn-outline" onclick="exportDocx()" id="docx-btn" style="margin-left:6px">📄 Export DOCX</button>
     </div>
   </div>
 
@@ -1117,6 +1118,117 @@ function updateSalutation() {
 }
 // Init on load
 document.addEventListener('DOMContentLoaded', function() { updateSalutation(); });
+
+// ── DOCX EXPORT ────────────────────────────────────────────────────────────────
+function exportDocx() {
+  const docxBtn = document.getElementById('docx-btn');
+  if (docxBtn) { docxBtn.textContent = '⏳ Generating...'; docxBtn.disabled = true; }
+
+  // Gather all form data
+  const docNum = document.getElementById('doc-number').value || '';
+  const docDate = document.getElementById('doc-date').value || '';
+  const clientName = document.getElementById('client-name')?.value || '';
+  const clientAttn = document.getElementById('client-attn')?.value || '';
+  const clientDept = document.getElementById('client-dept')?.value || '';
+  const subject = document.getElementById('doc-subject')?.value || '';
+  const salutation = getSalutation ? getSalutation() : 'Dear Sir,';
+
+  const docTypeLabels = { quotation:'Quotation', po:'Purchase Order', rfq:'RFQ Response', invoice:'Invoice', dr:'Delivery Receipt' };
+  const typeLabel = docTypeLabels[currentDocType] || 'Document';
+  const filename = docNum ? `UltraPower_${typeLabel}_${docNum.replace(/[^a-zA-Z0-9\-_]/g,'_')}.docx` : `UltraPower_${typeLabel}_${new Date().toISOString().split('T')[0]}.docx`;
+
+  // Gather line items
+  const rows = document.querySelectorAll('#items-body tr');
+  const lineItems = [];
+  rows.forEach(function(row) {
+    const cells = row.querySelectorAll('td');
+    if (cells.length >= 5) {
+      const desc = cells[1]?.querySelector('input,textarea')?.value || cells[1]?.textContent || '';
+      const qty = cells[2]?.querySelector('input')?.value || '';
+      const unit = cells[3]?.querySelector('input')?.value || '';
+      const price = cells[4]?.querySelector('input')?.value || '';
+      const amount = cells[5]?.querySelector('input,span')?.textContent || cells[5]?.textContent || '';
+      if (desc.trim()) lineItems.push({ desc, qty, unit, price, amount });
+    }
+  });
+
+  // Build DOCX content as HTML string for download
+  const htmlContent = `<!DOCTYPE html>
+<html><head><meta charset="UTF-8">
+<style>
+  body { font-family: Arial, sans-serif; font-size: 11pt; margin: 2.5cm; color: #1a1a2e; }
+  .header { display: flex; justify-content: space-between; margin-bottom: 24pt; }
+  .company-name { font-size: 18pt; font-weight: bold; color: #0066cc; }
+  .company-sub { font-size: 9pt; color: #666; }
+  .doc-type { font-size: 14pt; font-weight: bold; text-align: right; color: #1a1a2e; }
+  .doc-num { font-size: 10pt; color: #666; text-align: right; }
+  .divider { border-top: 2px solid #0066cc; margin: 12pt 0; }
+  .client-block { margin-bottom: 16pt; }
+  .field-label { font-size: 9pt; color: #666; }
+  .field-value { font-size: 11pt; font-weight: 600; }
+  .subject-block { background: #f0f4ff; border-left: 3px solid #0066cc; padding: 8pt 12pt; margin: 12pt 0; }
+  .salutation { margin: 12pt 0 8pt; }
+  table { width: 100%; border-collapse: collapse; margin: 12pt 0; }
+  th { background: #0066cc; color: white; padding: 7pt 9pt; font-size: 10pt; text-align: left; }
+  td { padding: 6pt 9pt; border-bottom: 1px solid #e8e8e8; font-size: 10pt; }
+  tr:nth-child(even) td { background: #f8f9fc; }
+  .total-row td { font-weight: bold; border-top: 2px solid #0066cc; }
+  .footer { margin-top: 24pt; font-size: 9pt; color: #666; border-top: 1px solid #e8e8e8; padding-top: 8pt; }
+  .sig-block { margin-top: 32pt; }
+</style></head><body>
+<div class="header">
+  <div>
+    <div class="company-name">ULTRA POWER</div>
+    <div class="company-sub">Ultra Power Industrial Resources, Inc.</div>
+    <div class="company-sub">Unit 105, 6917 Washington St. Makati City</div>
+    <div class="company-sub">khalil@ultrapowerindustrialinc.com</div>
+  </div>
+  <div>
+    <div class="doc-type">${typeLabel.toUpperCase()}</div>
+    ${docNum ? `<div class="doc-num">No. ${docNum}</div>` : ''}
+    ${docDate ? `<div class="doc-num">Date: ${docDate}</div>` : ''}
+  </div>
+</div>
+<div class="divider"></div>
+<div class="client-block">
+  <div class="field-label">To:</div>
+  <div class="field-value">${clientName || '___________________'}</div>
+  ${clientAttn ? `<div style="margin-top:4pt"><span class="field-label">Attention: </span>${clientAttn}</div>` : ''}
+  ${clientDept ? `<div><span class="field-label">Department: </span>${clientDept}</div>` : ''}
+</div>
+${subject ? `<div class="subject-block"><strong>Subject:</strong> ${subject}</div>` : ''}
+<div class="salutation">${salutation}</div>
+<p>We are pleased to offer the following:</p>
+<table>
+  <thead><tr><th style="width:5%">#</th><th style="width:45%">Description</th><th style="width:10%">Qty</th><th style="width:10%">Unit</th><th style="width:15%">Unit Price</th><th style="width:15%">Amount</th></tr></thead>
+  <tbody>
+    ${lineItems.map((item, i) => `<tr><td>${i+1}</td><td>${item.desc}</td><td>${item.qty}</td><td>${item.unit}</td><td>${item.price}</td><td>${item.amount}</td></tr>`).join('')}
+    ${lineItems.length === 0 ? '<tr><td colspan="6" style="text-align:center;color:#999">No items added</td></tr>' : ''}
+  </tbody>
+</table>
+<div class="sig-block">
+  <p>Thank you for the opportunity to serve you.</p>
+  <br/><br/>
+  <div>_____________________________</div>
+  <div style="margin-top:4pt"><strong>Khalil Joseph Banares</strong></div>
+  <div style="font-size:9pt;color:#666">Engineering Solutions Director</div>
+  <div style="font-size:9pt;color:#666">Ultra Power Industrial Resources, Inc.</div>
+</div>
+<div class="footer">
+  <p>This document is computer-generated and valid without signature unless otherwise stated.</p>
+</div>
+</body></html>`;
+
+  // Convert HTML to blob and download as .doc (Word-compatible HTML)
+  const blob = new Blob([htmlContent], { type: 'application/msword' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url; a.download = filename.replace('.docx', '.doc');
+  document.body.appendChild(a); a.click();
+  document.body.removeChild(a); URL.revokeObjectURL(url);
+
+  if (docxBtn) { docxBtn.textContent = '📄 Export DOCX'; docxBtn.disabled = false; }
+}
 </script>
 </body>
 </html>

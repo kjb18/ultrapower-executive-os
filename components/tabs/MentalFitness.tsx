@@ -21,26 +21,18 @@ export default function MentalFitness() {
 
   useEffect(() => {
     (async () => {
-      const [mfpData, osData] = await Promise.all([
+      const [mfpData, osData, streakData] = await Promise.all([
         kvGet<MFPDay>(`mfp:${tk}`),
         kvGet<typeof DEFAULT_OS>("dashboard"),
+        kvGet<{streak:number;lastDate:string}>("mfp:streak"),
       ]);
       if (mfpData) setMFPRaw(mfpData);
       if (osData) {
         const active = osData.mits.find(m => !m.done);
         if (active) setActiveMIT(active.text);
       }
-      // Streak calc
-      let s = 0;
-      const d = new Date();
-      for (let i = 1; i <= 30; i++) {
-        const b = new Date(d); b.setDate(b.getDate()-i); b.setHours(3,0,0,0);
-        const k = b.toISOString().split("T")[0];
-        const e = await kvGet<MFPDay>(`mfp:${k}`);
-        if (e && e.mood && e.mitDone && e.winDone && e.reflDone) s++;
-        else break;
-      }
-      setStreak(s);
+      // Smart streak -- stored as a counter, updated on completion
+      if (streakData) setStreak(streakData.streak);
       setLoaded(true);
     })();
   }, [tk]);
@@ -49,6 +41,17 @@ export default function MentalFitness() {
     setMFPRaw(prev => {
       const next = { ...prev, ...patch };
       kvSet(`mfp:${tk}`, next);
+      // Update streak when panel is completed
+      const completed = [next.mood, next.mitDone, next.winDone, next.reflDone].every(Boolean);
+      if (completed) {
+        kvGet<{streak:number;lastDate:string}>("mfp:streak").then(s => {
+          const yesterday = new Date(); yesterday.setDate(yesterday.getDate()-1);
+          const yStr = yesterday.toISOString().split("T")[0];
+          const newStreak = s?.lastDate===yStr || s?.lastDate===tk ? (s?.streak||0)+1 : 1;
+          kvSet("mfp:streak", {streak:newStreak, lastDate:tk});
+          setStreak(newStreak);
+        });
+      }
       return next;
     });
   }, [tk]);
@@ -115,7 +118,7 @@ export default function MentalFitness() {
           <div style={{ fontSize:9, fontWeight:600, letterSpacing:"0.12em", textTransform:"uppercase", color:"#b0bec8", marginBottom:9, fontFamily:"'DM Mono',monospace" }}>01 — Mood Check-In</div>
           <div style={{ display:"grid", gridTemplateColumns:"repeat(5,1fr)", gap:6 }}>
             {MOODS.map(m => (
-              <button key={m.id} onClick={() => setMFP({ mood:mfp.mood===m.id?null:m.id, moodTime:mfp.mood===m.id?null:new Date().toLocaleTimeString([],{hour:"2-digit",minute:"2-digit"}) })}
+              <button key={m.id} onClick={() => setMFP({ mood:mfp.mood===m.id?null:m.id, moodTime:mfp.mood===m.id?null:new Date().toLocaleTimeString("en-PH",{hour:"2-digit",minute:"2-digit",hour12:true}) })}
                 style={{ border:`${mfp.mood===m.id?"1.5px solid #185FA5":"0.5px solid #e2e6ea"}`, borderRadius:9, padding:"8px 4px", display:"flex", flexDirection:"column", alignItems:"center", gap:3, cursor:"pointer", background:mfp.mood===m.id?"#EBF3FC":"#fff" }}>
                 <span style={{ fontSize:18, lineHeight:1 }}>{m.emoji}</span>
                 <span style={{ fontSize:9, fontWeight:500, color:mfp.mood===m.id?"#185FA5":"#6a8aaa", textAlign:"center" }}>{m.label}</span>
