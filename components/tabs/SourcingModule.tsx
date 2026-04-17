@@ -111,7 +111,8 @@ export default function SourcingModule() {
         <div style={{display:"flex"}}>
           {(["search","results","history"] as const).map(v=>(
             <button key={v} style={S.tabBtn(view===v)} onClick={()=>setView(v)}>
-              {v==="search"?"New Search":v==="results"?"Report":("History"+(history.length>0?` (${history.length})`:"")))}            </button>
+              {v==="search"?"New Search":v==="results"?"Report":"History"+(history.length>0?` (${history.length})`:"")}
+            </button>
           ))}
         </div>
       </div>
