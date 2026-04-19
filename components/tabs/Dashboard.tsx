@@ -242,39 +242,69 @@ export default function Dashboard() {
           </div>
         </div>
 
-        {/* OKRs */}
-        <div style={P}>
-          <div style={PL}><span>OKR Tracker</span><span>double-tap to edit</span></div>
-          {os.okrs.map(o=>(
-            <div key={o.id} className="okr-item" onDoubleClick={()=>setEditOKR(o.id)}>
-              {editOKR===o.id?(
-                <div style={{display:"flex",flexDirection:"column",gap:6}}>
-                  <input style={{...INP,width:"100%",border:"1px solid #185FA5"}} defaultValue={o.name}
-                    onBlur={e=>{setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,name:e.target.value}:x)});setEditOKR(null);}} autoFocus/>
-                  <input style={{...INP,width:"100%",border:"1px solid #185FA5"}} type="number" min="0" max="100" defaultValue={o.pct}
-                    onBlur={e=>{setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,pct:Math.min(100,Math.max(0,Number(e.target.value)))}:x)});setEditOKR(null);}}/>
-                </div>
-              ):(
-                <>
-                  <div style={{display:"flex",justifyContent:"space-between",marginBottom:5}}>
-                    <span style={{fontSize:14,color:"#3a4a5a"}}>{o.name}</span>
-                    <span style={{fontSize:12,fontWeight:600,fontFamily:"'DM Mono',monospace",color:pctColor(o.pct)}}>{o.pct}%</span>
-                  </div>
-                  <div style={{height:4,background:"#f0f2f5",borderRadius:2,overflow:"hidden"}}>
-                    <div style={{height:"100%",borderRadius:2,width:`${o.pct}%`,background:pctColor(o.pct),transition:"width 0.3s"}}/>
-                  </div>
-                  {o.note&&<div style={{fontSize:11,color:"#b0bec8",marginTop:3}}>{o.note}</div>}
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-
-        {/* KPIs */}
+        {/* OKRs — Objectives & Key Results */}
         <div style={P}>
           <div style={PL}>
-            <span>Business KPIs</span>
-            <button onClick={()=>{const id=os.nid||100;setOS({kpis:[...os.kpis,{id,label:"New KPI",value:"—",delta:"0%",up:null}],nid:id+1});setEditKPI(id);}} style={SBTN}>+ Add KPI</button>
+            <span>OKR Tracker</span>
+            <button onClick={()=>{const id=os.nid||100;setOS({okrs:[...os.okrs,{id,objective:"New Objective",keyResult:"Describe the key result",current:0,target:10,unit:""}],nid:id+1});setEditOKR(id);}} style={SBTN}>+ Add</button>
+          </div>
+          {os.okrs.map(o=>{
+            const pct = o.target>0 ? Math.min(100, Math.round((o.current/o.target)*100)) : 0;
+            return (
+              <div key={o.id} style={{padding:"9px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"pointer"}} className="okr-item" onDoubleClick={()=>setEditOKR(o.id)}>
+                {editOKR===o.id ? (
+                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
+                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={o.objective} placeholder="Objective"
+                      onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,objective:e.target.value}:x)})} autoFocus/>
+                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={o.keyResult} placeholder="Key Result description"
+                      onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,keyResult:e.target.value}:x)})}/>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7}}>
+                      <div>
+                        <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:3,textTransform:"uppercase",letterSpacing:"0.08em"}}>Current</div>
+                        <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} type="number" defaultValue={o.current}
+                          onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,current:Number(e.target.value)}:x)})}/>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:3,textTransform:"uppercase",letterSpacing:"0.08em"}}>Target</div>
+                        <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} type="number" defaultValue={o.target}
+                          onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,target:Number(e.target.value)}:x)})}/>
+                      </div>
+                      <div>
+                        <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:3,textTransform:"uppercase",letterSpacing:"0.08em"}}>Unit</div>
+                        <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={o.unit} placeholder="clients, bids..."
+                          onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,unit:e.target.value}:x)})}/>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",gap:6}}>
+                      <button onClick={()=>setEditOKR(null)} style={{flex:1,padding:"7px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>Done</button>
+                      <button onClick={()=>{setOS({okrs:os.okrs.filter(x=>x.id!==o.id)});setEditOKR(null);}} style={{padding:"7px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:13}}>Delete</button>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <div style={{fontSize:11,color:"#185FA5",fontWeight:600,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:3}}>{o.objective}</div>
+                    <div style={{fontSize:14,color:"#1a2332",marginBottom:6,lineHeight:1.4}}>{o.keyResult}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}>
+                      <div style={{flex:1,height:5,background:"#f0f2f5",borderRadius:3,overflow:"hidden"}}>
+                        <div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pctColor(pct),transition:"width 0.4s"}}/>
+                      </div>
+                      <div style={{fontSize:13,fontWeight:600,fontFamily:"'DM Mono',monospace",color:pctColor(pct),flexShrink:0}}>
+                        {o.current} <span style={{color:"#b0bec8",fontWeight:400}}>/ {o.target}</span> <span style={{fontSize:11,color:"#b0bec8",fontWeight:400}}>{o.unit}</span>
+                      </div>
+                      <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:pctColor(pct),flexShrink:0,minWidth:32,textAlign:"right"}}>{pct}%</div>
+                    </div>
+                  </>
+                )}
+              </div>
+            );
+          })}
+        </div>
+
+        {/* Vitals (formerly KPIs) */}
+        <div style={P}>
+          <div style={PL}>
+            <span>Vitals</span>
+            <button onClick={()=>{const id=os.nid||100;setOS({kpis:[...os.kpis,{id,label:"New Vital",value:"—",delta:"0%",up:null}],nid:id+1});setEditKPI(id);}} style={SBTN}>+ Add</button>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
             {os.kpis.map(k=>(
