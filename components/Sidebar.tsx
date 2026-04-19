@@ -12,6 +12,7 @@ const TABS: {id:TabId;label:string;icon:React.ReactNode}[] = [
   { id:"learning", label:"Daily Learning", icon:<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M2 4h16v12a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1V4z"/><path d="M6 4V2M14 4V2M10 4v12M2 8h16"/></svg> },
   { id:"tools", label:"Tools", icon:<svg width="20" height="20" viewBox="0 0 20 20" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round"><path d="M14.5 2a3.5 3.5 0 0 0-3.4 4.2L3.3 14a1.5 1.5 0 0 0 2.1 2.1l8-7.8A3.5 3.5 0 1 0 14.5 2z"/><path d="M5 5l2 2"/></svg> },
 ];
+  { id: "generate", label: "Generate Topics", icon: "💡" }
 
 interface SidebarProps { active: TabId; onChange: (t: TabId) => void; }
 
