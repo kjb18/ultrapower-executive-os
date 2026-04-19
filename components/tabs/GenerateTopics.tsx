@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect } from "react";
+import type { CSSProperties } from "react";
 
 const STORAGE_KEY = "up_generate_topics_v1";
 
@@ -109,6 +110,77 @@ function getPillarColor(pillar: string): { bg: string; color: string; border: st
   return { bg: "#f1f5f9", color: "#475569", border: "#e2e8f0" };
 }
 
+function cardStyle(status: TopicStatus): CSSProperties {
+  return {
+    background: "#fff",
+    border: `1px solid ${status === "approved" ? "#86efac" : "#E8E8E8"}`,
+    borderLeft: `3px solid ${status === "approved" ? "#22c55e" : status === "rejected" ? "#ccc" : status === "generating" ? "#F5A623" : "#E8E8E8"}`,
+    borderRadius: 12,
+    overflow: "hidden",
+    opacity: status === "rejected" ? 0.5 : 1,
+  };
+}
+
+function tagStyle(bg: string, color: string, border: string): CSSProperties {
+  return { fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 4, background: bg, color, border: `1px solid ${border}` };
+}
+
+function statusBadgeStyle(status: TopicStatus): CSSProperties {
+  const map: Record<string, { background: string; color: string }> = {
+    approved: { background: "#f0fdf4", color: "#15803d" },
+    generating: { background: "#FEF3E2", color: "#C8841A" },
+    rejected: { background: "#f1f5f9", color: "#475569" },
+    pending: { background: "#f1f5f9", color: "#475569" },
+  };
+  return { fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 4, marginLeft: "auto", ...map[status] };
+}
+
+function outputTabStyle(active: boolean): CSSProperties {
+  return {
+    padding: "5px 12px",
+    border: "1px solid #E8E8E8",
+    borderRadius: 6,
+    fontSize: 11,
+    fontWeight: 600,
+    cursor: "pointer",
+    background: active ? "#FEF3E2" : "#fff",
+    color: active ? "#C8841A" : "#666",
+  };
+}
+
+const s: Record<string, CSSProperties> = {
+  page: { padding: "24px", maxWidth: 880, margin: "0 auto", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
+  header: { marginBottom: 20 },
+  h1: { fontSize: 20, fontWeight: 700, margin: 0, color: "#1a1a1a" },
+  sub: { fontSize: 12, color: "#999", marginTop: 2 },
+  configBar: { background: "#fff", border: "1px solid #E8E8E8", borderRadius: 12, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" },
+  label: { fontSize: 12, fontWeight: 600, color: "#666", whiteSpace: "nowrap" },
+  select: { padding: "7px 10px", border: "1px solid #E8E8E8", borderRadius: 7, fontSize: 13, background: "#fff", outline: "none" },
+  notesInput: { flex: 1, minWidth: 180, padding: "7px 10px", border: "1px solid #E8E8E8", borderRadius: 7, fontSize: 13, fontFamily: "inherit", resize: "none", height: 36 },
+  summaryBar: { display: "flex", gap: 20, background: "#fff", border: "1px solid #E8E8E8", borderRadius: 8, padding: "10px 16px", marginBottom: 16, fontSize: 12, color: "#666" },
+  grid: { display: "flex", flexDirection: "column", gap: 12 },
+  cardHeader: { padding: "14px 16px 10px", display: "flex", alignItems: "flex-start", gap: 10 },
+  num: { width: 24, height: 24, borderRadius: "50%", background: "#f0f0f0", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#666", flexShrink: 0, marginTop: 1 },
+  cardTitle: { fontSize: 14, fontWeight: 700, color: "#1a1a1a", marginBottom: 6, lineHeight: 1.4 },
+  tags: { display: "flex", gap: 6, flexWrap: "wrap" },
+  angle: { padding: "0 16px 10px 50px", fontSize: 12, color: "#666", lineHeight: 1.5 },
+  actions: { padding: "8px 16px 12px 50px", display: "flex", gap: 8, flexWrap: "wrap" },
+  btnApprove: { padding: "6px 14px", background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  btnReject: { padding: "6px 14px", background: "#fef2f2", color: "#b91c1c", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  btnRevise: { padding: "6px 14px", background: "#FEF3E2", color: "#C8841A", border: "1px solid #fde68a", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  btnRestore: { padding: "6px 14px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  revisePanel: { padding: "0 16px 12px 50px" },
+  reviseTextarea: { width: "100%", padding: "8px 10px", border: "1px solid #E8E8E8", borderRadius: 7, fontSize: 13, resize: "vertical", minHeight: 56, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" },
+  btnRegen: { padding: "6px 14px", background: "#F5A623", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
+  outputSection: { borderTop: "1px solid #f0f0f0", padding: "12px 16px 14px 50px" },
+  outputTabRow: { display: "flex", gap: 6, marginBottom: 10 },
+  outputBox: { background: "#f9f9f9", border: "1px solid #E8E8E8", borderRadius: 7, padding: 12, fontSize: 12, lineHeight: 1.6, color: "#333", whiteSpace: "pre-wrap", wordBreak: "break-word", maxHeight: 200, overflowY: "auto" },
+  outputActions: { display: "flex", gap: 8, marginTop: 8 },
+  btnCopy: { padding: "5px 12px", background: "#fff", border: "1px solid #E8E8E8", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", color: "#666" },
+  emptyState: { textAlign: "center", padding: "48px 24px", color: "#aaa" },
+  toastBox: { position: "fixed", bottom: 24, right: 24, background: "#1a1a1a", color: "#fff", padding: "10px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, zIndex: 1000, pointerEvents: "none" },
+};
+
 export default function GenerateTopics() {
   const [topics, setTopics] = useState<Topic[]>([]);
   const [count, setCount] = useState(5);
@@ -184,8 +256,7 @@ Mix calendar articles and AI-generated topics based on pillar priority. Return o
   async function approveTopic(id: string) {
     const topic = topics.find((t) => t.id === id);
     if (!topic) return;
-    const updated = topics.map((t) => (t.id === id ? { ...t, status: "generating" as TopicStatus } : t));
-    saveTopics(updated);
+    saveTopics(topics.map((t) => (t.id === id ? { ...t, status: "generating" as TopicStatus } : t)));
     try {
       const userMsg = `Generate all content outputs for this Ultra Power topic:
 Title: ${topic.title}
@@ -196,14 +267,10 @@ Return only the JSON object.`;
       const raw = await callClaude(OUTPUT_SYSTEM, userMsg);
       const outputs = parseJSON(raw);
       saveToOS(topic, outputs);
-      const final = topics.map((t) =>
-        t.id === id ? { ...t, status: "approved" as TopicStatus, outputs } : t
-      );
-      saveTopics(final);
+      saveTopics(topics.map((t) => t.id === id ? { ...t, status: "approved" as TopicStatus, outputs } : t));
       showToast("Approved. Outputs saved to OS.");
     } catch (e) {
-      const reverted = topics.map((t) => (t.id === id ? { ...t, status: "pending" as TopicStatus } : t));
-      saveTopics(reverted);
+      saveTopics(topics.map((t) => (t.id === id ? { ...t, status: "pending" as TopicStatus } : t)));
       showToast("Output generation failed. Try again.");
       console.error(e);
     }
@@ -222,8 +289,7 @@ Return only the JSON object.`;
     const topic = topics.find((t) => t.id === id);
     if (!topic) return;
     const note = reviseInputs[id] || "";
-    const updated = topics.map((t) => (t.id === id ? { ...t, status: "generating" as TopicStatus } : t));
-    saveTopics(updated);
+    saveTopics(topics.map((t) => (t.id === id ? { ...t, status: "generating" as TopicStatus } : t)));
     try {
       const userMsg = `Regenerate ONE content topic for Ultra Power Industrial Resources.
 Original topic: "${topic.title}"
@@ -232,15 +298,11 @@ Revision note: ${note || "General refresh"}
 Return only a JSON array with exactly 1 object.`;
       const raw = await callClaude(SYSTEM_PROMPT, userMsg);
       const newTopic = parseJSON(raw)[0];
-      const final = topics.map((t) =>
-        t.id === id ? { ...t, ...newTopic, status: "pending" as TopicStatus, outputs: null } : t
-      );
-      saveTopics(final);
+      saveTopics(topics.map((t) => t.id === id ? { ...t, ...newTopic, status: "pending" as TopicStatus, outputs: null } : t));
       setReviseOpen((prev) => ({ ...prev, [id]: false }));
       showToast("Topic regenerated.");
     } catch (e) {
-      const reverted = topics.map((t) => (t.id === id ? { ...t, status: "pending" as TopicStatus } : t));
-      saveTopics(reverted);
+      saveTopics(topics.map((t) => (t.id === id ? { ...t, status: "pending" as TopicStatus } : t)));
       showToast("Regeneration failed. Try again.");
       console.error(e);
     }
@@ -302,47 +364,10 @@ Return only a JSON array with exactly 1 object.`;
   const rejected = topics.filter((t) => t.status === "rejected").length;
   const pending = topics.filter((t) => t.status === "pending").length;
 
-  const s: Record<string, React.CSSProperties> = {
-    page: { padding: "24px", maxWidth: 880, margin: "0 auto", fontFamily: "-apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif" },
-    header: { marginBottom: 20 },
-    h1: { fontSize: 20, fontWeight: 700, margin: 0, color: "#1a1a1a" },
-    sub: { fontSize: 12, color: "#999", marginTop: 2 },
-    configBar: { background: "#fff", border: "1px solid #E8E8E8", borderRadius: 12, padding: "14px 18px", display: "flex", alignItems: "center", gap: 12, marginBottom: 16, flexWrap: "wrap" as const },
-    label: { fontSize: 12, fontWeight: 600, color: "#666", whiteSpace: "nowrap" as const },
-    select: { padding: "7px 10px", border: "1px solid #E8E8E8", borderRadius: 7, fontSize: 13, background: "#fff", outline: "none" },
-    notesInput: { flex: 1, minWidth: 180, padding: "7px 10px", border: "1px solid #E8E8E8", borderRadius: 7, fontSize: 13, fontFamily: "inherit", resize: "none" as const, height: 36 },
-    btnGenerate: { padding: "8px 20px", background: generating ? "#ccc" : "#F5A623", color: "#fff", border: "none", borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: generating ? "not-allowed" : "pointer", whiteSpace: "nowrap" as const },
-    summaryBar: { display: "flex", gap: 20, background: "#fff", border: "1px solid #E8E8E8", borderRadius: 8, padding: "10px 16px", marginBottom: 16, fontSize: 12, color: "#666" },
-    grid: { display: "flex", flexDirection: "column" as const, gap: 12 },
-    card: (status: TopicStatus) => ({ background: "#fff", border: `1px solid ${status === "approved" ? "#86efac" : status === "rejected" ? "#E8E8E8" : "#E8E8E8"}`, borderLeft: `3px solid ${status === "approved" ? "#22c55e" : status === "rejected" ? "#ccc" : status === "generating" ? "#F5A623" : "#E8E8E8"}`, borderRadius: 12, overflow: "hidden", opacity: status === "rejected" ? 0.5 : 1 }),
-    cardHeader: { padding: "14px 16px 10px", display: "flex", alignItems: "flex-start", gap: 10 },
-    num: { width: 24, height: 24, borderRadius: "50%", background: "#f0f0f0", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 11, fontWeight: 700, color: "#666", flexShrink: 0, marginTop: 1 },
-    cardTitle: { fontSize: 14, fontWeight: 700, color: "#1a1a1a", marginBottom: 6, lineHeight: 1.4 },
-    tags: { display: "flex", gap: 6, flexWrap: "wrap" as const },
-    tag: (bg: string, color: string, border: string) => ({ fontSize: 10, fontWeight: 600, padding: "2px 7px", borderRadius: 4, background: bg, color, border: `1px solid ${border}` }),
-    angle: { padding: "0 16px 10px 50px", fontSize: 12, color: "#666", lineHeight: 1.5 },
-    actions: { padding: "8px 16px 12px 50px", display: "flex", gap: 8, flexWrap: "wrap" as const },
-    btnApprove: { padding: "6px 14px", background: "#f0fdf4", color: "#15803d", border: "1px solid #86efac", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
-    btnReject: { padding: "6px 14px", background: "#fef2f2", color: "#b91c1c", border: "1px solid #fca5a5", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
-    btnRevise: { padding: "6px 14px", background: "#FEF3E2", color: "#C8841A", border: "1px solid #fde68a", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
-    btnRestore: { padding: "6px 14px", background: "#f1f5f9", color: "#475569", border: "1px solid #e2e8f0", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
-    revisePanel: { padding: "0 16px 12px 50px" },
-    reviseTextarea: { width: "100%", padding: "8px 10px", border: "1px solid #E8E8E8", borderRadius: 7, fontSize: 13, resize: "vertical" as const, minHeight: 56, fontFamily: "inherit", marginBottom: 8, boxSizing: "border-box" as const },
-    btnRegen: { padding: "6px 14px", background: "#F5A623", color: "#fff", border: "none", borderRadius: 6, fontSize: 12, fontWeight: 700, cursor: "pointer" },
-    outputSection: { borderTop: "1px solid #f0f0f0", padding: "12px 16px 14px 50px" },
-    outputTabRow: { display: "flex", gap: 6, marginBottom: 10 },
-    outputTab: (active: boolean) => ({ padding: "5px 12px", border: "1px solid #E8E8E8", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", background: active ? "#FEF3E2" : "#fff", color: active ? "#C8841A" : "#666" }),
-    outputBox: { background: "#f9f9f9", border: "1px solid #E8E8E8", borderRadius: 7, padding: 12, fontSize: 12, lineHeight: 1.6, color: "#333", whiteSpace: "pre-wrap" as const, wordBreak: "break-word" as const, maxHeight: 200, overflowY: "auto" as const },
-    outputActions: { display: "flex", gap: 8, marginTop: 8 },
-    btnCopy: { padding: "5px 12px", background: "#fff", border: "1px solid #E8E8E8", borderRadius: 6, fontSize: 11, fontWeight: 600, cursor: "pointer", color: "#666" },
-    statusBadge: (status: TopicStatus) => ({ fontSize: 11, fontWeight: 700, padding: "3px 8px", borderRadius: 4, marginLeft: "auto", background: status === "approved" ? "#f0fdf4" : status === "generating" ? "#FEF3E2" : "#f1f5f9", color: status === "approved" ? "#15803d" : status === "generating" ? "#C8841A" : "#475569" }),
-    emptyState: { textAlign: "center" as const, padding: "48px 24px", color: "#aaa" },
-    toastBox: { position: "fixed" as const, bottom: 24, right: 24, background: "#1a1a1a", color: "#fff", padding: "10px 16px", borderRadius: 8, fontSize: 12, fontWeight: 600, zIndex: 1000, pointerEvents: "none" as const },
-  };
-
   return (
     <div style={{ flex: 1, overflowY: "auto", background: "#f5f5f5" }}>
       <div style={s.page}>
+
         <div style={s.header}>
           <h1 style={s.h1}>Generate Topics</h1>
           <p style={s.sub}>AI-powered content topic generator for Ultra Power Industrial Resources</p>
@@ -361,7 +386,11 @@ Return only a JSON array with exactly 1 object.`;
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
-          <button style={s.btnGenerate} onClick={generateTopics} disabled={generating}>
+          <button
+            style={{ padding: "8px 20px", background: generating ? "#ccc" : "#F5A623", color: "#fff", border: "none", borderRadius: 7, fontSize: 13, fontWeight: 700, cursor: generating ? "not-allowed" : "pointer", whiteSpace: "nowrap" }}
+            onClick={generateTopics}
+            disabled={generating}
+          >
             {generating ? "Generating..." : "Generate Topics"}
           </button>
         </div>
@@ -391,19 +420,19 @@ Return only a JSON array with exactly 1 object.`;
               const outputs = topic.outputs as Record<string, Record<string, unknown>> | null;
 
               return (
-                <div key={topic.id} style={s.card(topic.status)}>
+                <div key={topic.id} style={cardStyle(topic.status)}>
                   <div style={s.cardHeader}>
                     <div style={s.num}>{idx + 1}</div>
                     <div style={{ flex: 1 }}>
                       <div style={s.cardTitle}>{topic.title}</div>
                       <div style={s.tags}>
-                        <span style={s.tag(pc.bg, pc.color, pc.border)}>{topic.pillar}</span>
-                        <span style={s.tag("#f1f5f9", "#475569", "#e2e8f0")}>{topic.audience}</span>
-                        <span style={s.tag("#f0f0f0", "#888", "#e0e0e0")}>{topic.source}</span>
+                        <span style={tagStyle(pc.bg, pc.color, pc.border)}>{topic.pillar}</span>
+                        <span style={tagStyle("#f1f5f9", "#475569", "#e2e8f0")}>{topic.audience}</span>
+                        <span style={tagStyle("#f0f0f0", "#888", "#e0e0e0")}>{topic.source}</span>
                       </div>
                     </div>
                     {topic.status !== "pending" && (
-                      <span style={s.statusBadge(topic.status)}>
+                      <span style={statusBadgeStyle(topic.status)}>
                         {topic.status === "generating" ? "Generating..." : topic.status.charAt(0).toUpperCase() + topic.status.slice(1)}
                       </span>
                     )}
@@ -445,7 +474,11 @@ Return only a JSON array with exactly 1 object.`;
                     <div style={s.outputSection}>
                       <div style={s.outputTabRow}>
                         {["article", "image", "linkedin", "facebook"].map((tab) => (
-                          <button key={tab} style={s.outputTab(outputTab === tab)} onClick={() => setActiveOutputTab((p) => ({ ...p, [topic.id]: tab }))}>
+                          <button
+                            key={tab}
+                            style={outputTabStyle(outputTab === tab)}
+                            onClick={() => setActiveOutputTab((p) => ({ ...p, [topic.id]: tab }))}
+                          >
                             {tab === "article" ? "Article Brief" : tab === "image" ? "Image Brief" : tab === "linkedin" ? "LinkedIn" : "Facebook"}
                           </button>
                         ))}
