@@ -1,7 +1,17 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="192" height="192" viewBox="0 0 192 192">
-  <rect width="192" height="192" rx="40" fill="#185FA5"/>
-  <rect x="32" y="32" width="54" height="54" rx="10" fill="white"/>
-  <rect x="106" y="32" width="54" height="54" rx="10" fill="white" opacity="0.7"/>
-  <rect x="32" y="106" width="54" height="54" rx="10" fill="white" opacity="0.7"/>
-  <rect x="106" y="106" width="54" height="54" rx="10" fill="white" opacity="0.4"/>
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" style="stop-color:#0D2B5E"/>
+      <stop offset="100%" style="stop-color:#185FA5"/>
+    </linearGradient>
+  </defs>
+  <rect width="192" height="192" rx="42" fill="url(#bg)"/>
+  <path d="M96 18 C96 18 126 36 126 78 L126 111 L96 132 L66 111 L66 78 C66 36 96 18 96 18Z" fill="white"/>
+  <circle cx="96" cy="72" r="17" fill="#0D2B5E"/>
+  <circle cx="96" cy="72" r="7.5" fill="white" opacity="0.6"/>
+  <path d="M66 111 L45 138 L57 132 L60 147 L69 117Z" fill="white" opacity="0.7"/>
+  <path d="M126 111 L147 138 L135 132 L132 147 L123 117Z" fill="white" opacity="0.7"/>
+  <line x1="72" y1="153" x2="72" y2="168" stroke="white" stroke-width="7" stroke-linecap="round" opacity="0.4"/>
+  <line x1="96" y1="162" x2="96" y2="177" stroke="white" stroke-width="7" stroke-linecap="round" opacity="0.4"/>
+  <line x1="120" y1="153" x2="120" y2="168" stroke="white" stroke-width="7" stroke-linecap="round" opacity="0.4"/>
 </svg>
