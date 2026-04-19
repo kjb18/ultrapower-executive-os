@@ -261,7 +261,21 @@ export default function SourcingModule() {
               {report&&<>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
                   <div>
-                    <div style={{fontSize:18,fontWeight:600,color:"#1a2332"}}>{report.name}</div>
+                    {renamingId===report.id ? (
+                      <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                        <input style={{...S.inp,fontSize:15,flex:1,border:"1px solid #185FA5"}} value={renameText}
+                          onChange={e=>setRenameText(e.target.value)}
+                          onKeyDown={e=>{if(e.key==="Enter")saveRename(report.id);if(e.key==="Escape"){setRenamingId(null);setRenameText("");}}}
+                          autoFocus/>
+                        <button onClick={()=>saveRename(report.id)} style={{fontSize:13,padding:"6px 12px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Save</button>
+                        <button onClick={()=>{setRenamingId(null);setRenameText("");}} style={{fontSize:13,padding:"6px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>✕</button>
+                      </div>
+                    ) : (
+                      <div style={{display:"flex",alignItems:"center",gap:10}}>
+                        <div style={{fontSize:18,fontWeight:600,color:"#1a2332"}}>{report.name}</div>
+                        <button onClick={()=>{setRenamingId(report.id);setRenameText(report.name);}} style={{fontSize:12,padding:"3px 9px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Rename</button>
+                      </div>
+                    )}
                     <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>{report.items.length} item{report.items.length>1?"s":""} · {new Date(report.searched_at).toLocaleString("en-PH",{dateStyle:"medium",timeStyle:"short"})}</div>
                   </div>
                   <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
@@ -324,17 +338,19 @@ export default function SourcingModule() {
             <>
               <div style={{fontSize:18,fontWeight:600,color:"#1a2332",marginBottom:14}}>Search History</div>
               {history.length===0&&<div style={{textAlign:"center",padding:40,color:"#b0bec8",fontSize:14}}>No searches yet.</div>}
-              {history.map((h,i)=>(
-                <div key={h.id||i} style={{...S.panel,padding:"14px 18px",marginBottom:10}}>
+              {history.map((h,i)=>{
+                const hid = h.id || String(i);
+                return (
+                <div key={hid} style={{...S.panel,padding:"14px 18px",marginBottom:10}}>
                   <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
                     <div style={{flex:1}}>
-                      {renamingId===h.id ? (
+                      {renamingId===hid ? (
                         <div style={{display:"flex",gap:8,alignItems:"center"}}>
                           <input style={{...S.inp,fontSize:15,flex:1,border:"1px solid #185FA5"}} value={renameText}
                             onChange={e=>setRenameText(e.target.value)}
-                            onKeyDown={e=>{if(e.key==="Enter")saveRename(h.id);if(e.key==="Escape"){setRenamingId(null);setRenameText("");}}}
+                            onKeyDown={e=>{if(e.key==="Enter")saveRename(hid);if(e.key==="Escape"){setRenamingId(null);setRenameText("");}}}
                             autoFocus/>
-                          <button onClick={()=>saveRename(h.id)} style={{fontSize:13,padding:"6px 12px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Save</button>
+                          <button onClick={()=>saveRename(hid)} style={{fontSize:13,padding:"6px 12px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Save</button>
                           <button onClick={()=>{setRenamingId(null);setRenameText("");}} style={{fontSize:13,padding:"6px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>✕</button>
                         </div>
                       ) : (
@@ -344,15 +360,16 @@ export default function SourcingModule() {
                         </>
                       )}
                     </div>
-                    {renamingId!==h.id&&(
+                    {renamingId!==hid&&(
                       <div style={{display:"flex",gap:8,flexShrink:0}}>
-                        <button onClick={()=>{setRenamingId(h.id);setRenameText(h.name);}} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Rename</button>
+                        <button onClick={()=>{setRenamingId(hid);setRenameText(h.name);}} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Rename</button>
                         <button onClick={()=>{setReport(h);setExpanded(Object.fromEntries(h.items.map((_,j)=>[j,true])));setView("results");}} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:500}}>View →</button>
                       </div>
                     )}
                   </div>
                 </div>
-              ))}
+                );
+              })}
             </>
           )}
 
