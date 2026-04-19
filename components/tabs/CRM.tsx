@@ -6,6 +6,8 @@ const STAGES = ["Prospecting","Qualified","Proposal","Follow-Up","Negotiation","
 const LABELS = ["Unlabeled","To Reactivate","Key Account","Refer to Alex","Dead Lead","Watch List","Needs Follow-Up"];
 const SECTORS = ["Power Generation","Oil & Gas","Manufacturing","Mining","Government / B2G","Food & Beverage","Other"];
 const SOURCES = ["Referral","LinkedIn","PhilGEPS","Cold Outreach","Inbound","Event","Other"];
+const PO_STATUSES = ["Received","Processing","Ordered from Supplier","Ready for Delivery","Delivered","Completed"];
+const RFQ_STATUSES = ["Draft","Submitted","Followed Up","Awarded","Lost","Cancelled"];
 const PAGE_SIZE = 50;
 
 const STAGE_C: Record<string,{bg:string;fg:string}> = {
@@ -20,34 +22,75 @@ const LABEL_C: Record<string,{bg:string;fg:string}> = {
   "Dead Lead":{bg:"#FEF0F0",fg:"#A32D2D"},"Watch List":{bg:"#F4F3FE",fg:"#534AB7"},
   "Needs Follow-Up":{bg:"#FEF3FF",fg:"#7B1FA2"},
 };
+const PO_STATUS_C: Record<string,{bg:string;fg:string}> = {
+  "Received":{bg:"#EBF3FC",fg:"#185FA5"},"Processing":{bg:"#FFF8EC",fg:"#854F0B"},
+  "Ordered from Supplier":{bg:"#F4F3FE",fg:"#534AB7"},"Ready for Delivery":{bg:"#f0faf5",fg:"#3B6D11"},
+  "Delivered":{bg:"#f0faf5",fg:"#3B6D11"},"Completed":{bg:"#f0f2f5",fg:"#8a9ab0"},
+};
+const RFQ_STATUS_C: Record<string,{bg:string;fg:string}> = {
+  "Draft":{bg:"#f0f2f5",fg:"#8a9ab0"},"Submitted":{bg:"#EBF3FC",fg:"#185FA5"},
+  "Followed Up":{bg:"#FFF8EC",fg:"#854F0B"},"Awarded":{bg:"#f0faf5",fg:"#3B6D11"},
+  "Lost":{bg:"#FEF0F0",fg:"#A32D2D"},"Cancelled":{bg:"#f0f2f5",fg:"#8a9ab0"},
+};
 
 interface Prospect { id:number;company:string;contact:string;stage:string;lastAction:string;nextStep:string;nextUpdate:string;notes:string; }
 interface Contact { id:number;name:string;company:string;email:string;sector:string;source:string;notes:string;date:string; }
-interface OldRow { [key:string]:string; }
-interface CRMData { prospects:Prospect[];contacts:Contact[];nid:number; }
+interface PendingPO { id:number;poNumber:string;client:string;items:string;value:string;dateReceived:string;expectedDelivery:string;supplierStatus:string;status:string;notes:string; }
+interface PendingRFQ { id:number;rfqNumber:string;client:string;subject:string;dateSubmitted:string;deadline:string;status:string;notes:string; }
+interface OldContact { _id: string; _label: string; _archived: boolean; [key:string]: string|boolean; }
+interface CRMData { prospects:Prospect[];contacts:Contact[];pendingPOs:PendingPO[];pendingRFQs:PendingRFQ[];nid:number; }
 
-const Pill=({t,c}:{t:string;c:{bg:string;fg:string}})=><span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:c.bg,color:c.fg,fontWeight:600,fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap"}}>{t}</span>;
+const Pill=({t,c}:{t:string;c:{bg:string;fg:string}})=><span style={{fontSize:11,padding:"2px 9px",borderRadius:20,background:c.bg,color:c.fg,fontWeight:600,fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap"}}>{t}</span>;
+
+function makeId(r: Record<string,string>): string {
+  if (r.Email?.trim()) return r.Email.trim().toLowerCase();
+  return `${(r.Name||"").trim().toLowerCase()}__${(r.Company||"").trim().toLowerCase()}`;
+}
+
+function parseCSV(text: string): Record<string,string>[] {
+  const lines = text.trim().split("\n");
+  const hdrs = lines[0].split(",").map(h=>h.trim().replace(/^"|"$/g,""));
+  return lines.slice(1).map(line=>{
+    const cols:string[]=[],s={v:"",q:false};
+    for(const ch of line){if(ch==='"'){s.q=!s.q;}else if(ch===','&&!s.q){cols.push(s.v.trim());s.v="";}else s.v+=ch;}
+    cols.push(s.v.trim());
+    const obj:Record<string,string>={};
+    hdrs.forEach((h,i)=>{obj[h]=cols[i]||"";});
+    return obj;
+  });
+}
 
 export default function CRM() {
-  const [tab,setTab]=useState<"pipeline"|"contacts"|"old">("pipeline");
-  const [data,setDataRaw]=useState<CRMData>({prospects:[],contacts:[],nid:1});
-  const [old,setOld]=useState<OldRow[]>([]);
-  const [oldF,setOldF]=useState<OldRow[]>([]);
+  const [tab,setTab]=useState<"pipeline"|"contacts"|"old"|"pos"|"rfqs">("pipeline");
+  const [data,setDataRaw]=useState<CRMData>({prospects:[],contacts:[],pendingPOs:[],pendingRFQs:[],nid:1});
+  const [oldContacts,setOldContactsRaw]=useState<OldContact[]>([]);
   const [oldQ,setOldQ]=useState("");
   const [oldPg,setOldPg]=useState(1);
-  const [oldLbls,setOldLbls]=useState<Record<number,string>>({});
+  const [showArchived,setShowArchived]=useState(false);
+  const [showAddForm,setShowAddForm]=useState(false);
+  const [newOld,setNewOld]=useState({Name:"",Email:"",Company:"",Type:"",Priority:"",Status:"",Account:"",Notes:""});
   const [nc,setNC]=useState({name:"",company:"",email:"",sector:"",source:"",notes:""});
   const [loaded,setLoaded]=useState(false);
 
-  useEffect(()=>{(async()=>{const d=await kvGet<CRMData>("crm");if(d)setDataRaw(d);setLoaded(true);})();},[]);
+  useEffect(()=>{(async()=>{
+    const [d,oc]=await Promise.all([kvGet<CRMData>("crm"),kvGet<OldContact[]>("crm:old-contacts")]);
+    if(d) setDataRaw({...d,pendingPOs:d.pendingPOs||[],pendingRFQs:d.pendingRFQs||[]});
+    if(oc) setOldContactsRaw(oc);
+    setLoaded(true);
+  })();},[]);
 
   const setData=useCallback((p:Partial<CRMData>)=>{
     setDataRaw(prev=>{const next={...prev,...p};kvSet("crm",next);return next;});
   },[]);
 
+  const saveOld=(next:OldContact[])=>{setOldContactsRaw(next);kvSet("crm:old-contacts",next);};
+
+  // Pipeline
   const addProspect=()=>{const id=data.nid;setData({prospects:[...data.prospects,{id,company:"New Prospect",contact:"",stage:"Prospecting",lastAction:"",nextStep:"",nextUpdate:"",notes:""}],nid:id+1});};
   const updP=(id:number,p:Partial<Prospect>)=>setData({prospects:data.prospects.map(x=>x.id===id?{...x,...p}:x)});
   const delP=(id:number)=>setData({prospects:data.prospects.filter(x=>x.id!==id)});
+
+  // New Contacts
   const addContact=()=>{
     if(!nc.name.trim()&&!nc.company.trim())return;
     const id=data.nid;
@@ -56,87 +99,134 @@ export default function CRM() {
   };
   const delC=(id:number)=>setData({contacts:data.contacts.filter(x=>x.id!==id)});
 
+  // POs
+  const addPO=()=>{const id=data.nid;setData({pendingPOs:[...(data.pendingPOs||[]),{id,poNumber:"",client:"",items:"",value:"",dateReceived:"",expectedDelivery:"",supplierStatus:"",status:"Received",notes:""}],nid:id+1});};
+  const updPO=(id:number,p:Partial<PendingPO>)=>setData({pendingPOs:(data.pendingPOs||[]).map(x=>x.id===id?{...x,...p}:x)});
+  const delPO=(id:number)=>setData({pendingPOs:(data.pendingPOs||[]).filter(x=>x.id!==id)});
+
+  // RFQs
+  const addRFQ=()=>{const id=data.nid;setData({pendingRFQs:[...(data.pendingRFQs||[]),{id,rfqNumber:"",client:"",subject:"",dateSubmitted:"",deadline:"",status:"Submitted",notes:""}],nid:id+1});};
+  const updRFQ=(id:number,p:Partial<PendingRFQ>)=>setData({pendingRFQs:(data.pendingRFQs||[]).map(x=>x.id===id?{...x,...p}:x)});
+  const delRFQ=(id:number)=>setData({pendingRFQs:(data.pendingRFQs||[]).filter(x=>x.id!==id)});
+
+  // Old contacts -- CSV merge
   const handleCSV=(e:React.ChangeEvent<HTMLInputElement>)=>{
     const file=e.target.files?.[0];if(!file)return;
     const reader=new FileReader();
     reader.onload=ev=>{
-      const text=ev.target?.result as string;
-      const lines=text.trim().split("\n");
-      const hdrs=lines[0].split(",").map(h=>h.trim().replace(/^"|"$/g,""));
-      const rows=lines.slice(1).map(line=>{
-        const cols:string[]=[],s={v:"",q:false};
-        for(const ch of line){if(ch==='"'){s.q=!s.q;}else if(ch===','&&!s.q){cols.push(s.v.trim());s.v="";}else s.v+=ch;}
-        cols.push(s.v.trim());
-        const obj:OldRow={};hdrs.forEach((h,i)=>{obj[h]=cols[i]||"";});return obj;
+      const rows=parseCSV(ev.target?.result as string);
+      const existing=[...oldContacts];
+      const existingIds=new Set(existing.map(c=>c._id));
+      let added=0;
+      rows.forEach(r=>{
+        const id=makeId(r);
+        if(!existingIds.has(id)){
+          existing.push({...r,_id:id,_label:"Unlabeled",_archived:false});
+          existingIds.add(id);
+          added++;
+        }
       });
-      setOld(rows);setOldF(rows);setOldPg(1);
+      saveOld(existing);
+      alert(`Merged. ${added} new contacts added, ${rows.length-added} duplicates skipped.`);
     };
     reader.readAsText(file);
+    e.target.value="";
   };
 
-  const filterOld=(q:string)=>{
-    setOldQ(q);
-    const ql=q.toLowerCase();
-    setOldF(old.filter(r=>(r.Name||"").toLowerCase().includes(ql)||(r.Company||"").toLowerCase().includes(ql)||(r.Email||"").toLowerCase().includes(ql)));
-    setOldPg(1);
+  // Old contacts -- add individual
+  const addOldContact=()=>{
+    if(!newOld.Name.trim()&&!newOld.Company.trim())return;
+    const id=makeId(newOld as Record<string,string>);
+    if(oldContacts.some(c=>c._id===id)){alert("A contact with this email or name/company already exists.");return;}
+    saveOld([{...newOld,_id:id,_label:"Unlabeled",_archived:false},...oldContacts]);
+    setNewOld({Name:"",Email:"",Company:"",Type:"",Priority:"",Status:"",Account:"",Notes:""});
+    setShowAddForm(false);
   };
+
+  // Old contacts -- label
+  const setLabel=(id:string,lbl:string)=>saveOld(oldContacts.map(c=>c._id===id?{...c,_label:lbl}:c));
+
+  // Old contacts -- archive / unarchive
+  const toggleArchive=(id:string)=>saveOld(oldContacts.map(c=>c._id===id?{...c,_archived:!c._archived}:c));
+
+  // Old contacts -- delete
+  const deleteOld=(id:string)=>{if(confirm("Permanently delete this contact?"))saveOld(oldContacts.filter(c=>c._id!==id));};
+
+  // Filter & paginate old contacts
+  const ql=oldQ.toLowerCase();
+  const filtered=oldContacts.filter(c=>{
+    const archived=!!c._archived;
+    if(archived!==showArchived)return false;
+    if(!ql)return true;
+    return (String(c.Name||"")).toLowerCase().includes(ql)||(String(c.Company||"")).toLowerCase().includes(ql)||(String(c.Email||"")).toLowerCase().includes(ql);
+  });
+  const totPg=Math.max(1,Math.ceil(filtered.length/PAGE_SIZE));
+  const slice=filtered.slice((oldPg-1)*PAGE_SIZE,oldPg*PAGE_SIZE);
+  const activeCount=oldContacts.filter(c=>!c._archived).length;
+  const archivedCount=oldContacts.filter(c=>!!c._archived).length;
 
   const S={
     panel:{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:12,overflow:"hidden"} as React.CSSProperties,
-    th:{fontSize:9,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase" as const,color:"#b0bec8",padding:"8px 12px",textAlign:"left" as const,borderBottom:"0.5px solid #f0f2f5",background:"#fafbfc",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap" as const},
-    td:{fontSize:11,color:"#3a4a5a",padding:"7px 12px",borderBottom:"0.5px solid #f0f2f5",verticalAlign:"middle" as const} as React.CSSProperties,
-    inp:{fontSize:11,padding:"5px 8px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"} as React.CSSProperties,
-    tabBtn:(a:boolean)=>({padding:"8px 16px",border:"none",background:"none",cursor:"pointer",fontSize:12,color:a?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${a?"#185FA5":"transparent"}`,fontWeight:a?600:400,whiteSpace:"nowrap" as const}) as React.CSSProperties,
+    th:{fontSize:11,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase" as const,color:"#b0bec8",padding:"9px 13px",textAlign:"left" as const,borderBottom:"0.5px solid #f0f2f5",background:"#fafbfc",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap" as const},
+    td:{fontSize:13,color:"#3a4a5a",padding:"9px 13px",borderBottom:"0.5px solid #f0f2f5",verticalAlign:"middle" as const} as React.CSSProperties,
+    inp:{fontSize:13,padding:"7px 9px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"} as React.CSSProperties,
+    tabBtn:(a:boolean)=>({padding:"9px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,color:a?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${a?"#185FA5":"transparent"}`,fontWeight:a?600:400,whiteSpace:"nowrap" as const}) as React.CSSProperties,
+    addBtn:{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600} as React.CSSProperties,
   };
 
-  const totPg=Math.max(1,Math.ceil(oldF.length/PAGE_SIZE));
-  const slice=oldF.slice((oldPg-1)*PAGE_SIZE,oldPg*PAGE_SIZE);
+  const pos=data.pendingPOs||[];
+  const rfqs=data.pendingRFQs||[];
 
-  if(!loaded)return<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#b0bec8",fontSize:12,fontFamily:"'DM Mono',monospace"}}>Loading CRM...</div>;
+  if(!loaded)return<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#b0bec8",fontSize:13,fontFamily:"'DM Mono',monospace"}}>Loading CRM...</div>;
 
   return(
     <div style={{flex:1,overflow:"auto"}}>
-      <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"0 18px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:5,height:52,flexWrap:"wrap"}}>
+      <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"0 18px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:5,height:56,flexWrap:"wrap"}}>
         <div>
           <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>CRM</div>
-          <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Industrial Sales Intelligence</div>
+          <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Industrial Sales Intelligence</div>
         </div>
-        <div style={{display:"flex"}}>
-          {(["pipeline","contacts","old"] as const).map(t=><button key={t} style={S.tabBtn(tab===t)} onClick={()=>setTab(t)}>{t==="pipeline"?"Pipeline":t==="contacts"?"New Contacts":"Old Contacts"}</button>)}
+        <div style={{display:"flex",overflowX:"auto"}}>
+          {(["pipeline","contacts","old","pos","rfqs"] as const).map(t=>(
+            <button key={t} style={S.tabBtn(tab===t)} onClick={()=>setTab(t)}>
+              {t==="pipeline"?"Pipeline":t==="contacts"?"New Contacts":t==="old"?"Old Contacts":t==="pos"?"Pending POs"+(pos.length>0?` (${pos.length})`:""):"Pending RFQs"+(rfqs.length>0?` (${rfqs.length})`:"")}
+            </button>
+          ))}
         </div>
       </div>
 
-      <div style={{padding:14}}>
+      <div style={{padding:16}}>
 
+        {/* PIPELINE */}
         {tab==="pipeline"&&<>
           <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:11,fontWeight:600,color:"#1a2332"}}>Active Prospects</span>
-              <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{data.prospects.length}</span>
+              <span style={{fontSize:13,fontWeight:600,color:"#1a2332"}}>Active Prospects</span>
+              <span style={{fontSize:11,padding:"2px 9px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{data.prospects.length}</span>
             </div>
-            <button onClick={addProspect} style={{fontSize:11,padding:"6px 12px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600}}>+ Add Prospect</button>
+            <button onClick={addProspect} style={S.addBtn}>+ Add Prospect</button>
           </div>
           <div style={S.panel}>
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse"}}>
                 <thead><tr>{["#","Company","Contact","Stage","Last Action","Next Step","Next Update","Notes",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {data.prospects.length===0&&<tr><td colSpan={9} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"24px"}}>No prospects yet.</td></tr>}
+                  {data.prospects.length===0&&<tr><td colSpan={9} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"28px"}}>No prospects yet.</td></tr>}
                   {data.prospects.map((p,i)=>(
                     <tr key={p.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
-                      <td style={{...S.td,color:"#b0bec8",fontSize:10}}>{i+1}</td>
+                      <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
                       <td style={S.td}><input style={S.inp} value={p.company} onChange={e=>updP(p.id,{company:e.target.value})}/></td>
                       <td style={S.td}><input style={S.inp} value={p.contact} onChange={e=>updP(p.id,{contact:e.target.value})}/></td>
                       <td style={S.td}>
-                        <select style={{...S.inp,background:STAGE_C[p.stage]?.bg||"#f8f9fb",color:STAGE_C[p.stage]?.fg||"#3a4a5a",fontWeight:600,fontSize:10}} value={p.stage} onChange={e=>updP(p.id,{stage:e.target.value})}>
+                        <select style={{...S.inp,background:STAGE_C[p.stage]?.bg||"#f8f9fb",color:STAGE_C[p.stage]?.fg||"#3a4a5a",fontWeight:600}} value={p.stage} onChange={e=>updP(p.id,{stage:e.target.value})}>
                           {STAGES.map(s=><option key={s}>{s}</option>)}
                         </select>
                       </td>
                       <td style={S.td}><input style={S.inp} value={p.lastAction} onChange={e=>updP(p.id,{lastAction:e.target.value})}/></td>
                       <td style={S.td}><input style={S.inp} value={p.nextStep} onChange={e=>updP(p.id,{nextStep:e.target.value})}/></td>
-                      <td style={S.td}><input style={{...S.inp,width:120}} type="date" value={p.nextUpdate} onChange={e=>updP(p.id,{nextUpdate:e.target.value})}/></td>
+                      <td style={S.td}><input style={{...S.inp,width:130}} type="date" value={p.nextUpdate} onChange={e=>updP(p.id,{nextUpdate:e.target.value})}/></td>
                       <td style={S.td}><input style={S.inp} value={p.notes} onChange={e=>updP(p.id,{notes:e.target.value})}/></td>
-                      <td style={S.td}><button onClick={()=>delP(p.id)} style={{fontSize:12,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
+                      <td style={S.td}><button onClick={()=>delP(p.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -145,59 +235,60 @@ export default function CRM() {
           </div>
         </>}
 
+        {/* NEW CONTACTS */}
         {tab==="contacts"&&<>
-          <div style={{...S.panel,padding:16,marginBottom:14}}>
-            <div style={{fontSize:9,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:12,fontFamily:"'DM Mono',monospace"}}>Add New Contact</div>
-            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:12}}>
+          <div style={{...S.panel,padding:18,marginBottom:16}}>
+            <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:14,fontFamily:"'DM Mono',monospace"}}>Add New Contact</div>
+            <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:14}}>
               {([["Name","name","text","Full name"],["Company","company","text","Company"],["Email","email","email","email@domain.com"]] as [string,string,string,string][]).map(([lbl,k,t,ph])=>(
                 <div key={k}>
-                  <div style={{fontSize:9,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>{lbl}</div>
+                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>{lbl}</div>
                   <input style={S.inp} type={t} placeholder={ph} value={(nc as Record<string,string>)[k]} onChange={e=>setNC(n=>({...n,[k]:e.target.value}))}/>
                 </div>
               ))}
               <div>
-                <div style={{fontSize:9,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Sector</div>
+                <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Sector</div>
                 <select style={S.inp} value={nc.sector} onChange={e=>setNC(n=>({...n,sector:e.target.value}))}>
                   <option value="">-- Select --</option>{SECTORS.map(s=><option key={s}>{s}</option>)}
                 </select>
               </div>
               <div>
-                <div style={{fontSize:9,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Source</div>
+                <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Source</div>
                 <select style={S.inp} value={nc.source} onChange={e=>setNC(n=>({...n,source:e.target.value}))}>
                   <option value="">-- Select --</option>{SOURCES.map(s=><option key={s}>{s}</option>)}
                 </select>
               </div>
               <div>
-                <div style={{fontSize:9,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Notes</div>
+                <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Notes</div>
                 <input style={S.inp} placeholder="Optional" value={nc.notes} onChange={e=>setNC(n=>({...n,notes:e.target.value}))}/>
               </div>
             </div>
             <div style={{display:"flex",gap:8}}>
-              <button onClick={addContact} style={{fontSize:11,padding:"7px 14px",borderRadius:8,border:"none",background:"#1a2332",color:"#fff",cursor:"pointer",fontWeight:600}}>Save Contact</button>
-              <button onClick={()=>setNC({name:"",company:"",email:"",sector:"",source:"",notes:""})} style={{fontSize:11,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Clear</button>
+              <button onClick={addContact} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"none",background:"#1a2332",color:"#fff",cursor:"pointer",fontWeight:600}}>Save Contact</button>
+              <button onClick={()=>setNC({name:"",company:"",email:"",sector:"",source:"",notes:""})} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Clear</button>
             </div>
           </div>
-          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:10}}>
-            <span style={{fontSize:11,fontWeight:600,color:"#1a2332"}}>Contact Log</span>
-            <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{data.contacts.length}</span>
+          <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:12}}>
+            <span style={{fontSize:13,fontWeight:600,color:"#1a2332"}}>Contact Log</span>
+            <span style={{fontSize:11,padding:"2px 9px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{data.contacts.length}</span>
           </div>
           <div style={S.panel}>
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse"}}>
                 <thead><tr>{["#","Name","Company","Email","Sector","Source","Notes","Date",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {data.contacts.length===0&&<tr><td colSpan={9} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"24px"}}>No contacts yet.</td></tr>}
+                  {data.contacts.length===0&&<tr><td colSpan={9} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"28px"}}>No contacts yet.</td></tr>}
                   {data.contacts.map((c,i)=>(
                     <tr key={c.id}>
-                      <td style={{...S.td,color:"#b0bec8",fontSize:10}}>{i+1}</td>
+                      <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
                       <td style={{...S.td,fontWeight:500}}>{c.name||"—"}</td>
                       <td style={S.td}>{c.company||"—"}</td>
                       <td style={{...S.td,color:"#185FA5"}}>{c.email||"—"}</td>
                       <td style={S.td}>{c.sector?<Pill t={c.sector} c={{bg:"#f0faf5",fg:"#3B6D11"}}/>:"—"}</td>
                       <td style={S.td}>{c.source||"—"}</td>
                       <td style={{...S.td,color:"#8a9ab0"}}>{c.notes||"—"}</td>
-                      <td style={{...S.td,color:"#b0bec8",fontFamily:"'DM Mono',monospace",fontSize:10,whiteSpace:"nowrap"}}>{c.date}</td>
-                      <td style={S.td}><button onClick={()=>delC(c.id)} style={{fontSize:12,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
+                      <td style={{...S.td,color:"#b0bec8",fontFamily:"'DM Mono',monospace",fontSize:11,whiteSpace:"nowrap"}}>{c.date}</td>
+                      <td style={S.td}><button onClick={()=>delC(c.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
                     </tr>
                   ))}
                 </tbody>
@@ -206,44 +297,89 @@ export default function CRM() {
           </div>
         </>}
 
+        {/* OLD CONTACTS */}
         {tab==="old"&&<>
+          {/* Toolbar */}
           <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14,flexWrap:"wrap"}}>
-            <label style={{fontSize:11,padding:"6px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",fontWeight:500}}>
-              Upload CSV<input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV}/>
+            <label style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600}}>
+              Upload CSV (merge)<input type="file" accept=".csv" style={{display:"none"}} onChange={handleCSV}/>
             </label>
-            <input style={{...S.inp,width:240,flex:"none"}} placeholder="Search name, company, email..." value={oldQ} onChange={e=>filterOld(e.target.value)}/>
-            {old.length>0&&<span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{oldF.length} records</span>}
+            <button onClick={()=>setShowAddForm(s=>!s)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",fontWeight:500}}>
+              {showAddForm?"Cancel":"+ Add Contact"}
+            </button>
+            <input style={{...S.inp,width:240,flex:"none"}} placeholder="Search name, company, email..." value={oldQ} onChange={e=>{setOldQ(e.target.value);setOldPg(1);}}/>
+            <div style={{display:"flex",gap:6,marginLeft:"auto"}}>
+              <button onClick={()=>{setShowArchived(false);setOldPg(1);}} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:`0.5px solid ${!showArchived?"#185FA5":"#e2e6ea"}`,background:!showArchived?"#EBF3FC":"#fff",color:!showArchived?"#185FA5":"#8a9ab0",cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>
+                Active ({activeCount})
+              </button>
+              <button onClick={()=>{setShowArchived(true);setOldPg(1);}} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:`0.5px solid ${showArchived?"#854F0B":"#e2e6ea"}`,background:showArchived?"#FFF8EC":"#fff",color:showArchived?"#854F0B":"#8a9ab0",cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>
+                Archived ({archivedCount})
+              </button>
+            </div>
           </div>
+
+          {/* Add contact form */}
+          {showAddForm&&(
+            <div style={{...S.panel,padding:18,marginBottom:14}}>
+              <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:12,fontFamily:"'DM Mono',monospace"}}>Add Contact Manually</div>
+              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:10,marginBottom:12}}>
+                {(["Name","Email","Company","Type","Priority","Status","Account","Notes"] as const).map(k=>(
+                  <div key={k}>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>{k}</div>
+                    <input style={S.inp} value={newOld[k]} placeholder={k==="Priority"?"A / B / C":k==="Notes"?"Optional":""} onChange={e=>setNewOld(n=>({...n,[k]:e.target.value}))}/>
+                  </div>
+                ))}
+              </div>
+              <button onClick={addOldContact} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"none",background:"#1a2332",color:"#fff",cursor:"pointer",fontWeight:600}}>Save Contact</button>
+            </div>
+          )}
+
+          {/* Table */}
           <div style={S.panel}>
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse"}}>
-                <thead><tr>{["#","Name","Email","Company","Type","Priority","Status","Account","First Contact","Last Contact","Emails","Unanswered","Cold","Label"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <thead><tr>{["#","Name & Label","Email","Company","Type","Priority","Status","Account","First Contact","Last Contact","Emails","Unanswered","Cold","Actions"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {slice.length===0&&<tr><td colSpan={14} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"24px"}}>{old.length===0?"Upload a CSV to view old contacts.":"No records found."}</td></tr>}
+                  {slice.length===0&&(
+                    <tr><td colSpan={14} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"28px"}}>
+                      {oldContacts.length===0?"Upload a CSV or add a contact to begin.":showArchived?"No archived contacts.":"No contacts found."}
+                    </td></tr>
+                  )}
                   {slice.map((r,i)=>{
-                    const ai=(oldPg-1)*PAGE_SIZE+i;
-                    const lbl=oldLbls[ai]||"Unlabeled";
+                    const lbl=String(r._label||"Unlabeled");
                     const lc=LABEL_C[lbl]||LABEL_C["Unlabeled"];
                     return(
-                      <tr key={ai}>
-                        <td style={{...S.td,color:"#b0bec8",fontSize:10}}>{ai+1}</td>
-                        <td style={{...S.td,fontWeight:500,whiteSpace:"nowrap"}}>{r.Name||"—"}</td>
-                        <td style={{...S.td,color:"#185FA5",fontSize:10}}>{r.Email||"—"}</td>
-                        <td style={S.td}>{r.Company||"—"}</td>
-                        <td style={{...S.td,color:"#8a9ab0"}}>{r.Type||"—"}</td>
-                        <td style={S.td}>{r.Priority?<Pill t={r.Priority} c={r.Priority==="A"?{bg:"#FFF8EC",fg:"#854F0B"}:r.Priority==="B"?{bg:"#EBF3FC",fg:"#185FA5"}:{bg:"#f0f2f5",fg:"#8a9ab0"}}/>:"—"}</td>
-                        <td style={S.td}>{r.Status||"—"}</td>
-                        <td style={{...S.td,color:"#8a9ab0"}}>{r.Account||"—"}</td>
-                        <td style={{...S.td,color:"#b0bec8",fontSize:10,whiteSpace:"nowrap"}}>{r["First Contact"]||"—"}</td>
-                        <td style={{...S.td,color:"#b0bec8",fontSize:10,whiteSpace:"nowrap"}}>{r["Last Contact"]||"—"}</td>
-                        <td style={{...S.td,textAlign:"center"}}>{r["Total Emails"]||"—"}</td>
-                        <td style={{...S.td,textAlign:"center"}}>{r.Unanswered||"—"}</td>
-                        <td style={{...S.td,textAlign:"center"}}>{r.Cold||"—"}</td>
-                        <td style={S.td}>
-                          <select style={{fontSize:10,padding:"2px 7px",borderRadius:20,border:`0.5px solid ${lc.fg}44`,background:lc.bg,color:lc.fg,fontWeight:600,fontFamily:"'DM Mono',monospace",cursor:"pointer"}}
-                            value={lbl} onChange={e=>setOldLbls(p=>({...p,[ai]:e.target.value}))}>
-                            {LABELS.map(l=><option key={l}>{l}</option>)}
-                          </select>
+                      <tr key={r._id as string} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                        <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{(oldPg-1)*PAGE_SIZE+i+1}</td>
+                        <td style={{...S.td,minWidth:200}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                            <span style={{fontWeight:500,fontSize:13}}>{String(r.Name||"—")}</span>
+                            <select style={{fontSize:11,padding:"2px 7px",borderRadius:20,border:`0.5px solid ${lc.fg}44`,background:lc.bg,color:lc.fg,fontWeight:600,fontFamily:"'DM Mono',monospace",cursor:"pointer"}}
+                              value={lbl} onChange={e=>setLabel(r._id as string,e.target.value)}>
+                              {LABELS.map(l=><option key={l}>{l}</option>)}
+                            </select>
+                          </div>
+                        </td>
+                        <td style={{...S.td,color:"#185FA5",fontSize:12}}>{String(r.Email||"—")}</td>
+                        <td style={S.td}>{String(r.Company||"—")}</td>
+                        <td style={{...S.td,color:"#8a9ab0"}}>{String(r.Type||"—")}</td>
+                        <td style={S.td}>{r.Priority?<Pill t={String(r.Priority)} c={r.Priority==="A"?{bg:"#FFF8EC",fg:"#854F0B"}:r.Priority==="B"?{bg:"#EBF3FC",fg:"#185FA5"}:{bg:"#f0f2f5",fg:"#8a9ab0"}}/>:"—"}</td>
+                        <td style={S.td}>{String(r.Status||"—")}</td>
+                        <td style={{...S.td,color:"#8a9ab0"}}>{String(r.Account||"—")}</td>
+                        <td style={{...S.td,color:"#b0bec8",fontSize:11,whiteSpace:"nowrap"}}>{String(r["First Contact"]||"—")}</td>
+                        <td style={{...S.td,color:"#b0bec8",fontSize:11,whiteSpace:"nowrap"}}>{String(r["Last Contact"]||"—")}</td>
+                        <td style={{...S.td,textAlign:"center"}}>{String(r["Total Emails"]||"—")}</td>
+                        <td style={{...S.td,textAlign:"center"}}>{String(r.Unanswered||"—")}</td>
+                        <td style={{...S.td,textAlign:"center"}}>{String(r.Cold||"—")}</td>
+                        <td style={{...S.td,whiteSpace:"nowrap"}}>
+                          <div style={{display:"flex",gap:5}}>
+                            <button onClick={()=>toggleArchive(r._id as string)} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>
+                              {r._archived?"Restore":"Archive"}
+                            </button>
+                            <button onClick={()=>deleteOld(r._id as string)} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>
+                              Delete
+                            </button>
+                          </div>
                         </td>
                       </tr>
                     );
@@ -251,13 +387,97 @@ export default function CRM() {
                 </tbody>
               </table>
             </div>
-            {oldF.length>PAGE_SIZE&&(
-              <div style={{display:"flex",alignItems:"center",gap:8,padding:"10px 14px",borderTop:"0.5px solid #f0f2f5"}}>
-                <button onClick={()=>setOldPg(p=>Math.max(1,p-1))} disabled={oldPg<=1} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",cursor:"pointer",color:"#4a6a8a"}}>← Prev</button>
-                <span style={{fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>Page {oldPg} of {totPg} · {oldF.length} records</span>
-                <button onClick={()=>setOldPg(p=>Math.min(totPg,p+1))} disabled={oldPg>=totPg} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",cursor:"pointer",color:"#4a6a8a"}}>Next →</button>
+            {filtered.length>PAGE_SIZE&&(
+              <div style={{display:"flex",alignItems:"center",gap:8,padding:"11px 14px",borderTop:"0.5px solid #f0f2f5"}}>
+                <button onClick={()=>setOldPg(p=>Math.max(1,p-1))} disabled={oldPg<=1} style={{fontSize:13,padding:"5px 12px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",cursor:"pointer",color:"#4a6a8a"}}>← Prev</button>
+                <span style={{fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>Page {oldPg} of {totPg} · {filtered.length} {showArchived?"archived":"active"}</span>
+                <button onClick={()=>setOldPg(p=>Math.min(totPg,p+1))} disabled={oldPg>=totPg} style={{fontSize:13,padding:"5px 12px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",cursor:"pointer",color:"#4a6a8a"}}>Next →</button>
               </div>
             )}
+          </div>
+        </>}
+
+        {/* PENDING POs */}
+        {tab==="pos"&&<>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+            <div>
+              <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>Pending Purchase Orders</div>
+              <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>Track active POs from receipt to delivery</div>
+            </div>
+            <button onClick={addPO} style={S.addBtn}>+ Add PO</button>
+          </div>
+          <div style={S.panel}>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>{["#","PO Number","Client","Items Summary","Value","Date Received","Expected Delivery","Supplier Status","Status","Notes",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {pos.length===0&&<tr><td colSpan={11} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>No pending POs.</td></tr>}
+                  {pos.map((p,i)=>(
+                    <tr key={p.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                      <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
+                      <td style={S.td}><input style={{...S.inp,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={p.poNumber} placeholder="PO-2026-001" onChange={e=>updPO(p.id,{poNumber:e.target.value})}/></td>
+                      <td style={S.td}><input style={S.inp} value={p.client} placeholder="Client" onChange={e=>updPO(p.id,{client:e.target.value})}/></td>
+                      <td style={S.td}><input style={S.inp} value={p.items} placeholder="Items summary" onChange={e=>updPO(p.id,{items:e.target.value})}/></td>
+                      <td style={S.td}><input style={{...S.inp,width:110}} value={p.value} placeholder="₱0.00" onChange={e=>updPO(p.id,{value:e.target.value})}/></td>
+                      <td style={S.td}><input style={{...S.inp,width:130}} type="date" value={p.dateReceived} onChange={e=>updPO(p.id,{dateReceived:e.target.value})}/></td>
+                      <td style={S.td}><input style={{...S.inp,width:130}} type="date" value={p.expectedDelivery} onChange={e=>updPO(p.id,{expectedDelivery:e.target.value})}/></td>
+                      <td style={S.td}><input style={S.inp} value={p.supplierStatus} placeholder="e.g. Ordered, ETA 2 weeks" onChange={e=>updPO(p.id,{supplierStatus:e.target.value})}/></td>
+                      <td style={S.td}>
+                        <select style={{...S.inp,background:PO_STATUS_C[p.status]?.bg||"#f8f9fb",color:PO_STATUS_C[p.status]?.fg||"#3a4a5a",fontWeight:600}} value={p.status} onChange={e=>updPO(p.id,{status:e.target.value})}>
+                          {PO_STATUSES.map(s=><option key={s}>{s}</option>)}
+                        </select>
+                      </td>
+                      <td style={S.td}><input style={S.inp} value={p.notes} placeholder="Notes" onChange={e=>updPO(p.id,{notes:e.target.value})}/></td>
+                      <td style={S.td}><button onClick={()=>delPO(p.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        </>}
+
+        {/* PENDING RFQs */}
+        {tab==="rfqs"&&<>
+          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+            <div>
+              <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>Pending RFQ Responses</div>
+              <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>Track submitted quotations awaiting response</div>
+            </div>
+            <button onClick={addRFQ} style={S.addBtn}>+ Add RFQ</button>
+          </div>
+          <div style={S.panel}>
+            <div style={{overflowX:"auto"}}>
+              <table style={{width:"100%",borderCollapse:"collapse"}}>
+                <thead><tr>{["#","RFQ Number","Client","Subject","Date Submitted","Response Deadline","Status","Notes",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                <tbody>
+                  {rfqs.length===0&&<tr><td colSpan={9} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>No pending RFQs.</td></tr>}
+                  {rfqs.map((r,i)=>{
+                    const isOverdue=r.deadline&&new Date(r.deadline)<new Date()&&r.status!=="Awarded"&&r.status!=="Lost"&&r.status!=="Cancelled";
+                    return(
+                      <tr key={r.id} style={{background:isOverdue?"#FFFBF0":i%2===0?"#fff":"#fafbfc"}}>
+                        <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
+                        <td style={S.td}><input style={{...S.inp,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={r.rfqNumber} placeholder="RFQ-2026-001" onChange={e=>updRFQ(r.id,{rfqNumber:e.target.value})}/></td>
+                        <td style={S.td}><input style={S.inp} value={r.client} placeholder="Client" onChange={e=>updRFQ(r.id,{client:e.target.value})}/></td>
+                        <td style={S.td}><input style={S.inp} value={r.subject} placeholder="Subject" onChange={e=>updRFQ(r.id,{subject:e.target.value})}/></td>
+                        <td style={S.td}><input style={{...S.inp,width:130}} type="date" value={r.dateSubmitted} onChange={e=>updRFQ(r.id,{dateSubmitted:e.target.value})}/></td>
+                        <td style={S.td}>
+                          <input style={{...S.inp,width:130,color:isOverdue?"#A32D2D":"#1a2332",fontWeight:isOverdue?600:400}} type="date" value={r.deadline} onChange={e=>updRFQ(r.id,{deadline:e.target.value})}/>
+                          {isOverdue&&<div style={{fontSize:10,color:"#A32D2D",fontFamily:"'DM Mono',monospace",marginTop:2}}>Overdue</div>}
+                        </td>
+                        <td style={S.td}>
+                          <select style={{...S.inp,background:RFQ_STATUS_C[r.status]?.bg||"#f8f9fb",color:RFQ_STATUS_C[r.status]?.fg||"#3a4a5a",fontWeight:600}} value={r.status} onChange={e=>updRFQ(r.id,{status:e.target.value})}>
+                            {RFQ_STATUSES.map(s=><option key={s}>{s}</option>)}
+                          </select>
+                        </td>
+                        <td style={S.td}><input style={S.inp} value={r.notes} placeholder="Notes" onChange={e=>updRFQ(r.id,{notes:e.target.value})}/></td>
+                        <td style={S.td}><button onClick={()=>delRFQ(r.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
           </div>
         </>}
 
