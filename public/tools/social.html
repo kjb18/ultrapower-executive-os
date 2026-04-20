@@ -953,9 +953,9 @@ Write the playbook in plain text using markdown headings (# ## ###) and bullet p
 
 Be specific to Ultra Power's context. Write as if this is a real working document, not a template. Return plain text only, no JSON, no extra explanation.`;
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:1800,messages:[{role:'user',content:prompt}]})});
+    const res=await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'You are a senior B2B content strategist.',user:prompt,max_tokens:1800})});
     const data=await res.json();
-    const text=data.content.map(i=>i.text||'').join('');
+    const text=data.text||'';
     S.playbook=text;savePlaybookData();renderPB();
   }catch(e){alert('Generation failed.')}
   btn.disabled=false;btn.textContent='✨ Generate Starter Strategy';
@@ -1023,9 +1023,9 @@ After the article, provide an SEO METADATA block (separated by ---SEO---) as a J
 Return the article in clean HTML (only use h1,h2,h3,p,ul,ol,li,strong,em tags) followed by ---SEO--- and the JSON.`;
 
   try{
-    const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:2000,messages:[{role:'user',content:prompt}]})});
+    const res=await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'You are a senior B2B content writer for Ultra Power Industrial Resources Inc. (Philippines) — authorized distributor of Philips lighting, Goodlite LED, ProMinent pumps, Tomoe valves, Supmea instrumentation. Clients: power generation, oil & gas, manufacturing, mining, food & beverage, government.',user:prompt,max_tokens:4000})});
     const data=await res.json();
-    const raw=data.content.map(i=>i.text||'').join('');
+    const raw=data.text||'';
     const parts=raw.split('---SEO---');
     const articleHTML=parts[0].trim();
     let seo={};
@@ -1037,7 +1037,7 @@ Return the article in clean HTML (only use h1,h2,h3,p,ul,ol,li,strong,em tags) f
     document.getElementById('art_saveTitle').value=topic;
     document.getElementById('art_saveDate').value=todayStr();
     document.getElementById('art_repDate').value=todayStr();
-  }catch(e){document.getElementById('artOutput').innerHTML=`<div class="empty-state"><div style="color:#C62828;font-size:12px">Generation failed. Please try again.</div></div>`}
+  }catch(e){document.getElementById('artOutput').innerHTML=`<div class="empty-state"><div style="color:#C62828;font-size:12px">Generation failed: ${e.message}</div></div>`}
   btn.disabled=false;btn.textContent='Generate Article';
 }
 
@@ -1165,9 +1165,9 @@ function updateLibCount(){document.getElementById('artLibCount').textContent=S.a
 // UTILITIES
 // ============================================================
 async function callClaude(prompt,maxTokens=900){
-  const res=await fetch('https://api.anthropic.com/v1/messages',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({model:'claude-sonnet-4-20250514',max_tokens:maxTokens,messages:[{role:'user',content:prompt}]})});
+  const res=await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/claude',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({system:'You are a senior B2B content strategist for Ultra Power Industrial Resources Inc., a Philippine industrial lighting and equipment distributor.',user:prompt,max_tokens:maxTokens})});
   const data=await res.json();
-  return data.content.map(i=>i.text||'').join('').replace(/```json|```/g,'').trim();
+  return (data.text||'').replace(/```json|```/g,'').trim();
 }
 function todayStr(){const t=new Date();return`${t.getFullYear()}-${String(t.getMonth()+1).padStart(2,'0')}-${String(t.getDate()).padStart(2,'0')}`}
 function fmtDate(s){if(!s)return'';const[y,m,d]=s.split('-');return`${MONTHS[parseInt(m)-1]} ${parseInt(d)}, ${y}`}
