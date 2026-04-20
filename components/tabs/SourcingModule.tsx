@@ -12,7 +12,9 @@ const STOCK_COLORS: Record<string,{bg:string;fg:string}> = {
   "Indent":{bg:"#FEF0F0",fg:"#A32D2D"},"Unknown":{bg:"#f0f2f5",fg:"#8a9ab0"},
 };
 
-const Spinner = () => <span style={{width:16,height:16,border:"2px solid #e2e6ea",borderTopColor:"#185FA5",borderRadius:"50%",animation:"spin 0.7s linear infinite",display:"inline-block"}}/>;
+const Spinner = () => <span style={{width:14,height:14,border:"2px solid #e2e6ea",borderTopColor:"#185FA5",borderRadius:"50%",animation:"spin 0.7s linear infinite",display:"inline-block"}}/>;
+
+function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2,7)}`; }
 
 // ── Export helpers ──────────────────────────────────────────────────────────────
 function exportCSV(report: SourcingReport) {
@@ -29,14 +31,15 @@ function exportCSV(report: SourcingReport) {
   const csv = rows.map(r => r.map(c => `"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
   const blob = new Blob([csv], {type:"text/csv"});
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href=url; a.download=`${report.name||"Sourcing"}_${report.searched_at.split("T")[0]}.csv`;
+  const a = document.createElement("a"); a.href=url;
+  a.download=`${report.name||"Sourcing"}_${report.searched_at.split("T")[0]}.csv`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
 function exportDOCX(report: SourcingReport) {
   const date = new Date(report.searched_at).toLocaleDateString("en-PH",{dateStyle:"long"});
   const supplierTable = (suppliers: Supplier[], intl: boolean) => {
-    if (!suppliers.length) return "<p style='color:#999;font-size:12pt'>None found.</p>";
+    if (!suppliers.length) return "<p style='color:#999;font-size:11pt'>None found.</p>";
     const hdrs = intl
       ? ["Supplier","Type","Price Range","Unit","Lead Time","MOQ","Import Notes","Website"]
       : ["Supplier","Type","Price Range","Unit","Stock","Lead Time","MOQ","Certifications","Website"];
@@ -48,7 +51,6 @@ function exportDOCX(report: SourcingReport) {
       <thead style="background:#0066cc;color:white"><tr>${hdrs.map(h=>`<th>${h}</th>`).join("")}</tr></thead>
       <tbody>${rows}</tbody></table>`;
   };
-
   const itemSections = report.items.map(item => `
     <h2 style="color:#0066cc;font-size:14pt;margin-top:24pt;border-bottom:2px solid #0066cc;padding-bottom:4pt">${item.name}</h2>
     <p style="font-size:11pt;color:#444">${item.summary}</p>
@@ -57,34 +59,30 @@ function exportDOCX(report: SourcingReport) {
     ${item.international_suppliers.length>0?`<h3 style="font-size:12pt;color:#854F0B;margin-top:14pt">International Options</h3>${supplierTable(item.international_suppliers, true)}`:""}
     <table border="0" cellpadding="8" cellspacing="0" style="width:100%;margin-top:12pt">
       <tr>
-        <td style="background:#EBF3FC;border-left:3px solid #185FA5;width:50%;padding:10pt;font-size:10pt"><strong style="color:#185FA5;font-size:9pt;text-transform:uppercase;letter-spacing:0.5pt">Recommendation</strong><br/>${item.recommendation}</td>
-        <td style="background:#f0faf5;border-left:3px solid #3B6D11;width:50%;padding:10pt;font-size:10pt"><strong style="color:#3B6D11;font-size:9pt;text-transform:uppercase;letter-spacing:0.5pt">Quotation Hint</strong><br/>${item.quotation_hint}</td>
+        <td style="background:#EBF3FC;border-left:3px solid #185FA5;width:50%;padding:10pt;font-size:10pt"><strong style="color:#185FA5">Recommendation</strong><br/>${item.recommendation}</td>
+        <td style="background:#f0faf5;border-left:3px solid #3B6D11;width:50%;padding:10pt;font-size:10pt"><strong style="color:#3B6D11">Quotation Hint</strong><br/>${item.quotation_hint}</td>
       </tr>
     </table>`
   ).join("");
-
   const html = `<!DOCTYPE html><html><head><meta charset="UTF-8">
-<style>body{font-family:Arial,sans-serif;margin:2.5cm;color:#1a1a2e;font-size:11pt} h1{color:#0066cc} table td,table th{font-size:10pt} a{color:#0066cc}</style>
+<style>body{font-family:Arial,sans-serif;margin:2.5cm;color:#1a1a2e;font-size:11pt} a{color:#0066cc}</style>
 </head><body>
-<table border="0" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:20pt">
-  <tr>
-    <td><div style="font-size:20pt;font-weight:bold;color:#0066cc">ULTRA POWER</div>
-    <div style="font-size:10pt;color:#666">Ultra Power Industrial Resources, Inc. · Makati City</div></td>
-    <td style="text-align:right">
-    <div style="font-size:14pt;font-weight:bold">SOURCING REPORT</div>
-    <div style="font-size:10pt;color:#666">${date}</div></td>
-  </tr>
-</table>
+<table border="0" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:20pt"><tr>
+  <td><div style="font-size:20pt;font-weight:bold;color:#0066cc">ULTRA POWER</div>
+  <div style="font-size:10pt;color:#666">Ultra Power Industrial Resources, Inc. · Makati City</div></td>
+  <td style="text-align:right"><div style="font-size:14pt;font-weight:bold">SOURCING REPORT</div>
+  <div style="font-size:10pt;color:#666">${date}</div></td>
+</tr></table>
 <h1 style="font-size:16pt;border-bottom:2px solid #0066cc;padding-bottom:6pt">${report.name||"Sourcing Report"}</h1>
-<p style="font-size:10pt;color:#666">${report.items.length} item${report.items.length>1?"s":""} sourced · Generated ${date}</p>
+<p style="font-size:10pt;color:#666">${report.items.length} item${report.items.length>1?"s":""} sourced · ${date}</p>
 ${itemSections}
 <div style="margin-top:32pt;border-top:1px solid #e0e0e0;padding-top:8pt;font-size:9pt;color:#999">
-Generated by Ultra Power Executive OS · Indicative pricing only — verify with supplier before quoting.</div>
+Indicative pricing only — verify with supplier before quoting.</div>
 </body></html>`;
-
   const blob = new Blob([html], {type:"application/msword"});
   const url = URL.createObjectURL(blob);
-  const a = document.createElement("a"); a.href=url; a.download=`${report.name||"Sourcing"}_${report.searched_at.split("T")[0]}.doc`;
+  const a = document.createElement("a"); a.href=url;
+  a.download=`${report.name||"Sourcing"}_${report.searched_at.split("T")[0]}.doc`;
   document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
 }
 
@@ -94,26 +92,39 @@ export default function SourcingModule() {
   const [sessionName, setSessionName] = useState("");
   const [items, setItems] = useState<SourcingItem[]>([{name:"",quantity:"",specs:""}]);
   const [loading, setLoading] = useState(false);
+  const [loadingItem, setLoadingItem] = useState(""); // which item is being searched
   const [error, setError] = useState("");
   const [report, setReport] = useState<SourcingReport|null>(null);
   const [history, setHistory] = useState<SourcingReport[]>([]);
   const [expanded, setExpanded] = useState<Record<number,boolean>>({});
   const [renamingId, setRenamingId] = useState<string|null>(null);
   const [renameText, setRenameText] = useState("");
+  const [addingToId, setAddingToId] = useState<string|null>(null); // session ID being added to
 
   useEffect(() => {
-    kvGet<SourcingReport[]>("sourcing:history").then(h => { if (h) setHistory(h); });
+    kvGet<SourcingReport[]>("sourcing:history").then(h => {
+      if (h) {
+        // Ensure every history entry has a stable unique id
+        const fixed = h.map((r,i) => ({...r, id: r.id && r.id.includes("-") ? r.id : genId()}));
+        setHistory(fixed);
+      }
+    });
   }, []);
 
-  const addItem = () => setItems(i => [...i, {name:"",quantity:"",specs:""}]);
+  const addItem = () => {
+    if (items.length >= 5) return;
+    setItems(i => [...i, {name:"",quantity:"",specs:""}]);
+  };
   const removeItem = (idx:number) => setItems(i => i.filter((_,n) => n!==idx));
   const updateItem = (idx:number, field:keyof SourcingItem, val:string) =>
     setItems(i => i.map((it,n) => n===idx ? {...it,[field]:val} : it));
 
-  const search = async () => {
-    const valid = items.filter(i => i.name.trim());
+  const runSearch = async (searchItems: SourcingItem[], existingReport?: SourcingReport) => {
+    const valid = searchItems.filter(i => i.name.trim());
     if (!valid.length) { setError("Please enter at least one item."); return; }
+    if (valid.length > 5) { setError("Maximum 5 items per search."); return; }
     setLoading(true); setError("");
+
     try {
       const res = await fetch("/api/sourcing", {
         method:"POST", headers:{"Content-Type":"application/json"},
@@ -121,30 +132,61 @@ export default function SourcingModule() {
       });
       const data = await res.json();
       if (!res.ok || data.error) { setError(data.error||`Error ${res.status}`); setLoading(false); return; }
-      const newReport: SourcingReport = {
-        ...data,
-        id: Date.now().toString(),
-        name: sessionName.trim() || `Search ${new Date().toLocaleDateString("en-PH",{month:"short",day:"numeric"})}`,
-        query: valid,
-        searched_at: new Date().toISOString(),
-      };
+
+      let newReport: SourcingReport;
+      if (existingReport) {
+        // Merge new items into existing session
+        newReport = {
+          ...existingReport,
+          items: [...existingReport.items, ...data.items],
+          query: [...existingReport.query, ...valid],
+          searched_at: new Date().toISOString(),
+        };
+      } else {
+        newReport = {
+          ...data,
+          id: genId(),
+          name: sessionName.trim() || `Search ${new Date().toLocaleDateString("en-PH",{month:"short",day:"numeric"})}`,
+          query: valid,
+          searched_at: new Date().toISOString(),
+        };
+      }
+
       setReport(newReport);
-      const newHist = [newReport, ...history].slice(0, 20);
+      const newHist = existingReport
+        ? history.map(h => h.id===existingReport.id ? newReport : h)
+        : [newReport, ...history].slice(0, 20);
       setHistory(newHist);
       await kvSet("sourcing:history", newHist);
       setView("results");
       setExpanded(Object.fromEntries(data.items.map((_:ResultItem,i:number) => [i, true])));
+      setAddingToId(null);
+      setItems([{name:"",quantity:"",specs:""}]);
+      setSessionName("");
     } catch(e) { setError(String(e)); }
     setLoading(false);
+    setLoadingItem("");
+  };
+
+  const search = () => runSearch(items);
+
+  const addToSession = (sessionId: string) => {
+    const session = history.find(h => h.id === sessionId);
+    if (!session) return;
+    setAddingToId(sessionId);
+    setSessionName(session.name);
+    setItems([{name:"",quantity:"",specs:""}]);
+    setView("search");
   };
 
   const saveRename = (id: string) => {
-    if (!renameText.trim()) return;
+    if (!renameText.trim()) { setRenamingId(null); setRenameText(""); return; }
     const updated = history.map(h => h.id===id ? {...h, name:renameText.trim()} : h);
     setHistory(updated);
     kvSet("sourcing:history", updated);
     if (report?.id===id) setReport(r => r ? {...r, name:renameText.trim()} : r);
-    setRenamingId(null); setRenameText("");
+    setRenamingId(null);
+    setRenameText("");
   };
 
   const S = {
@@ -182,7 +224,7 @@ export default function SourcingModule() {
               </td>
               <td style={{...S.td,fontSize:13,color:"#8a9ab0",minWidth:120}}>{sup.notes||"—"}</td>
               <td style={{...S.td,minWidth:140}}>
-                {sup.url ? <a href={sup.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:"#185FA5",wordBreak:"break-all",textDecoration:"none"}} onMouseEnter={e=>(e.currentTarget.style.textDecoration="underline")} onMouseLeave={e=>(e.currentTarget.style.textDecoration="none")}>{sup.url.replace(/^https?:\/\//,"").slice(0,30)}{sup.url.length>33?"…":""}</a> : <span style={{color:"#b0bec8",fontSize:13}}>—</span>}
+                {sup.url?<a href={sup.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:"#185FA5",wordBreak:"break-all",textDecoration:"none"}}>{sup.url.replace(/^https?:\/\//,"").slice(0,30)}{sup.url.length>33?"…":""}</a>:<span style={{color:"#b0bec8",fontSize:13}}>—</span>}
               </td>
             </tr>
           ))}
@@ -190,6 +232,8 @@ export default function SourcingModule() {
       </table>
     </div>
   );
+
+  const addingToSession = addingToId ? history.find(h => h.id===addingToId) : null;
 
   return (
     <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
@@ -199,7 +243,7 @@ export default function SourcingModule() {
       <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"0 22px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,height:60}}>
         <div>
           <div style={{fontSize:17,fontWeight:600,color:"#1a2332"}}>Sourcing Module</div>
-          <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>AI-powered supplier search · Philippines first</div>
+          <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>AI-powered supplier search · Philippines first · Max 5 items per search</div>
         </div>
         <div style={{display:"flex"}}>
           {(["search","results","history"] as const).map(v=>(
@@ -216,14 +260,26 @@ export default function SourcingModule() {
           {/* SEARCH VIEW */}
           {view==="search"&&(
             <>
+              {addingToSession&&(
+                <div style={{padding:"10px 14px",borderRadius:9,background:"#EBF3FC",border:"0.5px solid #c5ddf5",fontSize:13,color:"#185FA5",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <span>Adding items to: <strong>{addingToSession.name}</strong></span>
+                  <button onClick={()=>{setAddingToId(null);setItems([{name:"",quantity:"",specs:""}]);}} style={{fontSize:12,padding:"3px 9px",borderRadius:6,border:"0.5px solid #c5ddf5",background:"#fff",color:"#185FA5",cursor:"pointer"}}>Cancel</button>
+                </div>
+              )}
+
               <div style={{...S.panel,padding:"20px 22px",marginBottom:14}}>
-                {/* Session name */}
-                <div style={{marginBottom:18}}>
-                  <div style={S.lbl}>Session Name</div>
-                  <input style={S.inp} placeholder='e.g. EDC Substation Lighting RFQ' value={sessionName} onChange={e=>setSessionName(e.target.value)}/>
+                {!addingToSession&&(
+                  <div style={{marginBottom:18}}>
+                    <div style={S.lbl}>Session Name</div>
+                    <input style={S.inp} placeholder="e.g. EDC Substation Lighting RFQ" value={sessionName} onChange={e=>setSessionName(e.target.value)}/>
+                  </div>
+                )}
+
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                  <div style={S.lbl}>Items to Source</div>
+                  <span style={{fontSize:12,color:items.length>=5?"#A32D2D":"#b0bec8",fontFamily:"'DM Mono',monospace"}}>{items.length}/5 items</span>
                 </div>
 
-                <div style={S.lbl}>Items to Source</div>
                 <div style={{display:"grid",gridTemplateColumns:"1fr 110px 1fr 36px",gap:8,marginBottom:8}}>
                   {["Item Name / Description","Quantity","Specifications (optional)",""].map(h=>(
                     <div key={h} style={{fontSize:12,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</div>
@@ -237,19 +293,28 @@ export default function SourcingModule() {
                     <button onClick={()=>removeItem(idx)} style={{fontSize:15,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer",padding:"0 6px"}}>✕</button>
                   </div>
                 ))}
-                <div style={{marginTop:10}}>
-                  <button onClick={addItem} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>+ Add Item</button>
-                </div>
+                {items.length<5&&(
+                  <div style={{marginTop:10}}>
+                    <button onClick={addItem} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>+ Add Item</button>
+                  </div>
+                )}
+                {items.length>=5&&(
+                  <div style={{marginTop:8,fontSize:12,color:"#854F0B",fontFamily:"'DM Mono',monospace"}}>Maximum 5 items reached. Search this batch, then add more from History.</div>
+                )}
               </div>
 
               {error&&<div style={{padding:"11px 14px",borderRadius:9,background:"#FEF0F0",border:"0.5px solid #f5c6c6",fontSize:14,color:"#A32D2D",marginBottom:12}}>{error}</div>}
 
               <button onClick={search} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:10,border:"none",background:"#185FA5",color:"#fff",fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:9,opacity:loading?0.7:1}}>
-                {loading?<><Spinner/><span>Searching suppliers... this takes 15-30 seconds</span></>:<><span>🔍</span><span>Search Suppliers</span></>}
+                {loading?(
+                  <><Spinner/><span>{loadingItem?`Searching: ${loadingItem}...`:"Searching suppliers... searching one item at a time"}</span></>
+                ):(
+                  <><span>🔍</span><span>{addingToSession?`Add Items to "${addingToSession.name}"`:"Search Suppliers"}</span></>
+                )}
               </button>
 
               <div style={{marginTop:12,padding:"12px 14px",borderRadius:9,background:"#f8f9fb",border:"0.5px solid #e2e6ea",fontSize:13,color:"#8a9ab0",lineHeight:1.7}}>
-                Results are indicative -- verify pricing with suppliers before quoting to clients.
+                Each item is searched individually to avoid rate limits. Allow 10-15 seconds per item. Results are indicative -- verify with suppliers before quoting.
               </div>
             </>
           )}
@@ -261,16 +326,16 @@ export default function SourcingModule() {
               {report&&<>
                 <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
                   <div>
-                    {renamingId===report.id ? (
+                    {renamingId===report.id?(
                       <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
-                        <input style={{...S.inp,fontSize:15,flex:1,border:"1px solid #185FA5"}} value={renameText}
+                        <input style={{...S.inp,fontSize:15,flex:1,border:"1px solid #185FA5",width:280}} value={renameText}
                           onChange={e=>setRenameText(e.target.value)}
                           onKeyDown={e=>{if(e.key==="Enter")saveRename(report.id);if(e.key==="Escape"){setRenamingId(null);setRenameText("");}}}
                           autoFocus/>
                         <button onClick={()=>saveRename(report.id)} style={{fontSize:13,padding:"6px 12px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Save</button>
                         <button onClick={()=>{setRenamingId(null);setRenameText("");}} style={{fontSize:13,padding:"6px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>✕</button>
                       </div>
-                    ) : (
+                    ):(
                       <div style={{display:"flex",alignItems:"center",gap:10}}>
                         <div style={{fontSize:18,fontWeight:600,color:"#1a2332"}}>{report.name}</div>
                         <button onClick={()=>{setRenamingId(report.id);setRenameText(report.name);}} style={{fontSize:12,padding:"3px 9px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Rename</button>
@@ -279,6 +344,7 @@ export default function SourcingModule() {
                     <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>{report.items.length} item{report.items.length>1?"s":""} · {new Date(report.searched_at).toLocaleString("en-PH",{dateStyle:"medium",timeStyle:"short"})}</div>
                   </div>
                   <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                    <button onClick={()=>addToSession(report.id)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #534AB7",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",fontWeight:500}}>+ Add Items</button>
                     <button onClick={()=>exportCSV(report)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #3B6D11",background:"#f0faf5",color:"#3B6D11",cursor:"pointer",fontWeight:500}}>📊 Export CSV</button>
                     <button onClick={()=>exportDOCX(report)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:500}}>📄 Export DOCX</button>
                     <button onClick={()=>setView("search")} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>New Search</button>
@@ -302,7 +368,6 @@ export default function SourcingModule() {
                         <span style={{fontSize:14,color:"#b0bec8"}}>{expanded[i]?"▲":"▼"}</span>
                       </div>
                     </div>
-
                     {expanded[i]&&(
                       <div style={{padding:"16px 18px"}}>
                         <div style={{marginBottom:18}}>
@@ -338,36 +403,37 @@ export default function SourcingModule() {
             <>
               <div style={{fontSize:18,fontWeight:600,color:"#1a2332",marginBottom:14}}>Search History</div>
               {history.length===0&&<div style={{textAlign:"center",padding:40,color:"#b0bec8",fontSize:14}}>No searches yet.</div>}
-              {history.map((h,i)=>{
-                const hid = h.id || String(i);
+              {history.map((h)=>{
+                const hid = h.id;
                 return (
-                <div key={hid} style={{...S.panel,padding:"14px 18px",marginBottom:10}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
-                    <div style={{flex:1}}>
-                      {renamingId===hid ? (
-                        <div style={{display:"flex",gap:8,alignItems:"center"}}>
-                          <input style={{...S.inp,fontSize:15,flex:1,border:"1px solid #185FA5"}} value={renameText}
-                            onChange={e=>setRenameText(e.target.value)}
-                            onKeyDown={e=>{if(e.key==="Enter")saveRename(hid);if(e.key==="Escape"){setRenamingId(null);setRenameText("");}}}
-                            autoFocus/>
-                          <button onClick={()=>saveRename(hid)} style={{fontSize:13,padding:"6px 12px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Save</button>
-                          <button onClick={()=>{setRenamingId(null);setRenameText("");}} style={{fontSize:13,padding:"6px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>✕</button>
+                  <div key={hid} style={{...S.panel,padding:"14px 18px",marginBottom:10}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+                      <div style={{flex:1}}>
+                        {renamingId===hid?(
+                          <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                            <input style={{...S.inp,fontSize:15,flex:1,border:"1px solid #185FA5"}} value={renameText}
+                              onChange={e=>setRenameText(e.target.value)}
+                              onKeyDown={e=>{if(e.key==="Enter")saveRename(hid);if(e.key==="Escape"){setRenamingId(null);setRenameText("");}}}
+                              autoFocus/>
+                            <button onClick={()=>saveRename(hid)} style={{fontSize:13,padding:"6px 12px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Save</button>
+                            <button onClick={()=>{setRenamingId(null);setRenameText("");}} style={{fontSize:13,padding:"6px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>✕</button>
+                          </div>
+                        ):(
+                          <>
+                            <div style={{fontSize:15,fontWeight:500,color:"#1a2332"}}>{h.name}</div>
+                            <div style={{fontSize:12,color:"#b0bec8",marginTop:3,fontFamily:"'DM Mono',monospace"}}>{new Date(h.searched_at).toLocaleString("en-PH",{dateStyle:"medium",timeStyle:"short"})} · {h.items.length} item{h.items.length>1?"s":""}</div>
+                          </>
+                        )}
+                      </div>
+                      {renamingId!==hid&&(
+                        <div style={{display:"flex",gap:8,flexShrink:0}}>
+                          <button onClick={()=>{setRenamingId(hid);setRenameText(h.name);}} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Rename</button>
+                          <button onClick={()=>addToSession(hid)} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #534AB7",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",fontWeight:500}}>+ Add Items</button>
+                          <button onClick={()=>{setReport(h);setExpanded(Object.fromEntries(h.items.map((_,j)=>[j,true])));setView("results");}} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:500}}>View →</button>
                         </div>
-                      ) : (
-                        <>
-                          <div style={{fontSize:15,fontWeight:500,color:"#1a2332"}}>{h.name}</div>
-                          <div style={{fontSize:12,color:"#b0bec8",marginTop:3,fontFamily:"'DM Mono',monospace"}}>{new Date(h.searched_at).toLocaleString("en-PH",{dateStyle:"medium",timeStyle:"short"})} · {h.items.length} item{h.items.length>1?"s":""}</div>
-                        </>
                       )}
                     </div>
-                    {renamingId!==hid&&(
-                      <div style={{display:"flex",gap:8,flexShrink:0}}>
-                        <button onClick={()=>{setRenamingId(hid);setRenameText(h.name);}} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Rename</button>
-                        <button onClick={()=>{setReport(h);setExpanded(Object.fromEntries(h.items.map((_,j)=>[j,true])));setView("results");}} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:500}}>View →</button>
-                      </div>
-                    )}
                   </div>
-                </div>
                 );
               })}
             </>
