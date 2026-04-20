@@ -1195,16 +1195,17 @@ init();
 async function generateTopics() {
   const btn = document.getElementById('genTopicsBtn');
   const list = document.getElementById('topicsList');
-  const audience = Array.from(document.querySelectorAll('.art-aud-cb:checked')).map(cb => cb.value).join(', ') || 'General Industrial';
+  const audience = Array.from(document.querySelectorAll('.art-aud-cb:checked')).map(function(cb) { return cb.value; }).join(', ') || 'General Industrial';
 
   btn.textContent = '⏳ Generating...';
   btn.disabled = true;
-  list.style.display = 'none';
-  list.innerHTML = '';
+  list.style.display = 'flex';
+  list.innerHTML = '<p style="font-size:12px;color:#8a9ab0;padding:6px">Searching for topics...</p>';
+
+  var apiBase = 'https://ultrapower-executive-os-vgrr.vercel.app';
 
   try {
-    const apiBase = window.location.origin;
-    const res = await fetch(apiBase + '/api/claude', {
+    var res = await fetch(apiBase + '/api/claude', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
@@ -1213,18 +1214,27 @@ async function generateTopics() {
         max_tokens: 600
       })
     });
-    const data = await res.json();
-    const raw = data.text || '';
-    const cleaned = raw.replace(/```json|```/g, '').trim();
-    let topics = [];
-    try { topics = JSON.parse(cleaned); } catch(pe) { const m = cleaned.match(/\[[\s\S]*\]/); if (m) topics = JSON.parse(m[0]); }
 
+    if (!res.ok) {
+      list.innerHTML = '<p style="font-size:12px;color:#A32D2D;padding:6px">API error ' + res.status + '. Check that ANTHROPIC_API_KEY is set in Vercel.</p>';
+      btn.textContent = '✦ Generate Topics'; btn.disabled = false; return;
+    }
+
+    var data = await res.json();
+    var raw = (data.text || data.content || '');
+    var cleaned = raw.replace(/```json|```/g, '').trim();
+    var topics = [];
+    try { topics = JSON.parse(cleaned); } catch(pe) {
+      var m = cleaned.match(/\[[\s\S]*?\]/);
+      if (m) { try { topics = JSON.parse(m[0]); } catch(e2) {} }
+    }
+
+    list.innerHTML = '';
     if (topics.length > 0) {
-      list.style.display = 'flex';
       topics.forEach(function(topic) {
-        const btn2 = document.createElement('button');
+        var btn2 = document.createElement('button');
         btn2.className = 'btn btn-ghost btn-sm';
-        btn2.style.cssText = 'text-align:left;white-space:normal;padding:7px 10px;border-radius:6px;font-size:12px;color:var(--g800);border-color:var(--g200);line-height:1.4';
+        btn2.style.cssText = 'text-align:left;white-space:normal;padding:7px 10px;border-radius:6px;font-size:12px;color:var(--g800);border:0.5px solid var(--g200);line-height:1.4;cursor:pointer;background:#fff';
         btn2.textContent = topic;
         btn2.onclick = function() {
           document.getElementById('art_topic').value = topic;
@@ -1233,12 +1243,10 @@ async function generateTopics() {
         list.appendChild(btn2);
       });
     } else {
-      list.style.display = 'flex';
-      list.innerHTML = '<p style="font-size:12px;color:#A32D2D;padding:6px">Generation failed. Please try again.</p>';
+      list.innerHTML = '<p style="font-size:12px;color:#A32D2D;padding:6px">Could not parse topics. Raw response: ' + cleaned.slice(0, 100) + '</p>';
     }
   } catch(e) {
-    list.style.display = 'flex';
-    list.innerHTML = '<p style="font-size:12px;color:#A32D2D;padding:6px">Connection error: ' + e.message + '</p>';
+    list.innerHTML = '<p style="font-size:12px;color:#A32D2D;padding:6px">Error: ' + e.message + '</p>';
   }
 
   btn.textContent = '✦ Generate Topics';
