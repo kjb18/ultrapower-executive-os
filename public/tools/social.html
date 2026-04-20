@@ -408,10 +408,7 @@ label{font-size:10px;color:var(--g600);font-weight:600;letter-spacing:.5px;text-
       <div style="font-size:13px;font-weight:700;margin-bottom:12px">Article Brief</div>
       <div class="field">
   <label>Topic / Title Idea</label>
-  <div style="display:flex;gap:6px;margin-bottom:6px">
-    <input type="text" id="art_topic" placeholder="e.g. Why IP65-rated lighting matters for food manufacturing" style="flex:1">
-    <button class="btn btn-outline btn-sm" onclick="generateTopics()" id="genTopicsBtn" style="white-space:nowrap">✦ Generate Topics</button>
-  </div>
+  <input type="text" id="art_topic" placeholder="e.g. Why IP65-rated lighting matters for food manufacturing" style="width:100%;margin-bottom:6px">
   <div id="topicsList" style="display:none;flex-direction:column;gap:5px;margin-top:6px"></div>
 </div>
       <div class="field"><label>Primary Keyword</label><input type="text" id="art_kw" placeholder="e.g. industrial LED lighting Philippines"></div>
@@ -1192,66 +1189,40 @@ async function init(){
 }
 init();
 
-async function generateTopics() {
-  const btn = document.getElementById('genTopicsBtn');
-  const list = document.getElementById('topicsList');
-  const audience = Array.from(document.querySelectorAll('.art-aud-cb:checked')).map(function(cb) { return cb.value; }).join(', ') || 'General Industrial';
 
-  btn.textContent = '⏳ Generating...';
-  btn.disabled = true;
+
+// Receive topics from parent OS via postMessage
+window.addEventListener('message', function(e) {
+  var data = e.data;
+  if (!data || data.type !== 'TOPICS') return;
+  var topics = data.topics;
+  if (!topics || !topics.length) return;
+  var list = document.getElementById('topicsList');
+  if (!list) return;
+  list.innerHTML = '';
   list.style.display = 'flex';
-  list.innerHTML = '<p style="font-size:12px;color:#8a9ab0;padding:6px">Searching for topics...</p>';
-
-  var apiBase = 'https://ultrapower-executive-os-vgrr.vercel.app';
-
-  try {
-    var res = await fetch(apiBase + '/api/claude', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        system: 'You are a B2B content strategist for Ultra Power Industrial Resources Inc., a Philippine industrial lighting distributor based in Makati. Clients include EDC, NGCP, First Gen, Aboitiz Power, and government entities. You specialize in LinkedIn articles and SEO blog posts for industrial B2B audiences.',
-        user: 'Generate 8 specific, compelling article topic ideas for the following audience: ' + audience + '. Make each topic highly relevant to Philippine industrial procurement, lighting solutions, energy efficiency, or B2B sales. Return ONLY a JSON array of strings, no markdown, no preamble. Example format: ["Topic 1","Topic 2"]',
-        max_tokens: 600
-      })
-    });
-
-    if (!res.ok) {
-      list.innerHTML = '<p style="font-size:12px;color:#A32D2D;padding:6px">API error ' + res.status + '. Check that ANTHROPIC_API_KEY is set in Vercel.</p>';
-      btn.textContent = '✦ Generate Topics'; btn.disabled = false; return;
-    }
-
-    var data = await res.json();
-    var raw = (data.text || data.content || '');
-    var cleaned = raw.replace(/```json|```/g, '').trim();
-    var topics = [];
-    try { topics = JSON.parse(cleaned); } catch(pe) {
-      var m = cleaned.match(/\[[\s\S]*?\]/);
-      if (m) { try { topics = JSON.parse(m[0]); } catch(e2) {} }
-    }
-
-    list.innerHTML = '';
-    if (topics.length > 0) {
-      topics.forEach(function(topic) {
-        var btn2 = document.createElement('button');
-        btn2.className = 'btn btn-ghost btn-sm';
-        btn2.style.cssText = 'text-align:left;white-space:normal;padding:7px 10px;border-radius:6px;font-size:12px;color:var(--g800);border:0.5px solid var(--g200);line-height:1.4;cursor:pointer;background:#fff';
-        btn2.textContent = topic;
-        btn2.onclick = function() {
-          document.getElementById('art_topic').value = topic;
-          list.style.display = 'none';
-        };
-        list.appendChild(btn2);
-      });
-    } else {
-      list.innerHTML = '<p style="font-size:12px;color:#A32D2D;padding:6px">Could not parse topics. Raw response: ' + cleaned.slice(0, 100) + '</p>';
-    }
-  } catch(e) {
-    list.innerHTML = '<p style="font-size:12px;color:#A32D2D;padding:6px">Error: ' + e.message + '</p>';
-  }
-
-  btn.textContent = '✦ Generate Topics';
-  btn.disabled = false;
-}
+  list.style.flexDirection = 'column';
+  list.style.gap = '5px';
+  list.style.marginTop = '6px';
+  topics.forEach(function(topic) {
+    var btn = document.createElement('button');
+    btn.className = 'btn btn-ghost btn-sm';
+    btn.style.cssText = 'text-align:left;white-space:normal;padding:7px 10px;border-radius:6px;font-size:12px;color:var(--g800);border:0.5px solid var(--g200);line-height:1.4;cursor:pointer;background:#fff';
+    btn.textContent = topic;
+    btn.onclick = function() {
+      var input = document.getElementById('art_topic');
+      if (input) input.value = topic;
+      list.style.display = 'none';
+      // Switch to Article Studio tab if not already there
+      var artTab = document.querySelector('[onclick*="article"]');
+      if (artTab) artTab.click();
+    };
+    list.appendChild(btn);
+  });
+  // Switch to Article Studio tab automatically
+  var artTab = document.querySelector('[onclick*="article"]');
+  if (artTab) artTab.click();
+});
 </script>
 </body>
 </html>
