@@ -8,7 +8,6 @@ import DailyLearning from "./tabs/DailyLearning";
 import CRM from "./tabs/CRM";
 import SocialMedia from "./tabs/SocialMedia";
 import Tools from "./tabs/Tools";
-import GenerateTopics from "./tabs/GenerateTopics";
 
 export default function Shell() {
   const [tab, setTab] = useState<TabId>("dashboard");
@@ -18,13 +17,12 @@ export default function Shell() {
       <Sidebar active={tab} onChange={setTab} />
       <main style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
         {tab === "dashboard" && <Dashboard />}
-        {tab === "brain" && <SecondBrain />}
-        {tab === "mental" && <MentalFitness />}
-        {tab === "learning" && <DailyLearning />}
-        {tab === "crm" && <CRM />}
-        {tab === "social" && <SocialMedia />}
-        {tab === "tools" && <Tools />}
-        {tab === "generate" && <GenerateTopics />}
+        {tab === "brain"     && <SecondBrain />}
+        {tab === "mental"    && <MentalFitness />}
+        {tab === "learning"  && <DailyLearning />}
+        {tab === "crm"       && <CRM />}
+        {tab === "social"    && <SocialMedia />}
+        {tab === "tools"     && <Tools />}
       </main>
     </div>
   );
