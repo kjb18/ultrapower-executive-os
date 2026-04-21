@@ -16,65 +16,84 @@ interface SupplierResult {
   quotation_hint: string;
 }
 
-function buildItemPrompt(item: SourcingItem) {
-  return `You are a procurement specialist for Ultra Power Industrial Resources Inc., a Philippine B2B industrial distributor based in Makati. Search the web for current supplier information for this single item.
+// Token safety constants -- do not increase without reviewing usage impact
+const MAX_TOKENS = 2000;           // Hard cap per item -- prevents truncation and cost blowout
+const MAX_WEB_SEARCHES = 3;        // Max web searches per item -- each search adds ~5-15K input tokens
+const MAX_ITEMS = 5;               // Max items per batch
+
+function buildItemPrompt(item: SourcingItem, useWebSearch: boolean) {
+  const searchNote = useWebSearch
+    ? "Search the web for current pricing and availability."
+    : "Use your training knowledge to suggest likely suppliers and estimated pricing.";
+
+  return `You are a procurement specialist for Ultra Power Industrial Resources Inc., a Philippine B2B industrial distributor in Makati. ${searchNote}
 
 Item: ${item.name}${item.quantity ? ` (Qty: ${item.quantity})` : ""}${item.specs ? ` — Specs: ${item.specs}` : ""}
 
-Search for:
-1. Philippine local suppliers, distributors, and retailers with current pricing
-2. International suppliers if local options are limited
-3. Online platforms (Lazada, Shopee, industrial suppliers, manufacturer websites)
+Find Philippine suppliers first, then international options. Be concise -- short notes only.
 
-Return ONLY raw JSON, no markdown fences, no preamble. Format:
+Return ONLY raw JSON, no markdown, no preamble:
 
 {
   "name": "${item.name}",
-  "summary": "brief 1-sentence market summary",
+  "summary": "1-sentence market summary",
   "local_available": true or false,
   "local_suppliers": [
     {
-      "name": "supplier name",
+      "name": "supplier",
       "type": "Local Distributor|Online Platform|Direct Manufacturer",
       "price_range": "₱X,XXX – ₱X,XXX",
-      "unit": "per piece|per meter|per set|etc",
+      "unit": "per piece|etc",
       "stock": "In Stock|On Order|Indent|Unknown",
       "lead_time": "e.g. 1-3 days",
       "moq": "e.g. 1 pc",
-      "certifications": "e.g. IP65, IEC or N/A",
-      "notes": "any notes",
-      "url": "website url if found"
+      "certifications": "e.g. IP65 or N/A",
+      "notes": "brief note",
+      "url": "url or empty string"
     }
   ],
   "international_suppliers": [
     {
-      "name": "supplier name",
+      "name": "supplier",
       "type": "Manufacturer|Trading Company|Online Platform",
       "price_range": "USD X – X",
-      "unit": "per piece|per set",
+      "unit": "per piece|etc",
       "lead_time": "e.g. 15-30 days",
       "moq": "e.g. 10 pcs",
-      "import_notes": "duties, shipping, certifications",
-      "url": "website url if found"
+      "import_notes": "brief import note",
+      "url": "url or empty string"
     }
   ],
-  "recommendation": "brief recommendation for Ultra Power",
-  "quotation_hint": "suggested selling price range in PHP for Ultra Power to quote to clients"
+  "recommendation": "1-2 sentence recommendation for Ultra Power",
+  "quotation_hint": "suggested selling price range in PHP"
 }`;
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { items } = await req.json() as { items: SourcingItem[] };
+    const { items, useWebSearch = true } = await req.json() as { items: SourcingItem[]; useWebSearch: boolean };
     if (!items?.length) return NextResponse.json({ error: "No items provided" }, { status: 400 });
 
-    // Enforce 5 item limit
-    const limited = items.slice(0, 5);
+    const limited = items.slice(0, MAX_ITEMS);
     const results: SupplierResult[] = [];
 
-    // Call API sequentially per item to avoid rate limits and truncation
     for (const item of limited) {
       try {
+        const body: Record<string, unknown> = {
+          model: "claude-sonnet-4-5",
+          max_tokens: MAX_TOKENS,
+          messages: [{ role: "user", content: buildItemPrompt(item, useWebSearch) }],
+        };
+
+        // Only attach web search tool when enabled -- web search is the primary token cost driver
+        if (useWebSearch) {
+          body.tools = [{
+            type: "web_search_20250305",
+            name: "web_search",
+            max_uses: MAX_WEB_SEARCHES, // Hard cap: 3 searches per item max
+          }];
+        }
+
         const res = await fetch("https://api.anthropic.com/v1/messages", {
           method: "POST",
           headers: {
@@ -82,25 +101,19 @@ export async function POST(req: NextRequest) {
             "x-api-key": process.env.ANTHROPIC_API_KEY || "",
             "anthropic-version": "2023-06-01",
           },
-          body: JSON.stringify({
-            model: "claude-sonnet-4-5",
-            max_tokens: 3000,
-            tools: [{ type: "web_search_20250305", name: "web_search" }],
-            messages: [{ role: "user", content: buildItemPrompt(item) }],
-          }),
+          body: JSON.stringify(body),
         });
 
         if (!res.ok) {
           const err = await res.text();
-          // On rate limit, return what we have so far with an error note
           if (res.status === 429) {
             results.push({
               name: item.name,
-              summary: "Rate limit reached. Please wait 60 seconds and try again.",
+              summary: "Rate limit reached. Wait 60 seconds and try again, or use fewer items.",
               local_available: false,
               local_suppliers: [],
               international_suppliers: [],
-              recommendation: "Rate limit reached. Try searching this item separately.",
+              recommendation: "Try this item in a separate search after waiting.",
               quotation_hint: "N/A",
             });
             continue;
@@ -117,11 +130,11 @@ export async function POST(req: NextRequest) {
         if (!raw) {
           results.push({
             name: item.name,
-            summary: "No results returned for this item.",
+            summary: "No results returned.",
             local_available: false,
             local_suppliers: [],
             international_suppliers: [],
-            recommendation: "Try rephrasing the item name with more specific details.",
+            recommendation: "Try rephrasing with more specific details.",
             quotation_hint: "N/A",
           });
           continue;
@@ -132,16 +145,15 @@ export async function POST(req: NextRequest) {
         try {
           parsed = JSON.parse(cleaned);
         } catch {
-          // Try to extract JSON object from response
           const match = cleaned.match(/\{[\s\S]*\}/);
           if (!match) {
             results.push({
               name: item.name,
-              summary: "Could not parse supplier data for this item.",
+              summary: "Could not parse supplier data.",
               local_available: false,
               local_suppliers: [],
               international_suppliers: [],
-              recommendation: "Try searching with a simpler item name.",
+              recommendation: "Try a simpler item name.",
               quotation_hint: "N/A",
             });
             continue;
@@ -149,6 +161,7 @@ export async function POST(req: NextRequest) {
           parsed = JSON.parse(match[0]);
         }
         results.push(parsed);
+
       } catch (itemErr) {
         results.push({
           name: item.name,
@@ -156,7 +169,7 @@ export async function POST(req: NextRequest) {
           local_available: false,
           local_suppliers: [],
           international_suppliers: [],
-          recommendation: "Search failed for this item. Try again.",
+          recommendation: "Search failed. Try again.",
           quotation_hint: "N/A",
         });
       }
