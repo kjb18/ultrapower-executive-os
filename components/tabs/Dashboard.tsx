@@ -6,7 +6,7 @@ import {
   pad, getTodayKey, getResetMs, fmtCountdown, pctColor,
   DEFAULT_OS, DEFAULT_MFP, OSData, MFPDay, TimeBlock,
   BREWING_CATEGORIES, BREWING_COLORS, CROSSHAIRS_PRIORITY_COLORS,
-  BrewingItem, CrosshairsTarget,
+  BrewingItem, CrosshairsTarget, MITArchiveEntry,
 } from "@/lib/constants";
 import Calendar from "@/components/Calendar";
 
@@ -61,6 +61,9 @@ export default function Dashboard() {
   const [insight, setInsight] = useState("");
   const [iLoad, setILoad] = useState(false);
   const [collapsed, setCollapsed] = useState<Record<string,boolean>>({});
+  const [showArchive, setShowArchive] = useState(false);
+  const [archiveView, setArchiveView] = useState<"streak"|"feed">("streak");
+  const [mitArchive, setMitArchive] = useState<MITArchiveEntry[]>([]);
 
   // Brewing form state
   const [newBrew, setNewBrew] = useState({what:"",who:"",since:"",category:"Client" as BrewingItem["category"]});
@@ -72,20 +75,41 @@ export default function Dashboard() {
 
   useEffect(() => {
     (async () => {
-      const [osData, mfpData, pomoData] = await Promise.all([
+      const [osData, mfpData, pomoData, archiveData] = await Promise.all([
         kvGet<OSData>("dashboard"),
         kvGet<MFPDay>(`mfp:${getTodayKey()}`),
         kvGet<{sessions:number}>("pomo:sessions"),
+        kvGet<MITArchiveEntry[]>("mit:archive"),
       ]);
-      // Only use defaults if key was truly never set (null), not if data exists but is empty
       if (osData !== null) {
         setOSRaw({...DEFAULT_OS,...osData, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]});
       }
       if (mfpData) setMFPRaw(mfpData);
       if (pomoData) setPomoSessions(pomoData.sessions||0);
+      if (archiveData) setMitArchive(archiveData);
       setLoaded(true);
     })();
   }, [tk]);
+
+  // 12-hour auto-archive: check every minute for done tasks older than 12 hours
+  useEffect(() => {
+    const archiveOldDone = async () => {
+      const TWELVE_HOURS = 12 * 60 * 60 * 1000;
+      const now = Date.now();
+      const toArchive = os.mits.filter(m => m.done && m.doneAt && (now - m.doneAt) >= TWELVE_HOURS);
+      if (toArchive.length === 0) return;
+      const ph = new Date(new Date().toLocaleString("en-US", {timeZone:"Asia/Manila"}));
+      const dayKey = `${ph.getFullYear()}-${String(ph.getMonth()+1).padStart(2,"0")}-${String(ph.getDate()).padStart(2,"0")}`;
+      const newEntries: MITArchiveEntry[] = toArchive.map(m => ({text:m.text, doneAt:m.doneAt!, dayKey}));
+      const updated = [...newEntries, ...mitArchive].slice(0, 90 * 10); // cap at ~90 days
+      setMitArchive(updated);
+      await kvSet("mit:archive", updated);
+      setOS({mits: os.mits.filter(m => !toArchive.some(a => a.id === m.id))});
+    };
+    const id = setInterval(archiveOldDone, 60000);
+    archiveOldDone();
+    return () => clearInterval(id);
+  }, [os.mits, mitArchive]);
 
   const setOS = useCallback((patch: Partial<OSData>) => {
     setOSRaw(prev => { const next = {...prev,...patch}; kvSet("dashboard",next); return next; });
@@ -131,7 +155,7 @@ export default function Dashboard() {
 
   const addMIT = () => { if(!newMIT.trim())return; const id=os.nid||100; setOS({mits:[...os.mits,{id,text:newMIT.trim(),done:false}],nid:id+1}); setNewMIT(""); };
   const callAPI = async (system:string,user:string) => { const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system,user,max_tokens:400})}); const d=await res.json(); return d?.text||null; };
-  const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.objective}: ${o.keyResult} (${o.current}/${o.target} ${o.unit})`).join(", ")} KPIs: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
+  const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.name} ${o.pct}%`).join(", ")}. KPIs: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
 
   const addBrew = () => {
     if (!newBrew.what.trim()) return;
@@ -192,13 +216,16 @@ export default function Dashboard() {
           <div style={PL}><span>Most Important Tasks</span>
             <div style={{display:"flex",alignItems:"center",gap:8}}>
               <span style={{color:mitsDone===mitsTotal?"#3B6D11":"#854F0B"}}>{mitsDone}/{mitsTotal}</span>
+              <button style={{...SBTN,color:"#534AB7",borderColor:"#534AB744",background:"#F4F3FE"}} onClick={()=>setShowArchive(a=>!a)}>
+                {showArchive?"Hide Wins":"Wins Archive"}
+              </button>
               <button style={SBTN} onClick={()=>toggleCollapse("mits")}>{isCollapsed("mits")?"Show":"Hide"}</button>
             </div>
           </div>
           {!isCollapsed("mits")&&<>
           {os.mits.map((m,i)=>(
             <div key={m.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"7px 0",borderBottom:i===os.mits.length-1?"none":"0.5px solid #f0f2f5"}}>
-              <div onClick={()=>setOS({mits:os.mits.map(x=>x.id===m.id?{...x,done:!x.done}:x)})}
+              <div onClick={()=>setOS({mits:os.mits.map(x=>x.id===m.id?{...x,done:!x.done,doneAt:!x.done?Date.now():undefined}:x)})}
                 style={{width:17,height:17,borderRadius:4,border:`1.5px solid ${m.done?"#185FA5":"#d0d8e0"}`,background:m.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:11,color:"#fff"}}>
                 {m.done?"✓":""}
               </div>
@@ -213,7 +240,85 @@ export default function Dashboard() {
           </>}
         </div>
 
-        {/* Pomodoro */}
+        {/* MIT WINS ARCHIVE */}
+        {showArchive&&(()=>{
+          const dayMap: Record<string,string[]> = {};
+          mitArchive.forEach(e => { if(!dayMap[e.dayKey])dayMap[e.dayKey]=[];dayMap[e.dayKey].push(e.text); });
+          const days = Object.keys(dayMap).sort().reverse();
+          let longestStreak=0,streak=0,currentStreak=0;
+          const allDays=new Set(Object.keys(dayMap));
+          const checkDate=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
+          for(let i=0;i<90;i++){
+            const k=`${checkDate.getFullYear()}-${String(checkDate.getMonth()+1).padStart(2,"0")}-${String(checkDate.getDate()).padStart(2,"0")}`;
+            if(allDays.has(k)){streak++;if(i===0||currentStreak>0)currentStreak=streak;}
+            else{longestStreak=Math.max(longestStreak,streak);streak=0;if(currentStreak>0&&i>0)currentStreak=0;}
+            checkDate.setDate(checkDate.getDate()-1);
+          }
+          longestStreak=Math.max(longestStreak,streak);
+          const grid:{key:string;count:number}[]=[];
+          const gStart=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
+          for(let i=89;i>=0;i--){const d=new Date(gStart);d.setDate(d.getDate()-i);const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;grid.push({key:k,count:(dayMap[k]||[]).length});}
+          const dotColor=(n:number)=>n===0?"#f0f2f5":n===1?"#B5D4F4":n===2?"#378ADD":"#185FA5";
+          const today=getTodayKey();
+          const totalArchived=mitArchive.length;
+          return(
+            <div style={{...P,gridColumn:"span 2",border:"0.5px solid #AFA9EC",background:"#FAFAFF"}}>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#534AB7",fontFamily:"'DM Mono',monospace"}}>Wins Archive</div>
+                <div style={{display:"flex",gap:6}}>
+                  <button onClick={()=>setArchiveView("streak")} style={{fontSize:11,padding:"3px 10px",borderRadius:20,border:`0.5px solid ${archiveView==="streak"?"#534AB7":"#e2e6ea"}`,background:archiveView==="streak"?"#534AB7":"#fff",color:archiveView==="streak"?"#fff":"#8a9ab0",cursor:"pointer",fontWeight:500}}>Streak Wall</button>
+                  <button onClick={()=>setArchiveView("feed")} style={{fontSize:11,padding:"3px 10px",borderRadius:20,border:`0.5px solid ${archiveView==="feed"?"#534AB7":"#e2e6ea"}`,background:archiveView==="feed"?"#534AB7":"#fff",color:archiveView==="feed"?"#fff":"#8a9ab0",cursor:"pointer",fontWeight:500}}>Momentum Feed</button>
+                </div>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
+                {([["Current Streak",`${currentStreak} day${currentStreak!==1?"s":""}`,"#185FA5"],["Longest Streak",`${longestStreak} day${longestStreak!==1?"s":""}`,"#3B6D11"],["Total Wins",`${totalArchived} task${totalArchived!==1?"s":""}`,"#534AB7"]] as [string,string,string][]).map(([lbl,val,clr])=>(
+                  <div key={lbl} style={{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:9,padding:"10px 12px",textAlign:"center"}}>
+                    <div style={{fontSize:18,fontWeight:600,color:clr,fontFamily:"'DM Mono',monospace"}}>{val}</div>
+                    <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginTop:2}}>{lbl}</div>
+                  </div>
+                ))}
+              </div>
+              {archiveView==="streak"&&(<>
+                <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:10}}>
+                  {grid.map(d=>(
+                    <div key={d.key} title={`${d.key}: ${d.count} MIT${d.count!==1?"s":""} completed`}
+                      style={{width:14,height:14,borderRadius:3,background:dotColor(d.count),cursor:d.count>0?"pointer":"default",flexShrink:0,border:d.key===today?"1.5px solid #534AB7":"none"}}/>
+                  ))}
+                </div>
+                <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#b0bec8"}}>
+                  <span>Less</span>{[0,1,2,3].map(n=><div key={n} style={{width:10,height:10,borderRadius:2,background:dotColor(n)}}/>)}<span>More</span>
+                  <span style={{marginLeft:"auto"}}>Last 90 days</span>
+                </div>
+              </>)}
+              {archiveView==="feed"&&(
+                <div style={{maxHeight:320,overflowY:"auto"}}>
+                  {days.length===0&&<div style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:13}}>No archived tasks yet. Completed tasks archive automatically after 12 hours.</div>}
+                  {days.slice(0,30).map(day=>{
+                    const tasks=dayMap[day];
+                    const isStrong=tasks.length>=3;
+                    const dateLabel=new Date(day+"T12:00:00").toLocaleDateString("en-PH",{weekday:"short",month:"short",day:"numeric"});
+                    return(
+                      <div key={day} style={{marginBottom:14}}>
+                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
+                          <div style={{fontSize:11,fontWeight:600,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.08em"}}>{dateLabel}</div>
+                          <span style={{fontSize:10,padding:"1px 7px",borderRadius:20,background:isStrong?"#f0faf5":"#f0f2f5",color:isStrong?"#3B6D11":"#b0bec8",fontFamily:"'DM Mono',monospace",fontWeight:600}}>
+                            {tasks.length} MIT{tasks.length!==1?"s":""}{isStrong?" · Strong Day":""}
+                          </span>
+                        </div>
+                        {tasks.map((t,i)=>(
+                          <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"5px 0",borderBottom:i===tasks.length-1?"none":"0.5px solid #f0f2f5"}}>
+                            <div style={{width:16,height:16,borderRadius:4,background:"#185FA5",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",flexShrink:0,marginTop:1}}>✓</div>
+                            <div style={{fontSize:13,color:"#3a4a5a",lineHeight:1.4}}>{t}</div>
+                          </div>
+                        ))}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </div>
+          );
+        })()}
         <div style={{...P,display:"flex",flexDirection:"column",alignItems:"center"}}>
           <div style={{...PL,width:"100%"}}><span>Pomodoro</span><span style={{color:"#8a9ab0"}}>{pomoSessions} sessions</span></div>
           <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:6,alignSelf:"flex-start",textTransform:"uppercase",letterSpacing:"0.08em"}}>Linked to MIT</div>
