@@ -1,59 +1,40 @@
 import { NextRequest, NextResponse } from "next/server";
 
-const CATEGORIES = ["Business strategy","Sales & negotiation","Marketing & branding","Personal productivity","Finance & wealth","Mindset & self-help"];
+// TOKEN SAFETY: Hard cap on output tokens. No web search on this route.
+const MAX_TOKENS_CAP = 4000;
 
-function buildPrompt(category: string, usedIds: string[], request: string) {
-  const avoid = usedIds.length > 0 ? `\nAvoid these already-used topics: ${usedIds.slice(-20).join(", ")}.` : "";
-  const req = request ? `\nFocus today's module on: "${request}".` : "";
-  return `You are a business learning coach generating a daily learning module for Khalil, Engineering Solutions Director at Ultra Power Industrial Resources Inc. in the Philippines, a B2B industrial distributor.
-
-Today's category: ${category}${req}${avoid}
-
-Generate the module in JSON format ONLY. No preamble, no markdown fences, just raw JSON.
-
-Format:
-{
-  "quote": { "text": "...", "author": "..." },
-  "spotlight": { "title": "...", "author": "...", "type": "Book|Concept|Framework", "tagline": "..." },
-  "lessons": [
-    { "heading": "...", "body": "..." },
-    { "heading": "...", "body": "..." },
-    { "heading": "...", "body": "..." },
-    { "heading": "...", "body": "..." },
-    { "heading": "...", "body": "..." }
-  ],
-  "deepdive": { "heading": "...", "body": "..." },
-  "action_item": { "heading": "...", "body": "..." },
-  "category": "${category}",
-  "spotlight_id": "unique-slug",
-  "diagram": {
-    "type": "pyramid|matrix|steps|cards",
-    "data": {}
-  }
-}
-
-Rules for diagram:
-- Choose the diagram type that best illustrates the core concept.
-- pyramid: use for hierarchies. data = { "labels": ["top level","second","third","fourth"] }
-- matrix: use for 2x2 strategic frameworks. data = { "axes": { "x": "X axis label", "y": "Y axis label", "quadrants": ["top-left","top-right","bottom-left","bottom-right"] } }
-- steps: use for processes or sequences. data = { "steps": ["Step 1","Step 2","Step 3","Step 4"] }
-- cards: use for lists of concepts. data = { "items": [{"label":"Concept","desc":"short description"}] }
-
-Rules for lessons:
-- Each heading must be a punchy insight, not a label.
-- Each body must be 2-3 sentences. No em dashes. Use plain commas or periods instead.
-- Deep dive: 150-200 words exploring one idea from the lessons.
-- Action item: practical and tied to running a small Philippine industrial B2B company.`;
+function avoid(usedIds: string[]) {
+  return usedIds.length > 0 ? `\nAvoid these already-used topics: ${usedIds.slice(-20).join(", ")}.` : "";
 }
 
 export async function POST(req: NextRequest) {
   try {
-    const { usedIds = [], usedCats = [], pendingRequest = "" } = await req.json();
+    const { topicRequest, usedIds = [] } = await req.json();
 
-    const pool = CATEGORIES.filter((c: string) => !usedCats.includes(c));
-    const available = pool.length > 0 ? pool : CATEGORIES;
-    const category = available[Math.floor(Math.random() * available.length)];
-    const prompt = buildPrompt(category, usedIds, pendingRequest);
+    const systemPrompt = `You are a world-class executive learning curator for Khalil Joseph Banares, Engineering Solutions Director at Ultra Power Industrial Resources Inc., Makati Philippines. Generate a daily learning module that is immediately applicable to B2B industrial sales, procurement, leadership, or personal effectiveness.${avoid(usedIds)}`;
+
+    const userPrompt = topicRequest
+      ? `Generate a learning module on this topic: "${topicRequest}". Make it deeply relevant to industrial B2B sales in the Philippines.`
+      : `Generate today's learning module. Choose a topic from: business strategy, sales psychology, negotiation, leadership, productivity, industrial/technical knowledge, or Filipino business culture. Make it practical and immediately applicable.`;
+
+    const prompt = `${userPrompt}
+
+Return ONLY raw JSON, no markdown fences:
+{
+  "id": "unique-slug-here",
+  "title": "Module title",
+  "subtitle": "One-line description",
+  "category": "Sales|Leadership|Strategy|Productivity|Technical|Negotiation",
+  "bookTitle": "Book or source title",
+  "bookAuthor": "Author name",
+  "bookIsbn": "ISBN if known or empty string",
+  "conceptType": "pyramid|matrix|steps|cards",
+  "concepts": [{"title":"Concept","description":"2-3 sentence explanation"}],
+  "pullQuote": "A powerful quote from the source",
+  "pullQuoteAuthor": "Quote author",
+  "keyTakeaway": "Single most important lesson in 2-3 sentences",
+  "applicationForKhalil": "Specific application for Ultra Power industrial sales context"
+}`;
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -64,20 +45,19 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-5",
-        max_tokens: 4000,
+        max_tokens: MAX_TOKENS_CAP,
+        system: systemPrompt,
         messages: [{ role: "user", content: prompt }],
+        // No web_search tool -- learning modules use training knowledge only
       }),
     });
 
     if (!res.ok) {
-      const err = await res.text();
-      return NextResponse.json({ error: `API error ${res.status}: ${err}` }, { status: 500 });
+      return NextResponse.json({ error: `API error ${res.status}` }, { status: 500 });
     }
 
     const data = await res.json();
     const raw = data.content?.find((b: { type: string }) => b.type === "text")?.text || "";
-    if (!raw) return NextResponse.json({ error: "Empty response from API" }, { status: 500 });
-
     const cleaned = raw.replace(/```json\s*/g, "").replace(/```\s*/g, "").trim();
 
     let parsed;
@@ -85,11 +65,11 @@ export async function POST(req: NextRequest) {
       parsed = JSON.parse(cleaned);
     } catch {
       const match = cleaned.match(/\{[\s\S]*\}/);
-      if (!match) return NextResponse.json({ error: "Could not parse JSON from response" }, { status: 500 });
-      parsed = JSON.parse(match[0]);
+      if (match) parsed = JSON.parse(match[0]);
+      else return NextResponse.json({ error: "Could not parse response" }, { status: 500 });
     }
 
-    return NextResponse.json({ module: parsed, category });
+    return NextResponse.json(parsed);
   } catch (e) {
     return NextResponse.json({ error: String(e) }, { status: 500 });
   }
