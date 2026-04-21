@@ -1,8 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 
+// TOKEN SAFETY: Hard cap on output tokens.
+// Never increase above 4000 without reviewing cost impact.
+// Web search is NOT enabled on this route -- use /api/sourcing for search-enabled calls.
+const MAX_TOKENS_DEFAULT = 400;
+const MAX_TOKENS_CAP = 4000;
+
 export async function POST(req: NextRequest) {
   try {
-    const { system, user, max_tokens = 400 } = await req.json();
+    const { system, user, max_tokens = MAX_TOKENS_DEFAULT } = await req.json();
+
+    // Enforce hard cap -- never allow callers to exceed 4000 output tokens on this route
+    const safeMaxTokens = Math.min(Number(max_tokens) || MAX_TOKENS_DEFAULT, MAX_TOKENS_CAP);
 
     const res = await fetch("https://api.anthropic.com/v1/messages", {
       method: "POST",
@@ -13,9 +22,10 @@ export async function POST(req: NextRequest) {
       },
       body: JSON.stringify({
         model: "claude-sonnet-4-5",
-        max_tokens,
+        max_tokens: safeMaxTokens,
         system,
         messages: [{ role: "user", content: user }],
+        // No web_search tool on this route -- use /api/sourcing for web-enabled calls
       }),
     });
 
