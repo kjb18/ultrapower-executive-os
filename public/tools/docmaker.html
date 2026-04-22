@@ -216,6 +216,9 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
   @page {
     margin: 12mm 14mm;
     size: A4;
+    /* Remove browser header/footer markings (URL, date, page number) */
+    margin-header: 0;
+    margin-footer: 0;
   }
   /* Hide everything on the page */
   body > * { display: none !important; }
@@ -231,7 +234,6 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     padding: 0 !important;
     margin: 0 !important;
   }
-  /* Apply doc-preview styles to print-root content */
   #print-root, #print-root * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
@@ -241,6 +243,15 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     margin: 0 !important;
     padding: 0 !important;
   }
+  /* Prevent tables from breaking across pages */
+  table { page-break-inside: avoid; }
+  /* Fit content to page -- reduce font sizes slightly for print */
+  #print-root { font-size: 11pt !important; }
+  #print-root .doc-header-company { font-size: 13pt !important; }
+  #print-root .doc-meta { font-size: 10pt !important; }
+  #print-root table td, #print-root table th { font-size: 9.5pt !important; padding: 4px 7px !important; }
+  /* Scale down if content overflows -- browser will handle this */
+  #print-root { zoom: 0.95; }
 }
 
 .empty-state{text-align:center;padding:64px 24px;color:var(--up-gray)}
