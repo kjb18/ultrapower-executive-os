@@ -359,7 +359,11 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
         <div class="form-grid">
           <div class="form-group">
             <label class="form-label">Company Name</label>
-            <input class="form-input" id="client-name" placeholder="e.g. Philippine Geothermal Production Co." />
+            <div style="position:relative">
+              <input class="form-input" id="client-name" placeholder="e.g. Philippine Geothermal Production Co." autocomplete="off"
+                oninput="onCompanyInput(this.value)" onblur="setTimeout(hideDropdown,200)" />
+              <div id="company-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:0.5px solid #e0e0de;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.08);z-index:100;max-height:200px;overflow-y:auto;margin-top:2px"></div>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">TIN (if applicable)</label>
@@ -367,11 +371,20 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
           </div>
           <div class="form-group full">
             <label class="form-label">Address</label>
-            <input class="form-input" id="client-address" placeholder="Full address" />
+            <div style="display:flex;gap:6px;align-items:flex-start">
+              <input class="form-input" id="client-address" placeholder="Full address" style="flex:1" />
+              <button type="button" onclick="addAltAddress()" title="Add alternate address"
+                style="padding:8px 10px;border-radius:7px;border:0.5px solid #e0e0de;background:#f8f9fc;color:#888;cursor:pointer;font-size:13px;flex-shrink:0">+</button>
+            </div>
+            <div id="alt-addresses" style="margin-top:6px;display:flex;flex-direction:column;gap:5px"></div>
           </div>
           <div class="form-group">
             <label class="form-label">Attention (person)</label>
-            <input class="form-input" id="client-attn" placeholder="e.g. Ariane Libat" />
+            <div style="position:relative">
+              <input class="form-input" id="client-attn" placeholder="e.g. Ariane Libat" autocomplete="off"
+                oninput="onAttnInput(this.value)" onblur="setTimeout(hideAttnDropdown,200)" />
+              <div id="attn-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:0.5px solid #e0e0de;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.08);z-index:100;max-height:160px;overflow-y:auto;margin-top:2px"></div>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">Department</label>
@@ -769,7 +782,7 @@ function formatDate(d) {
 }
 
 // ─── PREVIEW ───
-function openPreview() {
+function openPreview() { saveClientFromForm();
   recalc();
   const items = getItems();
   const sig = SIGNATORIES[currentSignatory];
@@ -1228,6 +1241,158 @@ ${subject ? `<div class="subject-block"><strong>Subject:</strong> ${subject}</di
   document.body.removeChild(a); URL.revokeObjectURL(url);
 
   if (docxBtn) { docxBtn.textContent = '📄 Export DOCX'; docxBtn.disabled = false; }
+}
+
+// ── CLIENT MEMORY ──────────────────────────────────────────────────────────────
+const KV_URL = 'https://ultrapower-executive-os-vgrr.vercel.app/api/kv';
+const CLIENT_KEY = 'docmaker:clients';
+
+async function kvGetClients() {
+  try {
+    const res = await fetch(KV_URL + '?key=' + CLIENT_KEY);
+    const d = await res.json();
+    return d.value ? JSON.parse(d.value) : [];
+  } catch(e) { return []; }
+}
+
+async function kvSetClients(clients) {
+  try {
+    await fetch(KV_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({key: CLIENT_KEY, value: JSON.stringify(clients)})
+    });
+  } catch(e) {}
+}
+
+let _clients = [];
+
+async function loadClients() {
+  _clients = await kvGetClients();
+}
+
+// Call on page load
+loadClients();
+
+function getClientByName(name) {
+  return _clients.find(c => c.company.toLowerCase() === name.toLowerCase());
+}
+
+function onCompanyInput(val) {
+  const dd = document.getElementById('company-dropdown');
+  if (!val.trim()) { dd.style.display='none'; return; }
+  const matches = _clients.filter(c => c.company.toLowerCase().includes(val.toLowerCase()));
+  if (!matches.length) { dd.style.display='none'; return; }
+  dd.innerHTML = matches.map(c => `
+    <div onclick="selectCompany('${c.company.replace(/'/g,"\'")}','${(c.address||'').replace(/'/g,"\'")}','${(c.altAddresses||[]).join('|||').replace(/'/g,"\'")}','${JSON.stringify(c.contacts||[]).replace(/'/g,"\'").replace(/"/g,"&quot;")}')"
+      style="padding:10px 14px;cursor:pointer;border-bottom:0.5px solid #f0f2f5;font-size:13px;color:#1a2332"
+      onmouseenter="this.style.background='#f8f9fc'" onmouseleave="this.style.background='#fff'">
+      <div style="font-weight:600">${c.company}</div>
+      <div style="font-size:11px;color:#8a9ab0;margin-top:2px">${c.address||'No address saved'} · ${(c.contacts||[]).length} contact${(c.contacts||[]).length!==1?'s':''}</div>
+    </div>
+  `).join('');
+  dd.style.display = 'block';
+}
+
+function selectCompany(company, address, altAddressesStr, contactsJson) {
+  document.getElementById('client-name').value = company;
+  document.getElementById('client-address').value = address;
+  document.getElementById('company-dropdown').style.display = 'none';
+  // Restore alt addresses
+  const altDiv = document.getElementById('alt-addresses');
+  altDiv.innerHTML = '';
+  if (altAddressesStr) {
+    altAddressesStr.split('|||').filter(Boolean).forEach(addr => addAltAddressRow(addr));
+  }
+  // Pre-fill contacts for attention field
+  try {
+    const contacts = JSON.parse(contactsJson.replace(/&quot;/g,'"'));
+    window._currentContacts = contacts;
+  } catch(e) { window._currentContacts = []; }
+}
+
+function hideDropdown() {
+  const dd = document.getElementById('company-dropdown');
+  if (dd) dd.style.display = 'none';
+}
+
+function onAttnInput(val) {
+  const dd = document.getElementById('attn-dropdown');
+  const contacts = window._currentContacts || [];
+  if (!contacts.length) { dd.style.display='none'; return; }
+  const matches = val.trim()
+    ? contacts.filter(c => c.name.toLowerCase().includes(val.toLowerCase()))
+    : contacts;
+  if (!matches.length) { dd.style.display='none'; return; }
+  dd.innerHTML = matches.map(c => `
+    <div onclick="selectContact('${c.name.replace(/'/g,"\'")}','${(c.title||'').replace(/'/g,"\'")}')"
+      style="padding:9px 14px;cursor:pointer;border-bottom:0.5px solid #f0f2f5;font-size:13px;color:#1a2332"
+      onmouseenter="this.style.background='#f8f9fc'" onmouseleave="this.style.background='#fff'">
+      <div style="font-weight:600">${c.name}</div>
+      ${c.title?`<div style="font-size:11px;color:#8a9ab0;margin-top:1px">${c.title}</div>`:''}
+    </div>
+  `).join('');
+  dd.style.display = 'block';
+}
+
+function selectContact(name, title) {
+  document.getElementById('client-attn').value = name;
+  document.getElementById('attn-dropdown').style.display = 'none';
+  // Also fill dept if title exists and dept is empty
+  const deptEl = document.getElementById('client-dept');
+  if (deptEl && !deptEl.value && title) deptEl.value = title;
+}
+
+function hideAttnDropdown() {
+  const dd = document.getElementById('attn-dropdown');
+  if (dd) dd.style.display = 'none';
+}
+
+function addAltAddress() {
+  addAltAddressRow('');
+}
+
+function addAltAddressRow(val) {
+  const container = document.getElementById('alt-addresses');
+  const row = document.createElement('div');
+  row.style.cssText = 'display:flex;gap:6px;align-items:center';
+  row.innerHTML = `
+    <input class="form-input" placeholder="Alternate address (e.g. plant location)" value="${val.replace(/"/g,'&quot;')}" style="flex:1;font-size:12px" />
+    <button type="button" onclick="this.parentElement.remove()" style="padding:6px 9px;border-radius:7px;border:0.5px solid #f5c6c6;background:#FEF0F0;color:#A32D2D;cursor:pointer;font-size:12px;flex-shrink:0">✕</button>
+  `;
+  container.appendChild(row);
+}
+
+// Auto-save client after document generation
+function saveClientFromForm() {
+  const company = document.getElementById('client-name').value.trim();
+  const address = document.getElementById('client-address').value.trim();
+  const attn = document.getElementById('client-attn').value.trim();
+  const dept = document.getElementById('client-dept') ? document.getElementById('client-dept').value.trim() : '';
+  if (!company) return;
+
+  // Collect alt addresses
+  const altAddresses = Array.from(document.querySelectorAll('#alt-addresses input')).map(i => i.value.trim()).filter(Boolean);
+
+  const existing = _clients.findIndex(c => c.company.toLowerCase() === company.toLowerCase());
+  if (existing >= 0) {
+    // Update existing -- merge address and contacts
+    const client = {..._clients[existing]};
+    if (address) client.address = address;
+    if (altAddresses.length) client.altAddresses = altAddresses;
+    if (attn) {
+      const contacts = client.contacts || [];
+      const hasContact = contacts.some(c => c.name.toLowerCase() === attn.toLowerCase());
+      if (!hasContact) contacts.push({name:attn, title:dept||''});
+      client.contacts = contacts;
+    }
+    _clients[existing] = client;
+  } else {
+    // New client
+    const newClient = {company, address, altAddresses, contacts: attn ? [{name:attn, title:dept||''}] : []};
+    _clients = [newClient, ..._clients];
+  }
+  kvSetClients(_clients);
 }
 </script>
 </body>
