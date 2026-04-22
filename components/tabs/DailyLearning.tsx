@@ -213,11 +213,11 @@ export default function DailyLearning() {
     try {
       const res = await fetch("/api/learning", {
         method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({usedIds,usedCats,pendingRequest:pendReq}),
+        body: JSON.stringify({usedIds,usedCats,topicRequest:pendReq}),
       });
       const data = await res.json();
       if (!res.ok||data.error) { setError(`Error: ${data.error||res.status}`); setLoading(false); return; }
-      const parsed: Module = data.module;
+      const parsed: Module = data;
       parsed.dateLabel = formatDate();
       await kvSet(getTodayKey(), parsed);
       const newHist = [{spotlight_id:parsed.spotlight_id,category:parsed.category,date:getTodayKey(),title:parsed.spotlight.title},...hist].slice(0,60);
