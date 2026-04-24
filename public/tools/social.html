@@ -507,13 +507,13 @@ const S={
 // STORAGE
 // ============================================================
 async function load(){
-  try{const r=await window.storage.get('up_posts2');S.posts=r?JSON.parse(r.value):[]}catch(e){S.posts=[]}
-  try{const r=await window.storage.get('up_articles');S.articles=r?JSON.parse(r.value):[]}catch(e){S.articles=[]}
-  try{const r=await window.storage.get('up_playbook');S.playbook=r?r.value:''}catch(e){S.playbook=''}
+  try{const r=await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=social:posts');const d=await r.json();S.posts=d&&d.value?JSON.parse(d.value):[]}catch(e){S.posts=[]}
+  try{const r=await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=social:articles');const d=await r.json();S.articles=d&&d.value?JSON.parse(d.value):[]}catch(e){S.articles=[]}
+  try{const r=await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=social:playbook');const d=await r.json();S.playbook=d&&d.value?d.value:''}catch(e){S.playbook=''}
 }
-async function savePosts(){try{await window.storage.set('up_posts2',JSON.stringify(S.posts))}catch(e){}}
-async function saveArticles(){try{await window.storage.set('up_articles',JSON.stringify(S.articles));updateLibCount()}catch(e){}}
-async function savePlaybookData(){try{await window.storage.set('up_playbook',S.playbook)}catch(e){}}
+async function savePosts(){try{await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'social:posts',value:JSON.stringify(S.posts)})})}catch(e){}}
+async function saveArticles(){try{await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'social:articles',value:JSON.stringify(S.articles)})});updateLibCount()}catch(e){}}
+async function savePlaybookData(){try{await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({key:'social:playbook',value:S.playbook})})}catch(e){}}
 function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2)}
 
 // ============================================================
