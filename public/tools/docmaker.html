@@ -214,15 +214,14 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 /* ─── PRINT ─── */
 @media print{
   @page {
-    margin: 12mm 14mm;
+    margin: 10mm 12mm;
     size: A4;
-    /* Remove browser header/footer markings (URL, date, page number) */
-    margin-header: 0;
-    margin-footer: 0;
   }
-  /* Hide everything on the page */
+  /* Remove browser-added header/footer markings */
+  @page { margin-top: 0; margin-bottom: 0; }
+  html { margin: 10mm 12mm; }
+  /* Hide everything except document */
   body > * { display: none !important; }
-  /* Show only the isolated print root */
   body > #print-root { display: block !important; }
   #print-root {
     display: block !important;
@@ -233,25 +232,31 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     background: white !important;
     padding: 0 !important;
     margin: 0 !important;
+    font-size: 10pt !important;
   }
   #print-root, #print-root * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
+    color-adjust: exact !important;
   }
-  body {
-    background: white !important;
-    margin: 0 !important;
-    padding: 0 !important;
-  }
-  /* Prevent tables from breaking across pages */
+  body { background: white !important; margin: 0 !important; padding: 0 !important; }
+  /* Compact spacing for single-page fit */
+  #print-root .doc-header { margin-bottom: 10pt !important; padding-bottom: 8pt !important; }
+  #print-root .doc-meta { margin-bottom: 8pt !important; padding: 8pt !important; }
+  #print-root .doc-subject { margin: 6pt 0 !important; padding: 6pt 10pt !important; }
+  #print-root .doc-salutation { margin-bottom: 4pt !important; }
+  #print-root .doc-intro { margin-bottom: 8pt !important; }
+  #print-root .doc-table { margin-bottom: 6pt !important; }
+  #print-root table td, #print-root table th { font-size: 9pt !important; padding: 4pt 6pt !important; }
+  #print-root .doc-totals { padding: 6pt 0 !important; }
+  #print-root .doc-notes { margin-top: 8pt !important; padding: 8pt !important; }
+  #print-root .doc-note-row { padding: 2pt 0 !important; font-size: 9pt !important; }
+  #print-root .doc-signature { margin-top: 12pt !important; }
+  #print-root .doc-footer { margin-top: 10pt !important; padding-top: 6pt !important; font-size: 8pt !important; }
+  /* Prevent tables breaking across pages */
   table { page-break-inside: avoid; }
-  /* Fit content to page -- reduce font sizes slightly for print */
-  #print-root { font-size: 11pt !important; }
-  #print-root .doc-header-company { font-size: 13pt !important; }
-  #print-root .doc-meta { font-size: 10pt !important; }
-  #print-root table td, #print-root table th { font-size: 9.5pt !important; padding: 4px 7px !important; }
-  /* Scale down if content overflows -- browser will handle this */
-  #print-root { zoom: 0.95; }
+  /* Slight scale to help content fit */
+  #print-root { transform: scale(0.97); transform-origin: top left; }
 }
 
 .empty-state{text-align:center;padding:64px 24px;color:var(--up-gray)}
@@ -303,7 +308,10 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     <div class="topbar-title">Document <span>Maker</span></div>
     <div class="topbar-actions">
       <button class="btn btn-outline" onclick="clearForm()">↺ Clear</button>
-      <button class="btn btn-primary" onclick="openPreview()">⊞ Preview & Print</button>
+      <div style="font-size:11px;color:#8a9ab0;margin-bottom:6px;font-family:'DM Mono',monospace">
+  Print tip: In the print dialog, uncheck "Headers and footers" to remove URL and date markings.
+</div>
+<button class="btn btn-primary" onclick="openPreview()">⊞ Preview & Print</button>
       <button class="btn btn-outline" onclick="exportDocx()" id="docx-btn" style="margin-left:6px">📄 Export DOCX</button>
     </div>
   </div>
@@ -635,7 +643,7 @@ let currentDocType = 'quotation';
 let currentCurrency = 'PHP';
 let currentVAT = 'zero';
 let currentSignatory = 'alexander';
-let docs = JSON.parse(localStorage.getItem('up_docs') || '[]');
+let docs = [];
 let itemCount = 0;
 
 const COMPANY = {
@@ -1003,7 +1011,7 @@ function saveDoc() {
     created: new Date().toISOString()
   };
   docs.push(doc);
-  localStorage.setItem('up_docs', JSON.stringify(docs));
+  kvSaveDocs(docs);
   updateDocCount();
   alert(`✓ Document ${doc.number} saved to tracker.`);
 }
@@ -1043,7 +1051,12 @@ function renderTracker() {
         <td style="font-weight:500">${d.client}</td>
         <td style="font-size:12px;color:var(--up-gray);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.subject}</td>
         <td style="text-align:right;font-family:'DM Mono',monospace;font-size:12px">${sym(d)} ${formatNum(d.amount)}</td>
-        <td><span class="status-badge ${statusClass[d.status]||'status-draft'}">${d.status}</span></td>
+        <td>
+          <select style="font-size:11px;padding:3px 7px;border-radius:6px;border:0.5px solid #e0e0de;background:var(--up-light);cursor:pointer;font-family:'DM Sans',sans-serif" 
+            onchange="updateDocStatus(${d.id}, this.value)">
+            ${['draft','sent','followed-up','awarded','lost','cancelled'].map(s=>`<option value="${s}" ${d.status===s?'selected':''}>${s}</option>`).join('')}
+          </select>
+        </td>
         <td style="font-size:12px;color:var(--up-gray)">${SIGNATORIES[d.signatory]?.name.split(' ')[0]||d.signatory}</td>
         <td><button class="btn btn-danger" style="padding:4px 10px;font-size:11px" onclick="deleteDoc(${d.id})">×</button></td>
       </tr>`).join('')}
@@ -1054,7 +1067,7 @@ function renderTracker() {
 function deleteDoc(id) {
   if(!confirm('Delete this document from tracker?')) return;
   docs = docs.filter(d=>d.id!==id);
-  localStorage.setItem('up_docs', JSON.stringify(docs));
+  kvSaveDocs(docs);
   updateDocCount();
   renderTracker();
 }
@@ -1405,6 +1418,40 @@ function saveClientFromForm() {
   }
   kvSetClients(_clients);
 }
+
+// ── DOCUMENT TRACKER KV PERSISTENCE ──────────────────────────────────────────
+const DOC_KV_URL = 'https://ultrapower-executive-os-vgrr.vercel.app/api/kv';
+const DOC_KV_KEY = 'docmaker:documents';
+
+async function kvLoadDocs() {
+  try {
+    const res = await fetch(DOC_KV_URL + '?key=' + DOC_KV_KEY);
+    const d = await res.json();
+    if (d && d.value) {
+      docs = JSON.parse(d.value);
+      updateDocCount();
+    }
+  } catch(e) { console.log('KV load docs error:', e); }
+}
+
+async function kvSaveDocs(docsArr) {
+  try {
+    await fetch(DOC_KV_URL, {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({key: DOC_KV_KEY, value: JSON.stringify(docsArr)})
+    });
+  } catch(e) { console.log('KV save docs error:', e); }
+}
+
+function updateDocStatus(id, newStatus) {
+  docs = docs.map(d => d.id === id ? {...d, status: newStatus} : d);
+  kvSaveDocs(docs);
+  renderTracker();
+}
+
+// Load docs on page init
+kvLoadDocs();
 </script>
 </body>
 </html>
