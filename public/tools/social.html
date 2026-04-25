@@ -468,6 +468,23 @@ label{font-size:10px;color:var(--g600);font-weight:600;letter-spacing:.5px;text-
         <div class="art-action-title">Hero Image</div>
         <div id="artHeroDisplay"></div>
       </div>
+
+      <div class="art-action-block" id="artActImages" style="display:none">
+        <div class="art-action-title">Find Images</div>
+        <div style="font-size:11px;color:var(--g600);line-height:1.5;margin-bottom:8px">Royalty-free images from Unsplash &amp; Pexels.</div>
+        <button class="btn btn-outline btn-sm" style="width:100%;margin-bottom:10px" id="findImagesBtn" onclick="findImages()">&#128269; Find Images</button>
+        <div id="imageResults" style="display:none">
+          <div id="imageThumbs" style="display:grid;grid-template-columns:1fr 1fr;gap:6px;margin-bottom:10px"></div>
+          <div id="selectedImagePreview" style="display:none;margin-bottom:10px">
+            <div style="font-size:10px;font-weight:700;color:var(--g600);letter-spacing:.5px;text-transform:uppercase;margin-bottom:5px">Selected</div>
+            <img id="selectedImgEl" src="" style="width:100%;border-radius:6px;margin-bottom:8px" alt="selected"/>
+            <div style="display:flex;gap:6px">
+              <button class="btn btn-success btn-sm" style="flex:1" onclick="exportImageCard('landscape')">&#8595; Featured (1200x628)</button>
+              <button class="btn btn-outline btn-sm" style="flex:1" onclick="exportImageCard('square')">&#8595; Social (1080x1080)</button>
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
   <div class="article-lib" id="artLib">
@@ -1067,6 +1084,10 @@ function renderArticleOutput(art){
 
   if(art.heroImg){
     document.getElementById('artActHero').style.display='block';
+    document.getElementById('artActImages').style.display='block';
+    document.getElementById('imageResults').style.display='none';
+    document.getElementById('imageThumbs').innerHTML='';
+    document.getElementById('selectedImagePreview').style.display='none';
     document.getElementById('artHeroDisplay').innerHTML=`<img src="${art.heroImg}" class="hero-img" alt="Hero image">`;
   }
 }
@@ -1223,6 +1244,109 @@ window.addEventListener('message', function(e) {
   var artTab = document.querySelector('[onclick*="article"]');
   if (artTab) artTab.click();
 });
+
+// IMAGE FINDER
+var _selectedImageUrl = '';
+var _selectedImageCredit = '';
+
+async function findImages() {
+  var btn = document.getElementById('findImagesBtn');
+  var results = document.getElementById('imageResults');
+  var thumbs = document.getElementById('imageThumbs');
+  var topic = (S.currentArticle && S.currentArticle.topic) ? S.currentArticle.topic : (document.getElementById('art_topic').value || 'industrial technology');
+  btn.textContent = 'Searching...'; btn.disabled = true;
+  results.style.display = 'none'; thumbs.innerHTML = '';
+  try {
+    var res = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/images', {
+      method: 'POST', headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({topic: topic})
+    });
+    var data = await res.json();
+    var images = data.images || [];
+    if (!images.length) {
+      thumbs.innerHTML = '<p style="font-size:12px;color:#999;grid-column:span 2">No images found.</p>';
+    } else {
+      images.forEach(function(img) {
+        var div = document.createElement('div');
+        div.style.cssText = 'cursor:pointer;border-radius:6px;overflow:hidden;border:2px solid transparent;transition:border-color 0.15s';
+        div.onclick = function() {
+          document.querySelectorAll('#imageThumbs > div').forEach(function(d){d.style.borderColor='transparent';});
+          div.style.borderColor = '#0066cc';
+          _selectedImageUrl = img.url; _selectedImageCredit = img.credit || '';
+          document.getElementById('selectedImgEl').src = img.url;
+          document.getElementById('selectedImagePreview').style.display = 'block';
+        };
+        var image = document.createElement('img');
+        image.src = img.thumb || img.url;
+        image.style.cssText = 'width:100%;height:70px;object-fit:cover;display:block';
+        image.onerror = function(){div.style.display='none';};
+        var caption = document.createElement('div');
+        caption.style.cssText = 'font-size:9px;color:#999;padding:3px 4px;background:#fafafa;overflow:hidden;text-overflow:ellipsis;white-space:nowrap';
+        caption.textContent = (img.source||'') + (img.credit?' · '+img.credit:'');
+        div.appendChild(image); div.appendChild(caption); thumbs.appendChild(div);
+      });
+    }
+    results.style.display = 'block';
+  } catch(e) {
+    thumbs.innerHTML = '<p style="font-size:12px;color:#c00;grid-column:span 2">Error: '+e.message+'</p>';
+    results.style.display = 'block';
+  }
+  btn.textContent = 'Find Images'; btn.disabled = false;
+}
+
+function exportImageCard(format) {
+  if (!_selectedImageUrl) { alert('Please select an image first.'); return; }
+  var article = S.currentArticle || {};
+  var title = article.topic || 'Ultra Power Article';
+  var isLandscape = format === 'landscape';
+  var w = isLandscape ? 1200 : 1080;
+  var h = isLandscape ? 628 : 1080;
+  var titleFontSize = isLandscape ? 36 : 44;
+  var brandFontSize = isLandscape ? 18 : 22;
+  var pad = isLandscape ? 40 : 54;
+  var canvas = document.createElement('canvas');
+  canvas.width = w; canvas.height = h;
+  var ctx = canvas.getContext('2d');
+  var img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = function() {
+    ctx.drawImage(img, 0, 0, w, h);
+    ctx.fillStyle = 'rgba(0,0,0,0.52)'; ctx.fillRect(0,0,w,h);
+    var grad = ctx.createLinearGradient(0,h*0.5,0,h);
+    grad.addColorStop(0,'rgba(13,43,94,0)'); grad.addColorStop(1,'rgba(13,43,94,0.95)');
+    ctx.fillStyle = grad; ctx.fillRect(0,0,w,h);
+    ctx.fillStyle = '#185FA5'; ctx.fillRect(0,0,w,6);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold '+brandFontSize+'px Arial';
+    ctx.fillText('ULTRA POWER', pad, pad);
+    ctx.font = (brandFontSize-6)+'px Arial';
+    ctx.fillStyle = 'rgba(255,255,255,0.7)';
+    ctx.fillText('Industrial Resources, Inc.', pad, pad+18);
+    ctx.fillStyle = '#fff';
+    ctx.font = 'bold '+titleFontSize+'px Arial';
+    var maxW = w - pad*2;
+    var words = title.split(' ');
+    var line = ''; var lines = [];
+    words.forEach(function(word){
+      var test = line+word+' ';
+      if (ctx.measureText(test).width > maxW && line) { lines.push(line.trim()); line = word+' '; }
+      else line = test;
+    });
+    lines.push(line.trim());
+    var lineH = titleFontSize * 1.25;
+    var startY = h - 80 - (lines.length-1)*lineH;
+    lines.forEach(function(l,i){ ctx.fillText(l, pad, startY+i*lineH); });
+    if (_selectedImageCredit) {
+      ctx.font = '10px Arial'; ctx.fillStyle = 'rgba(255,255,255,0.4)';
+      ctx.fillText('Photo: '+_selectedImageCredit, pad, h-20);
+    }
+    var link = document.createElement('a');
+    link.download = 'UltraPower_'+format+'_'+Date.now()+'.png';
+    link.href = canvas.toDataURL('image/png'); link.click();
+  };
+  img.onerror = function(){ alert('Could not export -- image may have CORS restrictions. Try saving the image manually.'); };
+  img.src = _selectedImageUrl;
+}
 </script>
 </body>
 </html>
