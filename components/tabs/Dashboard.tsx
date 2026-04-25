@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
 import {
   MOMENTUM, TB_COLORS, PW, PB,
@@ -97,41 +97,6 @@ export default function Dashboard() {
     })();
   }, [tk]);
 
-  // Use refs to access current state inside interval without causing re-renders
-  const osRef = useRef(os);
-  const mitArchiveRef = useRef(mitArchive);
-  useEffect(() => { osRef.current = os; }, [os]);
-  useEffect(() => { mitArchiveRef.current = mitArchive; }, [mitArchive]);
-
-  // 12-hour auto-archive: check every minute using refs to avoid re-render loops
-  useEffect(() => {
-    const archiveOldDone = async () => {
-      const TWELVE_HOURS = 12 * 60 * 60 * 1000;
-      const now = Date.now();
-      const currentMits = osRef.current.mits;
-      const currentArchive = mitArchiveRef.current;
-      const toArchive = currentMits.filter(m => m.done && m.doneAt && (now - m.doneAt) >= TWELVE_HOURS);
-      if (toArchive.length === 0) return;
-      const ph = new Date(new Date().toLocaleString("en-US", {timeZone:"Asia/Manila"}));
-      const dayKey = `${ph.getFullYear()}-${String(ph.getMonth()+1).padStart(2,"0")}-${String(ph.getDate()).padStart(2,"0")}`;
-      const newEntries: MITArchiveEntry[] = toArchive.map(m => ({text:m.text, doneAt:m.doneAt!, dayKey}));
-      const updatedArchive = [...newEntries, ...currentArchive].slice(0, 90 * 10);
-      const updatedMits = currentMits.filter(m => !toArchive.some(a => a.id === m.id));
-      // Update refs immediately to prevent double-archiving on next tick
-      mitArchiveRef.current = updatedArchive;
-      setMitArchive(updatedArchive);
-      await kvSet("mit:archive", updatedArchive);
-      setOSRaw(prev => {
-        const next = {...prev, mits: updatedMits};
-        kvSet("dashboard", next);
-        return next;
-      });
-    };
-    const id = setInterval(archiveOldDone, 60000);
-    archiveOldDone();
-    return () => clearInterval(id);
-  }, []); // Empty deps -- runs once, uses refs for current values
-
   const setOS = useCallback((patch: Partial<OSData>) => {
     setOSRaw(prev => { const next = {...prev,...patch}; kvSet("dashboard",next); return next; });
   }, []);
@@ -176,7 +141,17 @@ export default function Dashboard() {
 
   const addMIT = () => { if(!newMIT.trim())return; const id=os.nid||100; setOS({mits:[...os.mits,{id,text:newMIT.trim(),done:false}],nid:id+1}); setNewMIT(""); };
   const callAPI = async (system:string,user:string) => { const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system,user,max_tokens:400})}); const d=await res.json(); return d?.text||null; };
-  const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.name} ${o.pct}%`).join(", ")}. KPIs: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
+  const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.objective}: ${o.current}/${o.target} ${o.unit}`).join(", ")}. KPIs: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
+
+  const archiveMIT = async (mit: MIT) => {
+    const ph = new Date(new Date().toLocaleString("en-US", {timeZone:"Asia/Manila"}));
+    const dayKey = `${ph.getFullYear()}-${String(ph.getMonth()+1).padStart(2,"0")}-${String(ph.getDate()).padStart(2,"0")}`;
+    const newEntry: MITArchiveEntry = {text: mit.text, doneAt: mit.doneAt || Date.now(), dayKey};
+    const updatedArchive = [newEntry, ...mitArchive].slice(0, 900);
+    setMitArchive(updatedArchive);
+    await kvSet("mit:archive", updatedArchive);
+    setOS({mits: os.mits.filter(m => m.id !== mit.id)});
+  };
 
   const addBrew = () => {
     if (!newBrew.what.trim()) return;
@@ -251,6 +226,7 @@ export default function Dashboard() {
                 {m.done?"✓":""}
               </div>
               <div style={{fontSize:14,color:m.done?"#b0bec8":m.id===activeMIT?.id?"#185FA5":"#3a4a5a",flex:1,lineHeight:1.5,textDecoration:m.done?"line-through":"none",fontWeight:!m.done&&m.id===activeMIT?.id?500:400}}>{m.text}</div>
+              {m.done&&<button onClick={()=>archiveMIT(m)} title="Archive this task" style={{fontSize:11,padding:"2px 7px",borderRadius:6,border:"0.5px solid #AFA9EC",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",flexShrink:0,fontFamily:"'DM Mono',monospace"}}>Archive</button>}
               <div className="del-btn" onClick={()=>setOS({mits:os.mits.filter(x=>x.id!==m.id)})}>✕</div>
             </div>
           ))}
