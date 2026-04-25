@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback } from "react";
+import { useState, useEffect, useCallback, useRef } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
 import {
   MOMENTUM, TB_COLORS, PW, PB,
