@@ -82,7 +82,13 @@ export default function Dashboard() {
         kvGet<MITArchiveEntry[]>("mit:archive"),
       ]);
       if (osData !== null) {
-        setOSRaw({...DEFAULT_OS,...osData, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]});
+        // Preserve doneAt timestamps -- if a task is done but has no doneAt, set it to now
+        // so it will archive on the next 12-hour check
+        const mits = (osData.mits || DEFAULT_OS.mits).map((m: MIT) => ({
+          ...m,
+          doneAt: m.doneAt ?? (m.done ? Date.now() : undefined),
+        }));
+        setOSRaw({...DEFAULT_OS, ...osData, mits, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]});
       }
       if (mfpData) setMFPRaw(mfpData);
       if (pomoData) setPomoSessions(pomoData.sessions||0);
@@ -91,25 +97,40 @@ export default function Dashboard() {
     })();
   }, [tk]);
 
-  // 12-hour auto-archive: check every minute for done tasks older than 12 hours
+  // Use refs to access current state inside interval without causing re-renders
+  const osRef = useRef(os);
+  const mitArchiveRef = useRef(mitArchive);
+  useEffect(() => { osRef.current = os; }, [os]);
+  useEffect(() => { mitArchiveRef.current = mitArchive; }, [mitArchive]);
+
+  // 12-hour auto-archive: check every minute using refs to avoid re-render loops
   useEffect(() => {
     const archiveOldDone = async () => {
       const TWELVE_HOURS = 12 * 60 * 60 * 1000;
       const now = Date.now();
-      const toArchive = os.mits.filter(m => m.done && m.doneAt && (now - m.doneAt) >= TWELVE_HOURS);
+      const currentMits = osRef.current.mits;
+      const currentArchive = mitArchiveRef.current;
+      const toArchive = currentMits.filter(m => m.done && m.doneAt && (now - m.doneAt) >= TWELVE_HOURS);
       if (toArchive.length === 0) return;
       const ph = new Date(new Date().toLocaleString("en-US", {timeZone:"Asia/Manila"}));
       const dayKey = `${ph.getFullYear()}-${String(ph.getMonth()+1).padStart(2,"0")}-${String(ph.getDate()).padStart(2,"0")}`;
       const newEntries: MITArchiveEntry[] = toArchive.map(m => ({text:m.text, doneAt:m.doneAt!, dayKey}));
-      const updated = [...newEntries, ...mitArchive].slice(0, 90 * 10); // cap at ~90 days
-      setMitArchive(updated);
-      await kvSet("mit:archive", updated);
-      setOS({mits: os.mits.filter(m => !toArchive.some(a => a.id === m.id))});
+      const updatedArchive = [...newEntries, ...currentArchive].slice(0, 90 * 10);
+      const updatedMits = currentMits.filter(m => !toArchive.some(a => a.id === m.id));
+      // Update refs immediately to prevent double-archiving on next tick
+      mitArchiveRef.current = updatedArchive;
+      setMitArchive(updatedArchive);
+      await kvSet("mit:archive", updatedArchive);
+      setOSRaw(prev => {
+        const next = {...prev, mits: updatedMits};
+        kvSet("dashboard", next);
+        return next;
+      });
     };
     const id = setInterval(archiveOldDone, 60000);
     archiveOldDone();
     return () => clearInterval(id);
-  }, [os.mits, mitArchive]);
+  }, []); // Empty deps -- runs once, uses refs for current values
 
   const setOS = useCallback((patch: Partial<OSData>) => {
     setOSRaw(prev => { const next = {...prev,...patch}; kvSet("dashboard",next); return next; });
@@ -155,7 +176,7 @@ export default function Dashboard() {
 
   const addMIT = () => { if(!newMIT.trim())return; const id=os.nid||100; setOS({mits:[...os.mits,{id,text:newMIT.trim(),done:false}],nid:id+1}); setNewMIT(""); };
   const callAPI = async (system:string,user:string) => { const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system,user,max_tokens:400})}); const d=await res.json(); return d?.text||null; };
-  const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.objective} ${Math.round((o.current / o.target) * 100)}%`).join(", ")}. KPIs: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
+  const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.name} ${o.pct}%`).join(", ")}. KPIs: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
 
   const addBrew = () => {
     if (!newBrew.what.trim()) return;
