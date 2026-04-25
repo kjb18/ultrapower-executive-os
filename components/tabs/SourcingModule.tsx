@@ -1,681 +1,549 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
-import {
-  MOMENTUM, TB_COLORS, PW, PB,
-  pad, getTodayKey, getResetMs, fmtCountdown, pctColor,
-  DEFAULT_OS, DEFAULT_MFP, OSData, MFPDay, TimeBlock,
-  BREWING_CATEGORIES, BREWING_COLORS, CROSSHAIRS_PRIORITY_COLORS,
-  BrewingItem, CrosshairsTarget, MITArchiveEntry,
-} from "@/lib/constants";
-import Calendar from "@/components/Calendar";
 
-function playChime(type: "start"|"end") {
-  try {
-    const ctx = new (window.AudioContext || (window as any).webkitAudioContext)();
-    const now = ctx.currentTime;
-    if (type === "start") {
-      [523.25, 659.25].forEach((freq, i) => {
-        const osc = ctx.createOscillator(); const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.type = "sine"; osc.frequency.value = freq;
-        gain.gain.setValueAtTime(0, now+i*0.15);
-        gain.gain.linearRampToValueAtTime(0.35, now+i*0.15+0.05);
-        gain.gain.linearRampToValueAtTime(0, now+i*0.15+0.3);
-        osc.start(now+i*0.15); osc.stop(now+i*0.15+0.35);
-      });
-    } else {
-      [880, 698.46, 523.25].forEach((freq, i) => {
-        const osc = ctx.createOscillator(); const gain = ctx.createGain();
-        osc.connect(gain); gain.connect(ctx.destination);
-        osc.type = "triangle"; osc.frequency.value = freq;
-        gain.gain.setValueAtTime(0, now+i*0.22);
-        gain.gain.linearRampToValueAtTime(0.45, now+i*0.22+0.04);
-        gain.gain.linearRampToValueAtTime(0, now+i*0.22+0.45);
-        osc.start(now+i*0.22); osc.stop(now+i*0.22+0.5);
-      });
-    }
-  } catch {}
+interface SourcingItem { name: string; quantity: string; specs: string; }
+interface Supplier { name:string; type:string; price_range:string; unit:string; stock?:string; lead_time:string; moq:string; certifications?:string; import_notes?:string; notes?:string; url?:string; }
+interface ResultItem { name:string; summary:string; local_available:boolean; local_suppliers:Supplier[]; international_suppliers:Supplier[]; recommendation:string; quotation_hint:string; }
+interface SourcingReport {
+  id: string;
+  name: string;
+  items: ResultItem[];
+  searched_at: string;
+  query: SourcingItem[];
+  rfqDate?: string;
+  rfqDeadline?: string;
+  status?: "Sourcing"|"Sent"|"Awarded"|"No Offer";
+  rfqFile?: string; // base64 data URL of uploaded RFQ file
+  rfqFileName?: string;
 }
+
+const STOCK_COLORS: Record<string,{bg:string;fg:string}> = {
+  "In Stock":{bg:"#f0faf5",fg:"#3B6D11"},"On Order":{bg:"#FFF8EC",fg:"#854F0B"},
+  "Indent":{bg:"#FEF0F0",fg:"#A32D2D"},"Unknown":{bg:"#f0f2f5",fg:"#8a9ab0"},
+};
+const STATUS_COLORS: Record<string,{bg:string;fg:string}> = {
+  "Sourcing":{bg:"#EBF3FC",fg:"#185FA5"},
+  "Sent":{bg:"#FFF8EC",fg:"#854F0B"},
+  "Awarded":{bg:"#f0faf5",fg:"#3B6D11"},
+  "No Offer":{bg:"#f0f2f5",fg:"#8a9ab0"},
+};
 
 const Spinner = () => <span style={{width:14,height:14,border:"2px solid #e2e6ea",borderTopColor:"#185FA5",borderRadius:"50%",animation:"spin 0.7s linear infinite",display:"inline-block"}}/>;
 
-export default function Dashboard() {
-  const tk = getTodayKey();
-  const [os, setOSRaw] = useState<OSData>(DEFAULT_OS);
-  const [mfp, setMFPRaw] = useState<MFPDay>(DEFAULT_MFP);
-  const [loaded, setLoaded] = useState(false);
-  const [now, setNow] = useState(new Date());
-  const [pomoActive, setPomoActive] = useState(false);
-  const [pomoSecs, setPomoSecs] = useState(PW);
-  const [pomoMode, setPomoMode] = useState<"work"|"break">("work");
-  const [pomoSessions, setPomoSessions] = useState(0);
-  const [pomoMIT, setPomoMIT] = useState<number|null>(null);
-  const pomoRef = useRef<ReturnType<typeof setInterval>|null>(null);
-  const [newMIT, setNewMIT] = useState("");
-  const [editOKR, setEditOKR] = useState<number|null>(null);
-  const [editKPI, setEditKPI] = useState<number|null>(null);
-  const [editTB, setEditTB] = useState<number|null>(null);
-  const [editBrewing, setEditBrewing] = useState<number|null>(null);
-  const [editCH, setEditCH] = useState<number|null>(null);
-  const [insight, setInsight] = useState("");
-  const [iLoad, setILoad] = useState(false);
-  const [collapsed, setCollapsed] = useState<Record<string,boolean>>({});
-  const [showArchive, setShowArchive] = useState(false);
-  const [archiveView, setArchiveView] = useState<"streak"|"feed">("streak");
-  const [mitArchive, setMitArchive] = useState<MITArchiveEntry[]>([]);
+function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2,7)}`; }
 
-  // Brewing form state
-  const [newBrew, setNewBrew] = useState({what:"",who:"",since:"",category:"Client" as BrewingItem["category"]});
-  const [showBrewForm, setShowBrewForm] = useState(false);
+function exportCSV(report: SourcingReport) {
+  const headers = ["Item","Supplier Name","Type","Region","Price Range","Unit","Stock","Lead Time","MOQ","Certifications","Notes","Website"];
+  const rows: string[][] = [headers];
+  report.items.forEach(item => {
+    item.local_suppliers.forEach(s => rows.push([item.name,s.name,s.type,"Philippines",s.price_range,s.unit,s.stock||"",s.lead_time,s.moq,s.certifications||"",s.notes||"",s.url||""]));
+    item.international_suppliers.forEach(s => rows.push([item.name,s.name,s.type,"International",s.price_range,s.unit,"",s.lead_time,s.moq,"",s.import_notes||"",s.url||""]));
+  });
+  const csv = rows.map(r=>r.map(c=>`"${String(c).replace(/"/g,'""')}"`).join(",")).join("\n");
+  const blob = new Blob([csv],{type:"text/csv"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href=url; a.download=`${report.name||"Sourcing"}_${report.searched_at.split("T")[0]}.csv`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
 
-  // Crosshairs form state
-  const [newCH, setNewCH] = useState({company:"",sector:"",estDeal:"",priority:"Medium" as CrosshairsTarget["priority"],lastAction:"",nextMove:""});
-  const [showCHForm, setShowCHForm] = useState(false);
+function exportDOCX(report: SourcingReport) {
+  const date = new Date(report.searched_at).toLocaleDateString("en-PH",{dateStyle:"long"});
+  const supplierTable = (suppliers:Supplier[],intl:boolean) => {
+    if(!suppliers.length) return "<p style='color:#999;font-size:11pt'>None found.</p>";
+    const hdrs = intl?["Supplier","Type","Price Range","Unit","Lead Time","MOQ","Import Notes","Website"]:["Supplier","Type","Price Range","Unit","Stock","Lead Time","MOQ","Certifications","Website"];
+    const rows = suppliers.map(s=>intl?`<tr><td>${s.name}</td><td>${s.type}</td><td>${s.price_range}</td><td>${s.unit}</td><td>${s.lead_time}</td><td>${s.moq}</td><td>${s.import_notes||""}</td><td>${s.url?`<a href="${s.url}">${s.url}</a>`:""}</td></tr>`:`<tr><td>${s.name}</td><td>${s.type}</td><td>${s.price_range}</td><td>${s.unit}</td><td>${s.stock||""}</td><td>${s.lead_time}</td><td>${s.moq}</td><td>${s.certifications||""}</td><td>${s.url?`<a href="${s.url}">${s.url}</a>`:""}</td></tr>`).join("");
+    return `<table border="1" cellpadding="6" cellspacing="0" style="border-collapse:collapse;width:100%;font-size:10pt;border-color:#e0e0e0"><thead style="background:#0066cc;color:white"><tr>${hdrs.map(h=>`<th>${h}</th>`).join("")}</tr></thead><tbody>${rows}</tbody></table>`;
+  };
+  const metaRows = [
+    report.rfqDate?`<tr><td><strong>RFQ Date:</strong></td><td>${report.rfqDate}</td></tr>`:"",
+    report.rfqDeadline?`<tr><td><strong>Response Deadline:</strong></td><td>${report.rfqDeadline}</td></tr>`:"",
+    report.status?`<tr><td><strong>Status:</strong></td><td>${report.status}</td></tr>`:"",
+  ].filter(Boolean).join("");
+  const itemSections = report.items.map(item=>`
+    <h2 style="color:#0066cc;font-size:14pt;margin-top:24pt;border-bottom:2px solid #0066cc;padding-bottom:4pt">${item.name}</h2>
+    <p style="font-size:11pt;color:#444">${item.summary}</p>
+    <h3 style="font-size:12pt;color:#3B6D11;margin-top:14pt">Philippine Suppliers</h3>${supplierTable(item.local_suppliers,false)}
+    ${item.international_suppliers.length>0?`<h3 style="font-size:12pt;color:#854F0B;margin-top:14pt">International Options</h3>${supplierTable(item.international_suppliers,true)}`:""}
+    <table border="0" cellpadding="8" cellspacing="0" style="width:100%;margin-top:12pt"><tr>
+      <td style="background:#EBF3FC;border-left:3px solid #185FA5;width:50%;padding:10pt;font-size:10pt"><strong style="color:#185FA5">Recommendation</strong><br/>${item.recommendation}</td>
+      <td style="background:#f0faf5;border-left:3px solid #3B6D11;width:50%;padding:10pt;font-size:10pt"><strong style="color:#3B6D11">Quotation Hint</strong><br/>${item.quotation_hint}</td>
+    </tr></table>`).join("");
+  const html = `<!DOCTYPE html><html><head><meta charset="UTF-8"><style>body{font-family:Arial,sans-serif;margin:2.5cm;color:#1a1a2e;font-size:11pt} a{color:#0066cc}</style></head><body>
+<table border="0" cellpadding="0" cellspacing="0" style="width:100%;margin-bottom:20pt"><tr>
+  <td><div style="font-size:20pt;font-weight:bold;color:#0066cc">ULTRA POWER</div><div style="font-size:10pt;color:#666">Ultra Power Industrial Resources, Inc. · Makati City</div></td>
+  <td style="text-align:right"><div style="font-size:14pt;font-weight:bold">SOURCING REPORT</div><div style="font-size:10pt;color:#666">${date}</div></td>
+</tr></table>
+<h1 style="font-size:16pt;border-bottom:2px solid #0066cc;padding-bottom:6pt">${report.name||"Sourcing Report"}</h1>
+${metaRows?`<table border="0" cellpadding="4" style="font-size:10pt;color:#444;margin-bottom:12pt">${metaRows}</table>`:""}
+<p style="font-size:10pt;color:#666">${report.items.length} item${report.items.length>1?"s":""} sourced · ${date}</p>
+${itemSections}
+<div style="margin-top:32pt;border-top:1px solid #e0e0e0;padding-top:8pt;font-size:9pt;color:#999">Indicative pricing only — verify with supplier before quoting.</div>
+</body></html>`;
+  const blob = new Blob([html],{type:"application/msword"});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a"); a.href=url; a.download=`${report.name||"Sourcing"}_${report.searched_at.split("T")[0]}.doc`;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a); URL.revokeObjectURL(url);
+}
+
+export default function SourcingModule() {
+  const [view, setView] = useState<"search"|"results"|"history">("search");
+  const [sessionName, setSessionName] = useState("");
+  const [rfqDate, setRfqDate] = useState("");
+  const [rfqDeadline, setRfqDeadline] = useState("");
+  const [status, setStatus] = useState<SourcingReport["status"]>("Sourcing");
+  const [useWebSearch, setUseWebSearch] = useState(true);
+  const [items, setItems] = useState<SourcingItem[]>([{name:"",quantity:"",specs:""}]);
+  const [loading, setLoading] = useState(false);
+  const [error, setError] = useState("");
+  const [report, setReport] = useState<SourcingReport|null>(null);
+  const [history, setHistory] = useState<SourcingReport[]>([]);
+  const [expanded, setExpanded] = useState<Record<number,boolean>>({});
+  const [renamingId, setRenamingId] = useState<string|null>(null);
+  const [renameText, setRenameText] = useState("");
+  const [addingToId, setAddingToId] = useState<string|null>(null);
+  const [rfqFile, setRfqFile] = useState<string|null>(null); // base64 data URL
+  const [rfqFileName, setRfqFileName] = useState<string>("");
+  const [showRfqPane, setShowRfqPane] = useState(false);
 
   useEffect(() => {
-    (async () => {
-      const [osData, mfpData, pomoData, archiveData] = await Promise.all([
-        kvGet<OSData>("dashboard"),
-        kvGet<MFPDay>(`mfp:${getTodayKey()}`),
-        kvGet<{sessions:number}>("pomo:sessions"),
-        kvGet<MITArchiveEntry[]>("mit:archive"),
-      ]);
-      if (osData !== null) {
-        // Preserve doneAt timestamps -- if a task is done but has no doneAt, set it to now
-        // so it will archive on the next 12-hour check
-        const mits = (osData.mits || DEFAULT_OS.mits).map((m: MIT) => ({
-          ...m,
-          doneAt: m.doneAt ?? (m.done ? Date.now() : undefined),
-        }));
-        setOSRaw({...DEFAULT_OS, ...osData, mits, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]});
+    kvGet<SourcingReport[]>("sourcing:history").then(h => {
+      if (h) {
+        const fixed = h.map(r => ({...r, id: r.id && r.id.includes("-") ? r.id : genId()}));
+        setHistory(fixed);
       }
-      if (mfpData) setMFPRaw(mfpData);
-      if (pomoData) setPomoSessions(pomoData.sessions||0);
-      if (archiveData) setMitArchive(archiveData);
-      setLoaded(true);
-    })();
-  }, [tk]);
-
-  // Use refs to access current state inside interval without causing re-renders
-  const osRef = useRef(os);
-  const mitArchiveRef = useRef(mitArchive);
-  useEffect(() => { osRef.current = os; }, [os]);
-  useEffect(() => { mitArchiveRef.current = mitArchive; }, [mitArchive]);
-
-  // 12-hour auto-archive: check every minute using refs to avoid re-render loops
-  useEffect(() => {
-    const archiveOldDone = async () => {
-      const TWELVE_HOURS = 12 * 60 * 60 * 1000;
-      const now = Date.now();
-      const currentMits = osRef.current.mits;
-      const currentArchive = mitArchiveRef.current;
-      const toArchive = currentMits.filter(m => m.done && m.doneAt && (now - m.doneAt) >= TWELVE_HOURS);
-      if (toArchive.length === 0) return;
-      const ph = new Date(new Date().toLocaleString("en-US", {timeZone:"Asia/Manila"}));
-      const dayKey = `${ph.getFullYear()}-${String(ph.getMonth()+1).padStart(2,"0")}-${String(ph.getDate()).padStart(2,"0")}`;
-      const newEntries: MITArchiveEntry[] = toArchive.map(m => ({text:m.text, doneAt:m.doneAt!, dayKey}));
-      const updatedArchive = [...newEntries, ...currentArchive].slice(0, 90 * 10);
-      const updatedMits = currentMits.filter(m => !toArchive.some(a => a.id === m.id));
-      // Update refs immediately to prevent double-archiving on next tick
-      mitArchiveRef.current = updatedArchive;
-      setMitArchive(updatedArchive);
-      await kvSet("mit:archive", updatedArchive);
-      setOSRaw(prev => {
-        const next = {...prev, mits: updatedMits};
-        kvSet("dashboard", next);
-        return next;
-      });
-    };
-    const id = setInterval(archiveOldDone, 60000);
-    archiveOldDone();
-    return () => clearInterval(id);
-  }, []); // Empty deps -- runs once, uses refs for current values
-
-  const setOS = useCallback((patch: Partial<OSData>) => {
-    setOSRaw(prev => { const next = {...prev,...patch}; kvSet("dashboard",next); return next; });
+    });
   }, []);
 
-  const toggleCollapse = (key:string) => setCollapsed(c => ({...c,[key]:!c[key]}));
-  const isCollapsed = (key:string) => !!collapsed[key];
-
-  useEffect(() => { const id = setInterval(()=>setNow(new Date()),1000); return ()=>clearInterval(id); }, []);
-
-  useEffect(() => {
-    if (pomoActive) {
-      pomoRef.current = setInterval(() => {
-        setPomoSecs(s => {
-          if (s <= 1) {
-            clearInterval(pomoRef.current!); setPomoActive(false); playChime("end");
-            if (pomoMode==="work") {
-              setPomoSessions(n => { const next=n+1; kvSet("pomo:sessions",{sessions:next}); return next; });
-              setPomoMode("break"); setPomoSecs(PB);
-            } else { setPomoMode("work"); setPomoSecs(PW); }
-            return 0;
-          }
-          return s-1;
-        });
-      }, 1000);
-    } else clearInterval(pomoRef.current!);
-    return () => clearInterval(pomoRef.current!);
-  }, [pomoActive, pomoMode]);
-
-  const pomoTotal = pomoMode==="work"?PW:PB;
-  const pomoCirc = 2*Math.PI*34;
-  const pomoDash = pomoCirc - ((pomoTotal-pomoSecs)/pomoTotal)*pomoCirc;
-  const mitsDone = os.mits.filter(m=>m.done).length;
-  const mitsTotal = os.mits.length;
-  const pts = mitsDone*2+(mfp.mood?1:0)+(mfp.mitDone?1:0)+(mfp.winDone?1:0)+(mfp.reflDone?1:0)+pomoSessions;
-  const mom = [...MOMENTUM].reverse().find(s=>pts>=s.min)||MOMENTUM[0];
-  const activeMIT = os.mits.find(m=>!m.done)||os.mits[0];
-  const nowHH = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
-  const curBlock = os.tbs.reduce((c,tb)=>tb.time<=nowHH?tb:c, null as TimeBlock|null);
-  const timeLeft = fmtCountdown(getResetMs()-now.getTime());
-  const dayStr = now.toLocaleDateString("en-PH",{weekday:"short",year:"numeric",month:"short",day:"numeric"}).toUpperCase();
-  const timeStr = now.toLocaleTimeString("en-PH",{hour:"2-digit",minute:"2-digit"});
-
-  const addMIT = () => { if(!newMIT.trim())return; const id=os.nid||100; setOS({mits:[...os.mits,{id,text:newMIT.trim(),done:false}],nid:id+1}); setNewMIT(""); };
-  const callAPI = async (system:string,user:string) => { const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system,user,max_tokens:400})}); const d=await res.json(); return d?.text||null; };
-  const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.name} ${o.pct}%`).join(", ")}. KPIs: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
-
-  const addBrew = () => {
-    if (!newBrew.what.trim()) return;
-    const id = os.nid||100;
-    setOS({brewing:[...( os.brewing||[]),{...newBrew,id}],nid:id+1});
-    setNewBrew({what:"",who:"",since:"",category:"Client"});
-    setShowBrewForm(false);
+  const handleRfqFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      setRfqFile(e.target?.result as string);
+      setRfqFileName(file.name);
+    };
+    reader.readAsDataURL(file);
   };
 
-  const addCH = () => {
-    if (!newCH.company.trim()) return;
-    const id = os.nid||100;
-    setOS({crosshairs:[...(os.crosshairs||[]),{...newCH,id}],nid:id+1});
-    setNewCH({company:"",sector:"",estDeal:"",priority:"Medium",lastAction:"",nextMove:""});
-    setShowCHForm(false);
+  const handlePaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        const file = items[i].getAsFile();
+        if (file) { handleRfqFile(file); break; }
+      }
+    }
   };
 
-  const P:React.CSSProperties = {background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,padding:"18px 20px"};
-  const PL:React.CSSProperties = {fontSize:11,fontWeight:600,letterSpacing:"0.12em",textTransform:"uppercase",color:"#b0bec8",marginBottom:12,fontFamily:"'DM Mono',monospace",display:"flex",alignItems:"center",justifyContent:"space-between"};
-  const INP:React.CSSProperties = {fontSize:14,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332"};
-  const ABTN:React.CSSProperties = {fontSize:13,padding:"8px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"};
-  const SBTN:React.CSSProperties = {fontSize:11,padding:"3px 9px",borderRadius:20,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",fontWeight:500};
+  const addItem = () => { if (items.length >= 5) return; setItems(i=>[...i,{name:"",quantity:"",specs:""}]); };
+  const removeItem = (idx:number) => setItems(i=>i.filter((_,n)=>n!==idx));
+  const updateItem = (idx:number, field:keyof SourcingItem, val:string) => setItems(i=>i.map((it,n)=>n===idx?{...it,[field]:val}:it));
 
-  if (!loaded) return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#b0bec8",fontSize:14,fontFamily:"'DM Mono',monospace"}}>Loading dashboard...</div>;
+  const updateReportMeta = (id:string, patch: Partial<SourcingReport>) => {
+    const updated = history.map(h => h.id===id ? {...h,...patch} : h);
+    setHistory(updated);
+    kvSet("sourcing:history", updated);
+    if (report?.id===id) setReport(r => r ? {...r,...patch} : r);
+  };
 
-  const brewing = os.brewing||[];
-  const crosshairs = os.crosshairs||[];
+  const runSearch = async (searchItems: SourcingItem[], existingReport?: SourcingReport) => {
+    const valid = searchItems.filter(i=>i.name.trim());
+    if (!valid.length) { setError("Please enter at least one item."); return; }
+    if (valid.length > 5) { setError("Maximum 5 items per search."); return; }
+    setLoading(true); setError("");
+    try {
+      const res = await fetch("/api/sourcing", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({items:valid, useWebSearch}),
+      });
+      const data = await res.json();
+      if (!res.ok || data.error) { setError(data.error||`Error ${res.status}`); setLoading(false); return; }
+      let newReport: SourcingReport;
+      if (existingReport) {
+        newReport = {...existingReport, items:[...existingReport.items,...data.items], query:[...existingReport.query,...valid], searched_at:new Date().toISOString()};
+      } else {
+        newReport = {
+          ...data,
+          id: genId(),
+          name: sessionName.trim() || `Search ${new Date().toLocaleDateString("en-PH",{month:"short",day:"numeric"})}`,
+          query: valid,
+          searched_at: new Date().toISOString(),
+          rfqDate: rfqDate||undefined,
+          rfqDeadline: rfqDeadline||undefined,
+          status: status||"Sourcing",
+          rfqFile: rfqFile||undefined,
+          rfqFileName: rfqFileName||undefined,
+        };
+      }
+      setReport(newReport);
+      const newHist = existingReport
+        ? history.map(h=>h.id===existingReport.id?newReport:h)
+        : [newReport,...history].slice(0,20);
+      setHistory(newHist);
+      await kvSet("sourcing:history", newHist);
+      setView("results");
+      setExpanded(Object.fromEntries(data.items.map((_:ResultItem,i:number)=>[i,true])));
+      setAddingToId(null);
+      setItems([{name:"",quantity:"",specs:""}]);
+      setSessionName(""); setRfqDate(""); setRfqDeadline(""); setStatus("Sourcing");
+      setShowRfqPane(!!newReport.rfqFile);
+    } catch(e) { setError(String(e)); }
+    setLoading(false);
+  };
+
+  const search = () => runSearch(items);
+
+  const addToSession = (sessionId:string) => {
+    const session = history.find(h=>h.id===sessionId);
+    if (!session) return;
+    setAddingToId(sessionId);
+    setSessionName(session.name);
+    setItems([{name:"",quantity:"",specs:""}]);
+    setView("search");
+  };
+
+  const saveRename = (id:string) => {
+    if (!renameText.trim()) { setRenamingId(null); setRenameText(""); return; }
+    updateReportMeta(id, {name:renameText.trim()});
+    setRenamingId(null); setRenameText("");
+  };
+
+  const S = {
+    panel:{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,overflow:"hidden"} as React.CSSProperties,
+    inp:{fontSize:15,padding:"9px 11px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"} as React.CSSProperties,
+    th:{fontSize:12,fontWeight:600,letterSpacing:"0.06em",textTransform:"uppercase" as const,color:"#b0bec8",padding:"9px 13px",textAlign:"left" as const,background:"#fafbfc",borderBottom:"0.5px solid #f0f2f5",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap" as const},
+    td:{fontSize:14,color:"#3a4a5a",padding:"10px 13px",borderBottom:"0.5px solid #f0f2f5",verticalAlign:"top" as const} as React.CSSProperties,
+    tabBtn:(a:boolean):React.CSSProperties=>({padding:"9px 20px",border:"none",background:"none",cursor:"pointer",fontSize:14,color:a?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${a?"#185FA5":"transparent"}`,fontWeight:a?600:400}),
+    pill:(bg:string,fg:string):React.CSSProperties=>({fontSize:11,padding:"2px 9px",borderRadius:20,background:bg,color:fg,fontFamily:"'DM Mono',monospace",fontWeight:600,whiteSpace:"nowrap" as const,display:"inline-block"}),
+    lbl:{fontSize:12,fontWeight:600,letterSpacing:"0.08em",textTransform:"uppercase" as const,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:6} as React.CSSProperties,
+  };
+
+  const SupplierTable = ({suppliers,intl}:{suppliers:Supplier[];intl?:boolean}) => (
+    <div style={{overflowX:"auto",marginTop:8}}>
+      <table style={{width:"100%",borderCollapse:"collapse"}}>
+        <thead><tr>{["Supplier","Type","Price Range","Lead Time","MOQ",intl?"Import Notes":"Stock/Certs","Notes","Website"].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+        <tbody>
+          {suppliers.length===0&&<tr><td colSpan={8} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:18}}>No suppliers found.</td></tr>}
+          {suppliers.map((sup,i)=>(
+            <tr key={i} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+              <td style={{...S.td,fontWeight:500,minWidth:140}}>{sup.name}</td>
+              <td style={{...S.td,color:"#8a9ab0",minWidth:120}}>{sup.type}</td>
+              <td style={{...S.td,fontFamily:"'DM Mono',monospace",color:"#3B6D11",fontWeight:500,minWidth:130}}>{sup.price_range}<div style={{fontSize:12,color:"#b0bec8",fontWeight:400}}>{sup.unit}</div></td>
+              <td style={{...S.td,fontFamily:"'DM Mono',monospace",fontSize:13,minWidth:100}}>{sup.lead_time}</td>
+              <td style={{...S.td,fontFamily:"'DM Mono',monospace",fontSize:13,minWidth:80}}>{sup.moq}</td>
+              <td style={{...S.td,minWidth:130}}>
+                {intl?<span style={{fontSize:13,color:"#854F0B",lineHeight:1.5}}>{sup.import_notes}</span>:(
+                  <div style={{display:"flex",flexDirection:"column",gap:4}}>
+                    {sup.stock&&<span style={S.pill((STOCK_COLORS[sup.stock]||STOCK_COLORS.Unknown).bg,(STOCK_COLORS[sup.stock]||STOCK_COLORS.Unknown).fg)}>{sup.stock}</span>}
+                    {sup.certifications&&sup.certifications!=="N/A"&&<span style={{fontSize:12,color:"#534AB7"}}>{sup.certifications}</span>}
+                  </div>
+                )}
+              </td>
+              <td style={{...S.td,fontSize:13,color:"#8a9ab0",minWidth:120}}>{sup.notes||"—"}</td>
+              <td style={{...S.td,minWidth:140}}>
+                {sup.url?<a href={sup.url} target="_blank" rel="noopener noreferrer" style={{fontSize:12,color:"#185FA5",wordBreak:"break-all",textDecoration:"none"}}>{sup.url.replace(/^https?:\/\//,"").slice(0,30)}{sup.url.length>33?"…":""}</a>:<span style={{color:"#b0bec8",fontSize:13}}>—</span>}
+              </td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+
+  const addingToSession = addingToId ? history.find(h=>h.id===addingToId) : null;
 
   return (
-    <div style={{flex:1,overflow:"auto"}}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}} .del-btn{font-size:12px;color:#d0d8e0;cursor:pointer;padding:0 3px} .del-btn:hover{color:#A32D2D} .okr-item{padding:8px 0;border-bottom:0.5px solid #f0f2f5;cursor:pointer} .okr-item:last-child{border-bottom:none} .kpi-c{background:#f8f9fb;border:0.5px solid #eaecef;border-radius:10px;padding:12px 14px;cursor:pointer} .tb-r{display:flex;align-items:center;gap:10px;padding:7px 0;border-bottom:0.5px solid #f0f2f5} .tb-r:last-child{border-bottom:none} .ai-b{width:100%;padding:12px;border-radius:10px;border:0.5px solid #e2e6ea;background:#f8f9fb;color:#1a2332;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px} .ai-b:hover:not(:disabled){background:#EBF3FC;border-color:#c5ddf5;color:#185FA5} .ai-b:disabled{opacity:0.6;cursor:not-allowed} .brew-row:hover{background:#fafbfc} .ch-row:hover{background:#fafbfc}`}</style>
-
-      {/* Topbar */}
-      <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"13px 22px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky",top:0,zIndex:5}}>
+    <div style={{flex:1,display:"flex",flexDirection:"column",overflow:"hidden"}}>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"0 22px",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0,height:60}}>
         <div>
-          <div style={{fontSize:17,fontWeight:600,color:"#1a2332"}}>Executive Dashboard</div>
-          <div style={{fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",marginTop:2}}>Khalil Joseph Banares · Ultra Power Industrial Resources</div>
+          <div style={{fontSize:17,fontWeight:600,color:"#1a2332"}}>Sourcing Module</div>
+          <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>AI-powered supplier search · Philippines first · Max 5 items</div>
         </div>
-        <div style={{display:"flex",alignItems:"center",gap:20}}>
-          <div style={{display:"flex",alignItems:"center",gap:10}}>
-            <div style={{width:12,height:12,borderRadius:"50%",background:mom.color,flexShrink:0,boxShadow:`0 0 7px ${mom.color}99`}}/>
-            <div>
-              <div style={{fontSize:14,fontWeight:600,color:mom.color}}>{mom.label}</div>
-              <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace",letterSpacing:"0.06em",textTransform:"uppercase"}}>Daily Momentum</div>
-            </div>
-          </div>
-          <div style={{textAlign:"right"}}>
-            <div style={{fontSize:15,fontWeight:600,color:"#1a2332",fontFamily:"'DM Mono',monospace"}}>{timeStr}</div>
-            <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>{dayStr}</div>
-          </div>
-        </div>
-      </div>
-
-      <div style={{padding:"16px 18px",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(280px,1fr))",gap:14}}>
-
-        {/* MITs */}
-        <div style={P}>
-          <div style={PL}><span>Most Important Tasks</span>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{color:mitsDone===mitsTotal?"#3B6D11":"#854F0B"}}>{mitsDone}/{mitsTotal}</span>
-              <button style={{...SBTN,color:"#534AB7",borderColor:"#534AB744",background:"#F4F3FE"}} onClick={()=>setShowArchive(a=>!a)}>
-                {showArchive?"Hide Wins":"Wins Archive"}
-              </button>
-              <button style={SBTN} onClick={()=>toggleCollapse("mits")}>{isCollapsed("mits")?"Show":"Hide"}</button>
-            </div>
-          </div>
-          {!isCollapsed("mits")&&<>
-          {os.mits.map((m,i)=>(
-            <div key={m.id} style={{display:"flex",alignItems:"flex-start",gap:10,padding:"7px 0",borderBottom:i===os.mits.length-1?"none":"0.5px solid #f0f2f5"}}>
-              <div onClick={()=>setOS({mits:os.mits.map(x=>x.id===m.id?{...x,done:!x.done,doneAt:!x.done?Date.now():undefined}:x)})}
-                style={{width:17,height:17,borderRadius:4,border:`1.5px solid ${m.done?"#185FA5":"#d0d8e0"}`,background:m.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:11,color:"#fff"}}>
-                {m.done?"✓":""}
-              </div>
-              <div style={{fontSize:14,color:m.done?"#b0bec8":m.id===activeMIT?.id?"#185FA5":"#3a4a5a",flex:1,lineHeight:1.5,textDecoration:m.done?"line-through":"none",fontWeight:!m.done&&m.id===activeMIT?.id?500:400}}>{m.text}</div>
-              <div className="del-btn" onClick={()=>setOS({mits:os.mits.filter(x=>x.id!==m.id)})}>✕</div>
-            </div>
-          ))}
-          <div style={{display:"flex",gap:8,marginTop:10}}>
-            <input style={{...INP,flex:1}} placeholder="Add a task..." value={newMIT} onChange={e=>setNewMIT(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMIT()}/>
-            <button style={ABTN} onClick={addMIT}>+ Add</button>
-          </div>
-          </>}
-        </div>
-
-        {/* MIT WINS ARCHIVE */}
-        {showArchive&&(()=>{
-          const dayMap: Record<string,string[]> = {};
-          mitArchive.forEach(e => { if(!dayMap[e.dayKey])dayMap[e.dayKey]=[];dayMap[e.dayKey].push(e.text); });
-          const days = Object.keys(dayMap).sort().reverse();
-          let longestStreak=0,streak=0,currentStreak=0;
-          const allDays=new Set(Object.keys(dayMap));
-          const checkDate=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
-          for(let i=0;i<90;i++){
-            const k=`${checkDate.getFullYear()}-${String(checkDate.getMonth()+1).padStart(2,"0")}-${String(checkDate.getDate()).padStart(2,"0")}`;
-            if(allDays.has(k)){streak++;if(i===0||currentStreak>0)currentStreak=streak;}
-            else{longestStreak=Math.max(longestStreak,streak);streak=0;if(currentStreak>0&&i>0)currentStreak=0;}
-            checkDate.setDate(checkDate.getDate()-1);
-          }
-          longestStreak=Math.max(longestStreak,streak);
-          const grid:{key:string;count:number}[]=[];
-          const gStart=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
-          for(let i=89;i>=0;i--){const d=new Date(gStart);d.setDate(d.getDate()-i);const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;grid.push({key:k,count:(dayMap[k]||[]).length});}
-          const dotColor=(n:number)=>n===0?"#f0f2f5":n===1?"#B5D4F4":n===2?"#378ADD":"#185FA5";
-          const today=getTodayKey();
-          const totalArchived=mitArchive.length;
-          return(
-            <div style={{...P,gridColumn:"span 2",border:"0.5px solid #AFA9EC",background:"#FAFAFF"}}>
-              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
-                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#534AB7",fontFamily:"'DM Mono',monospace"}}>Wins Archive</div>
-                <div style={{display:"flex",gap:6}}>
-                  <button onClick={()=>setArchiveView("streak")} style={{fontSize:11,padding:"3px 10px",borderRadius:20,border:`0.5px solid ${archiveView==="streak"?"#534AB7":"#e2e6ea"}`,background:archiveView==="streak"?"#534AB7":"#fff",color:archiveView==="streak"?"#fff":"#8a9ab0",cursor:"pointer",fontWeight:500}}>Streak Wall</button>
-                  <button onClick={()=>setArchiveView("feed")} style={{fontSize:11,padding:"3px 10px",borderRadius:20,border:`0.5px solid ${archiveView==="feed"?"#534AB7":"#e2e6ea"}`,background:archiveView==="feed"?"#534AB7":"#fff",color:archiveView==="feed"?"#fff":"#8a9ab0",cursor:"pointer",fontWeight:500}}>Momentum Feed</button>
-                </div>
-              </div>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:8,marginBottom:16}}>
-                {([["Current Streak",`${currentStreak} day${currentStreak!==1?"s":""}`,"#185FA5"],["Longest Streak",`${longestStreak} day${longestStreak!==1?"s":""}`,"#3B6D11"],["Total Wins",`${totalArchived} task${totalArchived!==1?"s":""}`,"#534AB7"]] as [string,string,string][]).map(([lbl,val,clr])=>(
-                  <div key={lbl} style={{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:9,padding:"10px 12px",textAlign:"center"}}>
-                    <div style={{fontSize:18,fontWeight:600,color:clr,fontFamily:"'DM Mono',monospace"}}>{val}</div>
-                    <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginTop:2}}>{lbl}</div>
-                  </div>
-                ))}
-              </div>
-              {archiveView==="streak"&&(<>
-                <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:10}}>
-                  {grid.map(d=>(
-                    <div key={d.key} title={`${d.key}: ${d.count} MIT${d.count!==1?"s":""} completed`}
-                      style={{width:14,height:14,borderRadius:3,background:dotColor(d.count),cursor:d.count>0?"pointer":"default",flexShrink:0,border:d.key===today?"1.5px solid #534AB7":"none"}}/>
-                  ))}
-                </div>
-                <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#b0bec8"}}>
-                  <span>Less</span>{[0,1,2,3].map(n=><div key={n} style={{width:10,height:10,borderRadius:2,background:dotColor(n)}}/>)}<span>More</span>
-                  <span style={{marginLeft:"auto"}}>Last 90 days</span>
-                </div>
-              </>)}
-              {archiveView==="feed"&&(
-                <div style={{maxHeight:320,overflowY:"auto"}}>
-                  {days.length===0&&<div style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:13}}>No archived tasks yet. Completed tasks archive automatically after 12 hours.</div>}
-                  {days.slice(0,30).map(day=>{
-                    const tasks=dayMap[day];
-                    const isStrong=tasks.length>=3;
-                    const dateLabel=new Date(day+"T12:00:00").toLocaleDateString("en-PH",{weekday:"short",month:"short",day:"numeric"});
-                    return(
-                      <div key={day} style={{marginBottom:14}}>
-                        <div style={{display:"flex",alignItems:"center",gap:8,marginBottom:6}}>
-                          <div style={{fontSize:11,fontWeight:600,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.08em"}}>{dateLabel}</div>
-                          <span style={{fontSize:10,padding:"1px 7px",borderRadius:20,background:isStrong?"#f0faf5":"#f0f2f5",color:isStrong?"#3B6D11":"#b0bec8",fontFamily:"'DM Mono',monospace",fontWeight:600}}>
-                            {tasks.length} MIT{tasks.length!==1?"s":""}{isStrong?" · Strong Day":""}
-                          </span>
-                        </div>
-                        {tasks.map((t,i)=>(
-                          <div key={i} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"5px 0",borderBottom:i===tasks.length-1?"none":"0.5px solid #f0f2f5"}}>
-                            <div style={{width:16,height:16,borderRadius:4,background:"#185FA5",display:"flex",alignItems:"center",justifyContent:"center",fontSize:10,color:"#fff",flexShrink:0,marginTop:1}}>✓</div>
-                            <div style={{fontSize:13,color:"#3a4a5a",lineHeight:1.4}}>{t}</div>
-                          </div>
-                        ))}
-                      </div>
-                    );
-                  })}
-                </div>
-              )}
-            </div>
-          );
-        })()}
-        <div style={{...P,display:"flex",flexDirection:"column",alignItems:"center"}}>
-          <div style={{...PL,width:"100%"}}><span>Pomodoro</span><span style={{color:"#8a9ab0"}}>{pomoSessions} sessions</span></div>
-          <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:6,alignSelf:"flex-start",textTransform:"uppercase",letterSpacing:"0.08em"}}>Linked to MIT</div>
-          <select style={{width:"100%",fontSize:13,padding:"7px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginBottom:16}}
-            value={pomoMIT||""} onChange={e=>setPomoMIT(e.target.value?Number(e.target.value):null)}>
-            <option value="">— Select MIT —</option>
-            {os.mits.filter(m=>!m.done).map(m=><option key={m.id} value={m.id}>{m.text.slice(0,44)}{m.text.length>44?"…":""}</option>)}
-          </select>
-          <div style={{position:"relative",width:130,height:130,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:12}}>
-            <svg width="130" height="130" viewBox="0 0 80 80" style={{position:"absolute",top:0,left:0}}>
-              <circle cx="40" cy="40" r="34" fill="none" stroke="#f0f2f5" strokeWidth="5"/>
-              <circle cx="40" cy="40" r="34" fill="none" stroke={pomoMode==="work"?"#185FA5":"#3B6D11"} strokeWidth="5"
-                strokeDasharray={pomoCirc} strokeDashoffset={pomoDash} strokeLinecap="round" transform="rotate(-90 40 40)"/>
-            </svg>
-            <div style={{position:"relative",textAlign:"center",zIndex:1}}>
-              <div style={{fontSize:30,fontWeight:600,color:"#1a2332",fontFamily:"'DM Mono',monospace",lineHeight:1}}>{pad(Math.floor(pomoSecs/60))}:{pad(pomoSecs%60)}</div>
-            </div>
-          </div>
-          <div style={{display:"flex",gap:8}}>
-            <button style={{...ABTN,background:pomoActive?"#FEF0F0":"#EBF3FC",color:pomoActive?"#A32D2D":"#185FA5",borderColor:pomoActive?"#f5c6c6":"#185FA5"}}
-              onClick={()=>{if(!pomoActive)playChime("start");setPomoActive(a=>!a);}}>
-              {pomoActive?"⏸ Pause":"▶ Start"}
+        <div style={{display:"flex"}}>
+          {(["search","results","history"] as const).map(v=>(
+            <button key={v} style={S.tabBtn(view===v)} onClick={()=>setView(v)}>
+              {v==="search"?"New Search":v==="results"?"Report":"History"+(history.length>0?` (${history.length})`:"")}
             </button>
-            <button style={{...ABTN,background:"#f8f9fb",color:"#6a8aaa",borderColor:"#e2e6ea"}}
-              onClick={()=>{setPomoActive(false);setPomoSecs(PW);setPomoMode("work");}}>↺ Reset</button>
-          </div>
-        </div>
-
-        {/* OKRs — Objectives & Key Results */}
-        <div style={P}>
-          <div style={PL}>
-            <span>OKR Tracker</span>
-            <button onClick={()=>{const id=os.nid||100;setOS({okrs:[...os.okrs,{id,objective:"New Objective",keyResult:"Describe the key result",current:0,target:10,unit:""}],nid:id+1});setEditOKR(id);}} style={SBTN}>+ Add</button>
-          </div>
-          {os.okrs.map(o=>{
-            const pct = o.target>0 ? Math.min(100, Math.round((o.current/o.target)*100)) : 0;
-            return (
-              <div key={o.id} style={{padding:"9px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"pointer"}} className="okr-item" onDoubleClick={()=>setEditOKR(o.id)}>
-                {editOKR===o.id ? (
-                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={o.objective} placeholder="Objective"
-                      onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,objective:e.target.value}:x)})} autoFocus/>
-                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={o.keyResult} placeholder="Key Result description"
-                      onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,keyResult:e.target.value}:x)})}/>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:7}}>
-                      <div>
-                        <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:3,textTransform:"uppercase",letterSpacing:"0.08em"}}>Current</div>
-                        <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} type="number" defaultValue={o.current}
-                          onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,current:Number(e.target.value)}:x)})}/>
-                      </div>
-                      <div>
-                        <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:3,textTransform:"uppercase",letterSpacing:"0.08em"}}>Target</div>
-                        <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} type="number" defaultValue={o.target}
-                          onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,target:Number(e.target.value)}:x)})}/>
-                      </div>
-                      <div>
-                        <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:3,textTransform:"uppercase",letterSpacing:"0.08em"}}>Unit</div>
-                        <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={o.unit} placeholder="clients, bids..."
-                          onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,unit:e.target.value}:x)})}/>
-                      </div>
-                    </div>
-                    <div style={{display:"flex",gap:6}}>
-                      <button onClick={()=>setEditOKR(null)} style={{flex:1,padding:"7px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>Done</button>
-                      <button onClick={()=>{setOS({okrs:os.okrs.filter(x=>x.id!==o.id)});setEditOKR(null);}} style={{padding:"7px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:13}}>Delete</button>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <div style={{fontSize:11,color:"#185FA5",fontWeight:600,fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:3}}>{o.objective}</div>
-                    <div style={{fontSize:14,color:"#1a2332",marginBottom:6,lineHeight:1.4}}>{o.keyResult}</div>
-                    <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:5}}>
-                      <div style={{flex:1,height:5,background:"#f0f2f5",borderRadius:3,overflow:"hidden"}}>
-                        <div style={{height:"100%",borderRadius:3,width:`${pct}%`,background:pctColor(pct),transition:"width 0.4s"}}/>
-                      </div>
-                      <div style={{fontSize:13,fontWeight:600,fontFamily:"'DM Mono',monospace",color:pctColor(pct),flexShrink:0}}>
-                        {o.current} <span style={{color:"#b0bec8",fontWeight:400}}>/ {o.target}</span> <span style={{fontSize:11,color:"#b0bec8",fontWeight:400}}>{o.unit}</span>
-                      </div>
-                      <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",color:pctColor(pct),flexShrink:0,minWidth:32,textAlign:"right"}}>{pct}%</div>
-                    </div>
-                  </>
-                )}
-              </div>
-            );
-          })}
-        </div>
-
-        {/* Vitals (formerly KPIs) */}
-        <div style={P}>
-          <div style={PL}>
-            <span>Vitals</span>
-            <button onClick={()=>{const id=os.nid||100;setOS({kpis:[...os.kpis,{id,label:"New Vital",value:"—",delta:"0%",up:null}],nid:id+1});setEditKPI(id);}} style={SBTN}>+ Add</button>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-            {os.kpis.map(k=>(
-              <div key={k.id} className="kpi-c" onDoubleClick={()=>setEditKPI(k.id)}>
-                {editKPI===k.id?(
-                  <div style={{display:"flex",flexDirection:"column",gap:7}}>
-                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={k.label} placeholder="Label"
-                      onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,label:e.target.value}:x)})} autoFocus/>
-                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={k.value} placeholder="Value e.g. ₱2.4M"
-                      onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,value:e.target.value}:x)})}/>
-                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:13}} defaultValue={k.delta} placeholder="Delta e.g. +12%"
-                      onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,delta:e.target.value}:x)})}/>
-                    <div style={{display:"flex",gap:6}}>
-                      {([["▲","up",true,"#3B6D11","#f0faf5"],["→","neutral",null,"#8a9ab0","#f8f9fb"],["▼","down",false,"#A32D2D","#FEF0F0"]] as [string,string,boolean|null,string,string][]).map(([icon,lbl,val,fg,bg])=>(
-                        <button key={lbl} onClick={()=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,up:val}:x)})}
-                          style={{flex:1,padding:"5px 0",borderRadius:7,border:`1.5px solid ${k.up===val?fg:"#e2e6ea"}`,background:k.up===val?bg:"#fff",color:k.up===val?fg:"#b0bec8",cursor:"pointer",fontSize:13,fontWeight:600}}>
-                          {icon}
-                        </button>
-                      ))}
-                    </div>
-                    <div style={{display:"flex",gap:6}}>
-                      <button onClick={()=>setEditKPI(null)} style={{flex:1,padding:"6px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>Done</button>
-                      <button onClick={()=>{setOS({kpis:os.kpis.filter(x=>x.id!==k.id)});setEditKPI(null);}} style={{padding:"6px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:12}}>Delete</button>
-                    </div>
-                  </div>
-                ):(
-                  <>
-                    <div style={{fontSize:22,fontWeight:600,color:k.up===true?"#3B6D11":k.up===false?"#A32D2D":"#1a2332",fontFamily:"'DM Mono',monospace"}}>{k.value}</div>
-                    <div style={{fontSize:11,color:"#b0bec8",letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:"'DM Mono',monospace",marginTop:3}}>{k.label}</div>
-                    <div style={{fontSize:11,fontFamily:"'DM Mono',monospace",marginTop:4,color:k.up===true?"#3B6D11":k.up===false?"#A32D2D":"#8a9ab0"}}>{k.up===true?"▲ ":k.up===false?"▼ ":"→ "}{k.delta}</div>
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
-          <div style={{fontSize:11,color:"#b0bec8",marginTop:8,textAlign:"right"}}>double-tap any card to edit</div>
-        </div>
-
-        {/* Time Blocks */}
-        <div style={{...P,gridColumn:"span 2"}}>
-          <div style={PL}>
-            <span>Time Blocks — Today</span>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              {curBlock&&!isCollapsed("tbs")&&<span style={{fontSize:11,background:"#EBF3FC",color:"#185FA5",padding:"3px 10px",borderRadius:20,fontFamily:"'DM Mono',monospace"}}>NOW: {curBlock.label}</span>}
-              <button style={SBTN} onClick={()=>{const id=os.nid||100;setOS({tbs:[...os.tbs,{id,time:"09:00",label:"New Block",sub:"",type:"Deep Work"}],nid:id+1});}}>+ Add</button>
-              <button style={SBTN} onClick={()=>toggleCollapse("tbs")}>{isCollapsed("tbs")?"Show":"Hide"}</button>
-              <span style={{fontSize:11,color:"#b0bec8"}}>double-tap to edit</span>
-            </div>
-          </div>
-          {!isCollapsed("tbs")&&<div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:2}}>
-            {os.tbs.map(tb=>(
-              <div key={tb.id} className="tb-r" onDoubleClick={()=>setEditTB(tb.id)}>
-                {editTB===tb.id?(
-                  <div style={{display:"flex",gap:6,flex:1,alignItems:"center",flexWrap:"wrap"}}>
-                    <input style={{...INP,width:70,border:"1px solid #185FA5",fontSize:13}} defaultValue={tb.time}
-                      onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,time:e.target.value}:x)})} placeholder="08:00"/>
-                    <input style={{...INP,flex:1,border:"1px solid #185FA5",fontSize:13}} defaultValue={tb.label}
-                      onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,label:e.target.value}:x)})} placeholder="Label"/>
-                    <input style={{...INP,flex:2,border:"1px solid #185FA5",fontSize:13}} defaultValue={tb.sub}
-                      onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,sub:e.target.value}:x)})} placeholder="Description"/>
-                    <button onClick={()=>setEditTB(null)} style={{fontSize:12,padding:"5px 10px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Done</button>
-                    <button onClick={()=>{setOS({tbs:os.tbs.filter(x=>x.id!==tb.id)});setEditTB(null);}} style={{fontSize:12,padding:"5px 8px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>✕</button>
-                  </div>
-                ):(
-                  <>
-                    <div style={{width:4,height:34,borderRadius:2,flexShrink:0,background:TB_COLORS[tb.type]||"#b0bec8"}}/>
-                    <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace",width:40,flexShrink:0}}>{tb.time}</div>
-                    <div>
-                      <div style={{fontSize:14,color:"#3a4a5a",fontWeight:500}}>
-                        {tb.label}
-                        {curBlock?.id===tb.id&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:3,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace",marginLeft:5}}>NOW</span>}
-                      </div>
-                      <div style={{fontSize:11,color:"#b0bec8",marginTop:1}}>{tb.sub}</div>
-                    </div>
-                  </>
-                )}
-              </div>
-            ))}
-          </div>}
-        </div>
-
-        {/* BREWING */}
-        <div style={{...P,gridColumn:"span 2"}}>
-          <div style={PL}>
-            <span>Brewing</span>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:11,padding:"2px 9px",borderRadius:20,background:"#f0f2f5",color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{brewing.length} pending</span>
-              <button style={SBTN} onClick={()=>setShowBrewForm(s=>!s)}>{showBrewForm?"Cancel":"+ Add"}</button>
-            </div>
-          </div>
-
-          {showBrewForm&&(
-            <div style={{background:"#f8f9fb",borderRadius:10,padding:"14px",marginBottom:14,border:"0.5px solid #e2e6ea"}}>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8,marginBottom:10}}>
-                <div>
-                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>What</div>
-                  <input style={{...INP,width:"100%"}} placeholder="What are you waiting on?" value={newBrew.what} onChange={e=>setNewBrew(b=>({...b,what:e.target.value}))}/>
-                </div>
-                <div>
-                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Who</div>
-                  <input style={{...INP,width:"100%"}} placeholder="Who is responsible?" value={newBrew.who} onChange={e=>setNewBrew(b=>({...b,who:e.target.value}))}/>
-                </div>
-                <div>
-                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Since</div>
-                  <input style={{...INP,width:"100%"}} placeholder="e.g. Apr 3" value={newBrew.since} onChange={e=>setNewBrew(b=>({...b,since:e.target.value}))}/>
-                </div>
-                <div>
-                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Category</div>
-                  <select style={{...INP,width:"100%"}} value={newBrew.category} onChange={e=>setNewBrew(b=>({...b,category:e.target.value as BrewingItem["category"]}))}>
-                    {BREWING_CATEGORIES.map(c=><option key={c}>{c}</option>)}
-                  </select>
-                </div>
-              </div>
-              <button onClick={addBrew} style={{...ABTN,fontSize:13}}>Save</button>
-            </div>
-          )}
-
-          {brewing.length===0&&!showBrewForm&&(
-            <div style={{textAlign:"center",padding:"20px 0",fontSize:13,color:"#b0bec8"}}>Nothing brewing. Add items that are out of your hands but need tracking.</div>
-          )}
-
-          {brewing.map((b,i)=>(
-            <div key={b.id} className="brew-row" style={{display:"flex",alignItems:"flex-start",gap:10,padding:"9px 0",borderBottom:i===brewing.length-1?"none":"0.5px solid #f0f2f5",cursor:"pointer"}}
-              onDoubleClick={()=>setEditBrewing(b.id)}>
-              {editBrewing===b.id?(
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,flex:1,alignItems:"end"}}>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={b.what} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,what:e.target.value}:x)})} placeholder="What" autoFocus/>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={b.who} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,who:e.target.value}:x)})} placeholder="Who"/>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={b.since} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,since:e.target.value}:x)})} placeholder="Since"/>
-                  <div style={{display:"flex",gap:6}}>
-                    <button onClick={()=>setEditBrewing(null)} style={{flex:1,padding:"7px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>Done</button>
-                    <button onClick={()=>{setOS({brewing:brewing.filter(x=>x.id!==b.id)});setEditBrewing(null);}} style={{padding:"7px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:13}}>✕</button>
-                  </div>
-                </div>
-              ):(
-                <>
-                  <div style={{width:9,height:9,borderRadius:"50%",background:BREWING_COLORS[b.category]?.fg||"#b0bec8",flexShrink:0,marginTop:5}}/>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:14,color:"#1a2332",fontWeight:500,lineHeight:1.4}}>{b.what}</div>
-                    <div style={{fontSize:11,color:"#8a9ab0",marginTop:2,fontFamily:"'DM Mono',monospace"}}>{b.who}{b.since?` · Since ${b.since}`:""}</div>
-                  </div>
-                  <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:BREWING_COLORS[b.category]?.bg,color:BREWING_COLORS[b.category]?.fg,fontFamily:"'DM Mono',monospace",fontWeight:600,flexShrink:0}}>{b.category}</span>
-                </>
-              )}
-            </div>
           ))}
-          {brewing.length>0&&<div style={{fontSize:11,color:"#b0bec8",marginTop:6,textAlign:"right"}}>double-tap to edit</div>}
         </div>
-
-        {/* CROSSHAIRS */}
-        <div style={{...P,gridColumn:"span 2"}}>
-          <div style={PL}>
-            <span>Crosshairs</span>
-            <div style={{display:"flex",alignItems:"center",gap:8}}>
-              <span style={{fontSize:11,padding:"2px 9px",borderRadius:20,background:"#FEF0F0",color:"#A32D2D",fontFamily:"'DM Mono',monospace"}}>{crosshairs.length} targets</span>
-              <button style={SBTN} onClick={()=>setShowCHForm(s=>!s)}>{showCHForm?"Cancel":"+ Add Target"}</button>
-            </div>
-          </div>
-
-          {showCHForm&&(
-            <div style={{background:"#f8f9fb",borderRadius:10,padding:"14px",marginBottom:14,border:"0.5px solid #e2e6ea"}}>
-              <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:8,marginBottom:10}}>
-                {([["Company","company","Company name"],["Sector","sector","e.g. Power Generation"],["Est. Deal","estDeal","e.g. ₱2–4M"],["Last Action","lastAction","What happened last?"],["Next Move","nextMove","What will you do next?"]] as [string,string,string][]).map(([lbl,k,ph])=>(
-                  <div key={k}>
-                    <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>{lbl}</div>
-                    <input style={{...INP,width:"100%"}} placeholder={ph} value={(newCH as Record<string,string>)[k]} onChange={e=>setNewCH(c=>({...c,[k]:e.target.value}))}/>
-                  </div>
-                ))}
-                <div>
-                  <div style={{fontSize:10,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>Priority</div>
-                  <select style={{...INP,width:"100%"}} value={newCH.priority} onChange={e=>setNewCH(c=>({...c,priority:e.target.value as CrosshairsTarget["priority"]}))}>
-                    <option>High</option><option>Medium</option><option>Watch</option>
-                  </select>
-                </div>
-              </div>
-              <button onClick={addCH} style={{...ABTN,fontSize:13}}>Save Target</button>
-            </div>
-          )}
-
-          {crosshairs.length===0&&!showCHForm&&(
-            <div style={{textAlign:"center",padding:"20px 0",fontSize:13,color:"#b0bec8"}}>No targets yet. Add companies you are actively pursuing.</div>
-          )}
-
-          {/* Table header */}
-          {crosshairs.length>0&&(
-            <div style={{display:"grid",gridTemplateColumns:"10px 1fr 90px 1fr 1fr",gap:12,padding:"6px 0 8px",borderBottom:"0.5px solid #f0f2f5",marginBottom:2}}>
-              {["","Company","Priority","Last Action","Next Move"].map(h=>(
-                <div key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</div>
-              ))}
-            </div>
-          )}
-
-          {crosshairs.map((t,i)=>(
-            <div key={t.id} className="ch-row" style={{display:"grid",gridTemplateColumns:"10px 1fr 90px 1fr 1fr",gap:12,padding:"10px 0",borderBottom:i===crosshairs.length-1?"none":"0.5px solid #f0f2f5",alignItems:"start",cursor:"pointer"}}
-              onDoubleClick={()=>setEditCH(t.id)}>
-              {editCH===t.id?(
-                <div style={{gridColumn:"1/-1",display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,alignItems:"end"}}>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.company} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,company:e.target.value}:x)})} placeholder="Company" autoFocus/>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.sector} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,sector:e.target.value}:x)})} placeholder="Sector"/>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.estDeal} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,estDeal:e.target.value}:x)})} placeholder="Est. Deal"/>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.lastAction} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,lastAction:e.target.value}:x)})} placeholder="Last Action"/>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:13}} defaultValue={t.nextMove} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,nextMove:e.target.value}:x)})} placeholder="Next Move"/>
-                  <div style={{display:"flex",gap:6}}>
-                    {(["High","Medium","Watch"] as const).map(p=>(
-                      <button key={p} onClick={()=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,priority:p}:x)})}
-                        style={{flex:1,padding:"6px 0",borderRadius:7,border:`1.5px solid ${t.priority===p?CROSSHAIRS_PRIORITY_COLORS[p].fg:"#e2e6ea"}`,background:t.priority===p?CROSSHAIRS_PRIORITY_COLORS[p].bg:"#fff",color:t.priority===p?CROSSHAIRS_PRIORITY_COLORS[p].fg:"#b0bec8",cursor:"pointer",fontSize:11,fontWeight:600}}>
-                        {p}
-                      </button>
-                    ))}
-                    <button onClick={()=>setEditCH(null)} style={{flex:1,padding:"6px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:13,fontWeight:600}}>Done</button>
-                    <button onClick={()=>{setOS({crosshairs:crosshairs.filter(x=>x.id!==t.id)});setEditCH(null);}} style={{padding:"6px 10px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:13}}>✕</button>
-                  </div>
-                </div>
-              ):(
-                <>
-                  <div style={{width:10,height:10,borderRadius:"50%",background:CROSSHAIRS_PRIORITY_COLORS[t.priority]?.fg||"#b0bec8",marginTop:4}}/>
-                  <div>
-                    <div style={{fontSize:14,fontWeight:500,color:"#1a2332"}}>{t.company}</div>
-                    <div style={{fontSize:11,color:"#8a9ab0",marginTop:2,fontFamily:"'DM Mono',monospace"}}>{t.sector}{t.estDeal?` · ${t.estDeal}`:""}</div>
-                  </div>
-                  <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:CROSSHAIRS_PRIORITY_COLORS[t.priority]?.bg,color:CROSSHAIRS_PRIORITY_COLORS[t.priority]?.fg,fontFamily:"'DM Mono',monospace",fontWeight:600,display:"inline-block"}}>{t.priority}</span>
-                  <div style={{fontSize:13,color:"#4a6a8a",lineHeight:1.5}}>{t.lastAction}</div>
-                  <div style={{fontSize:13,color:"#185FA5",lineHeight:1.5,fontWeight:500}}>{t.nextMove}</div>
-                </>
-              )}
-            </div>
-          ))}
-          {crosshairs.length>0&&<div style={{fontSize:11,color:"#b0bec8",marginTop:6,textAlign:"right"}}>double-tap any row to edit</div>}
-        </div>
-
-        {/* Calendar */}
-        <Calendar timeBlocks={os.tbs}/>
-
-        {/* AI Insight */}
-        <div style={{...P,gridColumn:"span 2"}}>
-          <div style={PL}><span>AI Insight</span><span>Powered by Claude</span></div>
-          <button className="ai-b" onClick={getInsight} disabled={iLoad}>
-            {iLoad?<Spinner/>:<span>✦</span>}
-            <span>{iLoad?"Analyzing your dashboard...":insight?"Refresh insight":"Generate AI insight"}</span>
-          </button>
-          {insight&&<div style={{marginTop:12,padding:"14px 16px",borderRadius:10,background:"#f8f9fb",border:"0.5px solid #e2e6ea",fontSize:14,color:"#1a2332",lineHeight:1.75,borderLeft:"3px solid #185FA5"}}>{insight}</div>}
-        </div>
-
       </div>
-      <div style={{height:16}}/>
+
+      <div style={{flex:1,overflow:"auto",padding:18}}>
+        <div style={{maxWidth:960,margin:"0 auto"}}>
+
+          {/* SEARCH VIEW */}
+          {view==="search"&&(<>
+            {addingToSession&&(
+              <div style={{padding:"10px 14px",borderRadius:9,background:"#EBF3FC",border:"0.5px solid #c5ddf5",fontSize:13,color:"#185FA5",marginBottom:14,display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span>Adding items to: <strong>{addingToSession.name}</strong></span>
+                <button onClick={()=>{setAddingToId(null);setItems([{name:"",quantity:"",specs:""}]);}} style={{fontSize:12,padding:"3px 9px",borderRadius:6,border:"0.5px solid #c5ddf5",background:"#fff",color:"#185FA5",cursor:"pointer"}}>Cancel</button>
+              </div>
+            )}
+            <div style={{...S.panel,padding:"20px 22px",marginBottom:14}}>
+              {!addingToSession&&<>
+                {/* Session name */}
+                <div style={{marginBottom:16}}>
+                  <div style={S.lbl}>Session Name</div>
+                  <input style={S.inp} placeholder="e.g. EDC Substation Lighting RFQ" value={sessionName} onChange={e=>setSessionName(e.target.value)}/>
+                </div>
+                {/* RFQ Date, Deadline, Status */}
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16}}>
+                  <div>
+                    <div style={S.lbl}>RFQ Date</div>
+                    <input style={S.inp} type="date" value={rfqDate} onChange={e=>setRfqDate(e.target.value)}/>
+                  </div>
+                  <div>
+                    <div style={S.lbl}>Response Deadline</div>
+                    <input style={S.inp} type="date" value={rfqDeadline} onChange={e=>setRfqDeadline(e.target.value)}/>
+                  </div>
+                  <div>
+                    <div style={S.lbl}>Status</div>
+                    <select style={{...S.inp,background:STATUS_COLORS[status||"Sourcing"]?.bg,color:STATUS_COLORS[status||"Sourcing"]?.fg,fontWeight:600}} value={status} onChange={e=>setStatus(e.target.value as SourcingReport["status"])}>
+                      <option>Sourcing</option><option>Sent</option><option>Awarded</option><option>No Offer</option>
+                    </select>
+                  </div>
+                </div>
+
+                {/* RFQ Document Upload */}
+                <div style={{marginBottom:18}}>
+                  <div style={S.lbl}>Reference Document (RFQ / Photo) — optional</div>
+                  <div onPaste={handlePaste}
+                    style={{border:"1.5px dashed #d0d8e0",borderRadius:9,padding:"14px 16px",background:"#fafbfc",display:"flex",alignItems:"center",gap:12,cursor:"pointer",position:"relative"}}
+                    onClick={()=>document.getElementById("rfq-upload")?.click()}>
+                    <input id="rfq-upload" type="file" accept="image/*,.pdf" style={{display:"none"}}
+                      onChange={e=>{const f=e.target.files?.[0];if(f)handleRfqFile(f);e.target.value="";}}/>
+                    {rfqFile ? (
+                      <>
+                        {rfqFile.startsWith("data:image") ? (
+                          <img src={rfqFile} style={{height:50,borderRadius:5,objectFit:"cover",flexShrink:0}} alt="RFQ"/>
+                        ) : (
+                          <div style={{width:40,height:50,background:"#EBF3FC",borderRadius:5,display:"flex",alignItems:"center",justifyContent:"center",fontSize:20,flexShrink:0}}>📄</div>
+                        )}
+                        <div style={{flex:1}}>
+                          <div style={{fontSize:13,fontWeight:500,color:"#1a2332"}}>{rfqFileName}</div>
+                          <div style={{fontSize:11,color:"#8a9ab0",marginTop:2}}>Click to replace · will be visible in split view during results</div>
+                        </div>
+                        <button onClick={e=>{e.stopPropagation();setRfqFile(null);setRfqFileName("");}} style={{fontSize:12,color:"#A32D2D",background:"none",border:"none",cursor:"pointer",flexShrink:0}}>✕ Remove</button>
+                      </>
+                    ) : (
+                      <>
+                        <div style={{fontSize:24,flexShrink:0}}>📎</div>
+                        <div>
+                          <div style={{fontSize:13,color:"#4a6a8a",fontWeight:500}}>Upload PDF or image, or paste screenshot</div>
+                          <div style={{fontSize:11,color:"#b0bec8",marginTop:2}}>Ctrl+V to paste · shown alongside results for cross-referencing</div>
+                        </div>
+                      </>
+                    )}
+                  </div>
+                </div>
+                {/* Web search toggle */}
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:18,padding:"10px 14px",borderRadius:9,background:useWebSearch?"#EBF3FC":"#f8f9fb",border:`0.5px solid ${useWebSearch?"#c5ddf5":"#e2e6ea"}`}}>
+                  <div onClick={()=>setUseWebSearch(w=>!w)} style={{width:36,height:20,borderRadius:20,background:useWebSearch?"#185FA5":"#d0d8e0",position:"relative",cursor:"pointer",transition:"background 0.2s",flexShrink:0}}>
+                    <div style={{position:"absolute",top:2,left:useWebSearch?18:2,width:16,height:16,borderRadius:"50%",background:"#fff",transition:"left 0.2s"}}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:13,fontWeight:600,color:useWebSearch?"#185FA5":"#8a9ab0"}}>Web Search {useWebSearch?"On":"Off"}</div>
+                    <div style={{fontSize:11,color:"#b0bec8",marginTop:1}}>
+                      {useWebSearch?"Live pricing from the web · max 3 searches per item · higher token cost":"Uses training knowledge only · faster · no token cost for searches"}
+                    </div>
+                  </div>
+                </div>
+              </>}
+
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                <div style={S.lbl}>Items to Source</div>
+                <span style={{fontSize:12,color:items.length>=5?"#A32D2D":"#b0bec8",fontFamily:"'DM Mono',monospace"}}>{items.length}/5</span>
+              </div>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 110px 1fr 36px",gap:8,marginBottom:8}}>
+                {["Item Name / Description","Quantity","Specifications (optional)",""].map(h=>(
+                  <div key={h} style={{fontSize:12,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</div>
+                ))}
+              </div>
+              {items.map((item,idx)=>(
+                <div key={idx} style={{display:"grid",gridTemplateColumns:"1fr 110px 1fr 36px",gap:8,marginBottom:9,alignItems:"center"}}>
+                  <input style={S.inp} placeholder="e.g. LED Flood Light 200W IP65" value={item.name} onChange={e=>updateItem(idx,"name",e.target.value)} onKeyDown={e=>e.key==="Enter"&&addItem()}/>
+                  <input style={S.inp} placeholder="e.g. 10 pcs" value={item.quantity} onChange={e=>updateItem(idx,"quantity",e.target.value)}/>
+                  <input style={S.inp} placeholder="e.g. 220V, IP65, IEC" value={item.specs} onChange={e=>updateItem(idx,"specs",e.target.value)}/>
+                  <button onClick={()=>removeItem(idx)} style={{fontSize:15,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer",padding:"0 6px"}}>✕</button>
+                </div>
+              ))}
+              {items.length<5&&<div style={{marginTop:10}}><button onClick={addItem} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>+ Add Item</button></div>}
+              {items.length>=5&&<div style={{marginTop:8,fontSize:12,color:"#854F0B",fontFamily:"'DM Mono',monospace"}}>Maximum 5 items. Add more from History after this search.</div>}
+            </div>
+
+            {error&&<div style={{padding:"11px 14px",borderRadius:9,background:"#FEF0F0",border:"0.5px solid #f5c6c6",fontSize:14,color:"#A32D2D",marginBottom:12}}>{error}</div>}
+
+            <button onClick={search} disabled={loading} style={{width:"100%",padding:"14px",borderRadius:10,border:"none",background:"#185FA5",color:"#fff",fontSize:15,fontWeight:600,cursor:"pointer",display:"flex",alignItems:"center",justifyContent:"center",gap:9,opacity:loading?0.7:1}}>
+              {loading?<><Spinner/><span>Searching one item at a time{!useWebSearch?" (no web search)":""}...</span></>:<><span>🔍</span><span>{addingToSession?`Add Items to "${addingToSession.name}"`:"Search Suppliers"}</span></>}
+            </button>
+            <div style={{marginTop:12,padding:"12px 14px",borderRadius:9,background:"#f8f9fb",border:"0.5px solid #e2e6ea",fontSize:13,color:"#8a9ab0",lineHeight:1.7}}>
+              {useWebSearch?"Web search enabled — allow 10-15 seconds per item. Max 3 web searches per item to control token usage.":"Web search off — using training knowledge. Faster and cheaper. Toggle on for current pricing."}
+            </div>
+          </>)}
+
+          {/* RESULTS VIEW */}
+          {view==="results"&&(<>
+            {!report&&<div style={{textAlign:"center",padding:"40px",color:"#b0bec8",fontSize:14}}>No report yet. Run a search first.</div>}
+            {report&&<>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:16,flexWrap:"wrap",gap:8}}>
+                <div style={{flex:1}}>
+                  {renamingId===report.id?(
+                    <div style={{display:"flex",gap:8,alignItems:"center",marginBottom:4}}>
+                      <input style={{...S.inp,fontSize:15,flex:1,border:"1px solid #185FA5",width:280}} value={renameText} onChange={e=>setRenameText(e.target.value)}
+                        onKeyDown={e=>{if(e.key==="Enter")saveRename(report.id);if(e.key==="Escape"){setRenamingId(null);setRenameText("");}}} autoFocus/>
+                      <button onClick={()=>saveRename(report.id)} style={{fontSize:13,padding:"6px 12px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Save</button>
+                      <button onClick={()=>{setRenamingId(null);setRenameText("");}} style={{fontSize:13,padding:"6px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>✕</button>
+                    </div>
+                  ):(
+                    <div style={{display:"flex",alignItems:"center",gap:10,flexWrap:"wrap"}}>
+                      <div style={{fontSize:18,fontWeight:600,color:"#1a2332"}}>{report.name}</div>
+                      {report.status&&<span style={{...S.pill(STATUS_COLORS[report.status]?.bg||"#f0f2f5",STATUS_COLORS[report.status]?.fg||"#8a9ab0")}}>{report.status}</span>}
+                      <button onClick={()=>{setRenamingId(report.id);setRenameText(report.name);}} style={{fontSize:12,padding:"3px 9px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Rename</button>
+                    </div>
+                  )}
+                  <div style={{display:"flex",gap:12,marginTop:5,flexWrap:"wrap"}}>
+                    <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>{report.items.length} item{report.items.length>1?"s":""} · {new Date(report.searched_at).toLocaleString("en-PH",{dateStyle:"medium",timeStyle:"short"})}</div>
+                    {report.rfqDate&&<div style={{fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>RFQ: {report.rfqDate}</div>}
+                    {report.rfqDeadline&&<div style={{fontSize:12,color:new Date(report.rfqDeadline)<new Date()?"#A32D2D":"#854F0B",fontFamily:"'DM Mono',monospace",fontWeight:600}}>Deadline: {report.rfqDeadline}{new Date(report.rfqDeadline)<new Date()?" ⚠ Overdue":""}</div>}
+                  </div>
+                  {/* Inline status/date editing */}
+                  <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap",alignItems:"center"}}>
+                    <select style={{fontSize:12,padding:"4px 8px",borderRadius:7,border:`0.5px solid ${STATUS_COLORS[report.status||"Sourcing"]?.fg||"#e2e6ea"}44`,background:STATUS_COLORS[report.status||"Sourcing"]?.bg||"#f0f2f5",color:STATUS_COLORS[report.status||"Sourcing"]?.fg||"#8a9ab0",fontWeight:600,fontFamily:"'DM Mono',monospace",cursor:"pointer"}}
+                      value={report.status||"Sourcing"} onChange={e=>updateReportMeta(report.id,{status:e.target.value as SourcingReport["status"]})}>
+                      <option>Sourcing</option><option>Sent</option><option>Awarded</option><option>No Offer</option>
+                    </select>
+                    <input type="date" style={{fontSize:12,padding:"4px 8px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",fontFamily:"'DM Mono',monospace"}}
+                      value={report.rfqDate||""} onChange={e=>updateReportMeta(report.id,{rfqDate:e.target.value})} title="RFQ Date"/>
+                    <input type="date" style={{fontSize:12,padding:"4px 8px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",fontFamily:"'DM Mono',monospace"}}
+                      value={report.rfqDeadline||""} onChange={e=>updateReportMeta(report.id,{rfqDeadline:e.target.value})} title="Response Deadline"/>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8,flexWrap:"wrap"}}>
+                  <button onClick={()=>addToSession(report.id)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #534AB7",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",fontWeight:500}}>+ Add Items</button>
+                  {report.rfqFile&&<button onClick={()=>setShowRfqPane(s=>!s)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:`0.5px solid ${showRfqPane?"#185FA5":"#e2e6ea"}`,background:showRfqPane?"#EBF3FC":"#f8f9fb",color:showRfqPane?"#185FA5":"#4a6a8a",cursor:"pointer",fontWeight:500}}>📎 {showRfqPane?"Hide":"Show"} RFQ</button>}
+                  <button onClick={()=>exportCSV(report)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #3B6D11",background:"#f0faf5",color:"#3B6D11",cursor:"pointer",fontWeight:500}}>📊 CSV</button>
+                  <button onClick={()=>exportDOCX(report)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:500}}>📄 DOCX</button>
+                  <button onClick={()=>setView("search")} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>New Search</button>
+                </div>
+              </div>
+              {/* Split layout when RFQ document is present */}
+              <div style={{display:"flex",gap:14,alignItems:"flex-start"}}>
+                <div style={{flex:1,minWidth:0}}>
+                {report.items.map((item,i)=>(
+                <div key={i} style={{...S.panel,marginBottom:14}}>
+                  <div style={{padding:"14px 18px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between",cursor:"pointer"}} onClick={()=>setExpanded(e=>({...e,[i]:!e[i]}))}>
+                    <div style={{display:"flex",alignItems:"center",gap:11}}>
+                      <div style={{width:11,height:11,borderRadius:"50%",background:item.local_available?"#3B6D11":"#854F0B",flexShrink:0}}/>
+                      <div>
+                        <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>{item.name}</div>
+                        <div style={{fontSize:13,color:"#8a9ab0",marginTop:2}}>{item.summary}</div>
+                      </div>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:8}}>
+                      <span style={S.pill(item.local_available?"#f0faf5":"#FFF8EC",item.local_available?"#3B6D11":"#854F0B")}>{item.local_available?"PH Available":"Intl Only"}</span>
+                      <span style={{fontSize:14,color:"#b0bec8"}}>{expanded[i]?"▲":"▼"}</span>
+                    </div>
+                  </div>
+                  {expanded[i]&&(
+                    <div style={{padding:"16px 18px"}}>
+                      <div style={{marginBottom:18}}>
+                        <div style={{...S.lbl,color:"#3B6D11"}}>Philippine Suppliers <span style={{fontSize:11,padding:"1px 7px",borderRadius:20,background:"#f0faf5",color:"#3B6D11",marginLeft:6}}>{item.local_suppliers.length} found</span></div>
+                        <SupplierTable suppliers={item.local_suppliers}/>
+                      </div>
+                      {item.international_suppliers.length>0&&(
+                        <div style={{marginBottom:18}}>
+                          <div style={{...S.lbl,color:"#854F0B"}}>International Options <span style={{fontSize:11,padding:"1px 7px",borderRadius:20,background:"#FFF8EC",color:"#854F0B",marginLeft:6}}>{item.international_suppliers.length} found</span></div>
+                          <SupplierTable suppliers={item.international_suppliers} intl/>
+                        </div>
+                      )}
+                      <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10}}>
+                        <div style={{padding:"13px 15px",borderRadius:9,background:"#EBF3FC",border:"0.5px solid #c5ddf5"}}>
+                          <div style={{...S.lbl,color:"#185FA5",marginBottom:6}}>Recommendation</div>
+                          <div style={{fontSize:14,color:"#1a2332",lineHeight:1.65}}>{item.recommendation}</div>
+                        </div>
+                        <div style={{padding:"13px 15px",borderRadius:9,background:"#f0faf5",border:"0.5px solid #c8e6c9"}}>
+                          <div style={{...S.lbl,color:"#3B6D11",marginBottom:6}}>Quotation Hint</div>
+                          <div style={{fontSize:14,color:"#1a2332",lineHeight:1.65}}>{item.quotation_hint}</div>
+                        </div>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              ))}
+                </div>
+                {/* RFQ Document Pane */}
+                {showRfqPane&&report.rfqFile&&(
+                  <div style={{width:380,flexShrink:0,position:"sticky",top:0}}>
+                    <div style={{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,overflow:"hidden"}}>
+                      <div style={{padding:"10px 14px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                        <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Reference RFQ</div>
+                        <div style={{fontSize:11,color:"#8a9ab0",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{report.rfqFileName}</div>
+                      </div>
+                      <div style={{maxHeight:"calc(100vh - 200px)",overflow:"auto",padding:8}}>
+                        {report.rfqFile.startsWith("data:image") ? (
+                          <img src={report.rfqFile} style={{width:"100%",borderRadius:6}} alt="RFQ Reference"/>
+                        ) : report.rfqFile.startsWith("data:application/pdf") ? (
+                          <iframe src={report.rfqFile} style={{width:"100%",height:600,border:"none",borderRadius:6}} title="RFQ PDF"/>
+                        ) : (
+                          <div style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:13}}>Preview not available for this file type.</div>
+                        )}
+                      </div>
+                    </div>
+                  </div>
+                )}
+              </div>
+            </>}
+          </>)}
+
+          {/* HISTORY VIEW */}
+          {view==="history"&&(<>
+            <div style={{fontSize:18,fontWeight:600,color:"#1a2332",marginBottom:14}}>Search History</div>
+            {history.length===0&&<div style={{textAlign:"center",padding:40,color:"#b0bec8",fontSize:14}}>No searches yet.</div>}
+            {history.map(h=>{
+              const hid = h.id;
+              const isOverdue = h.rfqDeadline && new Date(h.rfqDeadline)<new Date() && h.status!=="Awarded";
+              return (
+                <div key={hid} style={{...S.panel,padding:"14px 18px",marginBottom:10,background:isOverdue?"#FFFBF0":"#fff"}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:12}}>
+                    <div style={{flex:1}}>
+                      {renamingId===hid?(
+                        <div style={{display:"flex",gap:8,alignItems:"center"}}>
+                          <input style={{...S.inp,fontSize:15,flex:1,border:"1px solid #185FA5"}} value={renameText} onChange={e=>setRenameText(e.target.value)}
+                            onKeyDown={e=>{if(e.key==="Enter")saveRename(hid);if(e.key==="Escape"){setRenamingId(null);setRenameText("");}}} autoFocus/>
+                          <button onClick={()=>saveRename(hid)} style={{fontSize:13,padding:"6px 12px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontWeight:600}}>Save</button>
+                          <button onClick={()=>{setRenamingId(null);setRenameText("");}} style={{fontSize:13,padding:"6px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>✕</button>
+                        </div>
+                      ):(
+                        <div>
+                          <div style={{display:"flex",alignItems:"center",gap:8,flexWrap:"wrap"}}>
+                            <div style={{fontSize:15,fontWeight:500,color:"#1a2332"}}>{h.name}</div>
+                            {h.status&&<span style={S.pill(STATUS_COLORS[h.status]?.bg||"#f0f2f5",STATUS_COLORS[h.status]?.fg||"#8a9ab0")}>{h.status}</span>}
+                            {isOverdue&&<span style={S.pill("#FEF0F0","#A32D2D")}>Overdue</span>}
+                          </div>
+                          <div style={{display:"flex",gap:12,marginTop:3,flexWrap:"wrap"}}>
+                            <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>{new Date(h.searched_at).toLocaleString("en-PH",{dateStyle:"medium",timeStyle:"short"})} · {h.items.length} item{h.items.length>1?"s":""}</div>
+                            {h.rfqDate&&<div style={{fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>RFQ: {h.rfqDate}</div>}
+                            {h.rfqDeadline&&<div style={{fontSize:12,color:isOverdue?"#A32D2D":"#854F0B",fontFamily:"'DM Mono',monospace",fontWeight:isOverdue?600:400}}>Deadline: {h.rfqDeadline}</div>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                    {renamingId!==hid&&(
+                      <div style={{display:"flex",gap:8,flexShrink:0}}>
+                        <button onClick={()=>{setRenamingId(hid);setRenameText(h.name);}} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Rename</button>
+                        <button onClick={()=>addToSession(hid)} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #534AB7",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",fontWeight:500}}>+ Add</button>
+                        <button onClick={()=>{setReport(h);setExpanded(Object.fromEntries(h.items.map((_,j)=>[j,true])));setView("results");}} style={{fontSize:12,padding:"5px 11px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:500}}>View →</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </>)}
+
+        </div>
+      </div>
     </div>
   );
 }
