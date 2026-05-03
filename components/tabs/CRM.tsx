@@ -6,7 +6,7 @@ const STAGES = ["Prospecting","Qualified","Proposal","Follow-Up","Negotiation","
 const LABELS = ["Unlabeled","To Reactivate","Key Account","Refer to Alex","Dead Lead","Watch List","Needs Follow-Up"];
 const SECTORS = ["Power Generation","Oil & Gas","Manufacturing","Mining","Government / B2G","Food & Beverage","Other"];
 const SOURCES = ["Referral","LinkedIn","PhilGEPS","Cold Outreach","Inbound","Event","Other"];
-const PO_STATUSES = ["Received","Processing","Ordered from Supplier","Ready for Delivery","Delivered","Completed"];
+const PO_STATUSES = ["Received","Processing","Ordered from Supplier","Waiting for Delivery","Ready for Delivery","Delivered","Completed"];
 const RFQ_STATUSES = ["Draft","Submitted","Followed Up","Awarded","Lost","Cancelled"];
 const PAGE_SIZE = 50;
 
@@ -24,7 +24,9 @@ const LABEL_C: Record<string,{bg:string;fg:string}> = {
 };
 const PO_STATUS_C: Record<string,{bg:string;fg:string}> = {
   "Received":{bg:"#EBF3FC",fg:"#185FA5"},"Processing":{bg:"#FFF8EC",fg:"#854F0B"},
-  "Ordered from Supplier":{bg:"#F4F3FE",fg:"#534AB7"},"Ready for Delivery":{bg:"#f0faf5",fg:"#3B6D11"},
+  "Ordered from Supplier":{bg:"#F4F3FE",fg:"#534AB7"},
+  "Waiting for Delivery":{bg:"#FFF3CD",fg:"#856404"},
+  "Ready for Delivery":{bg:"#f0faf5",fg:"#3B6D11"},
   "Delivered":{bg:"#f0faf5",fg:"#3B6D11"},"Completed":{bg:"#f0f2f5",fg:"#8a9ab0"},
 };
 const RFQ_STATUS_C: Record<string,{bg:string;fg:string}> = {
@@ -35,8 +37,8 @@ const RFQ_STATUS_C: Record<string,{bg:string;fg:string}> = {
 
 interface Prospect { id:number;company:string;contact:string;stage:string;lastAction:string;nextStep:string;nextUpdate:string;notes:string; }
 interface Contact { id:number;name:string;company:string;email:string;sector:string;source:string;notes:string;date:string; }
-interface PendingPO { id:number;poNumber:string;client:string;items:string;value:string;dateReceived:string;expectedDelivery:string;supplierStatus:string;status:string;notes:string; }
-interface PendingRFQ { id:number;rfqNumber:string;client:string;subject:string;dateSubmitted:string;deadline:string;status:string;notes:string; }
+interface PendingPO { id:number;poNumber:string;client:string;items:string;value:string;dateReceived:string;expectedDelivery:string;supplierStatus:string;status:string;notes:string;archived?:boolean; }
+interface PendingRFQ { id:number;rfqNumber:string;client:string;subject:string;dateSubmitted:string;deadline:string;status:string;notes:string;archived?:boolean; }
 interface OldContact { _id: string; _label: string; _archived: boolean; [key:string]: string|boolean; }
 interface CRMData { prospects:Prospect[];contacts:Contact[];pendingPOs:PendingPO[];pendingRFQs:PendingRFQ[];nid:number; }
 
@@ -63,6 +65,8 @@ function parseCSV(text: string): Record<string,string>[] {
 export default function CRM() {
   const [tab,setTab]=useState<"pipeline"|"contacts"|"old"|"pos"|"rfqs">("pipeline");
   const [data,setDataRaw]=useState<CRMData>({prospects:[],contacts:[],pendingPOs:[],pendingRFQs:[],nid:1});
+  const [showArchivedPOs, setShowArchivedPOs]=useState(false);
+  const [showArchivedRFQs, setShowArchivedRFQs]=useState(false);
   const [oldContacts,setOldContactsRaw]=useState<OldContact[]>([]);
   const [oldQ,setOldQ]=useState("");
   const [oldPg,setOldPg]=useState(1);
@@ -100,14 +104,16 @@ export default function CRM() {
   const delC=(id:number)=>setData({contacts:data.contacts.filter(x=>x.id!==id)});
 
   // POs
-  const addPO=()=>{const id=data.nid;setData({pendingPOs:[...(data.pendingPOs||[]),{id,poNumber:"",client:"",items:"",value:"",dateReceived:"",expectedDelivery:"",supplierStatus:"",status:"Received",notes:""}],nid:id+1});};
+  const addPO=()=>{const id=data.nid;setData({pendingPOs:[...(data.pendingPOs||[]),{id,poNumber:"",client:"",items:"",value:"",dateReceived:"",expectedDelivery:"",supplierStatus:"",status:"Received",notes:"",archived:false}],nid:id+1});};
   const updPO=(id:number,p:Partial<PendingPO>)=>setData({pendingPOs:(data.pendingPOs||[]).map(x=>x.id===id?{...x,...p}:x)});
   const delPO=(id:number)=>setData({pendingPOs:(data.pendingPOs||[]).filter(x=>x.id!==id)});
+  const archivePO=(id:number)=>setData({pendingPOs:(data.pendingPOs||[]).map(x=>x.id===id?{...x,archived:!x.archived}:x)});
 
   // RFQs
-  const addRFQ=()=>{const id=data.nid;setData({pendingRFQs:[...(data.pendingRFQs||[]),{id,rfqNumber:"",client:"",subject:"",dateSubmitted:"",deadline:"",status:"Submitted",notes:""}],nid:id+1});};
+  const addRFQ=()=>{const id=data.nid;setData({pendingRFQs:[...(data.pendingRFQs||[]),{id,rfqNumber:"",client:"",subject:"",dateSubmitted:"",deadline:"",status:"Submitted",notes:"",archived:false}],nid:id+1});};
   const updRFQ=(id:number,p:Partial<PendingRFQ>)=>setData({pendingRFQs:(data.pendingRFQs||[]).map(x=>x.id===id?{...x,...p}:x)});
   const delRFQ=(id:number)=>setData({pendingRFQs:(data.pendingRFQs||[]).filter(x=>x.id!==id)});
+  const archiveRFQ=(id:number)=>setData({pendingRFQs:(data.pendingRFQs||[]).map(x=>x.id===id?{...x,archived:!x.archived}:x)});
 
   // Old contacts -- CSV merge
   const handleCSV=(e:React.ChangeEvent<HTMLInputElement>)=>{
@@ -404,16 +410,21 @@ export default function CRM() {
               <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>Pending Purchase Orders</div>
               <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>Track active POs from receipt to delivery</div>
             </div>
-            <button onClick={addPO} style={S.addBtn}>+ Add PO</button>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <button onClick={()=>setShowArchivedPOs(s=>!s)} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:`0.5px solid ${showArchivedPOs?"#854F0B":"#e2e6ea"}`,background:showArchivedPOs?"#FFF8EC":"#f8f9fb",color:showArchivedPOs?"#854F0B":"#4a6a8a",cursor:"pointer"}}>
+                {showArchivedPOs?"Active":"Archived"} ({(data.pendingPOs||[]).filter(p=>showArchivedPOs?!p.archived:p.archived).length})
+              </button>
+              <button onClick={addPO} style={S.addBtn}>+ Add PO</button>
+            </div>
           </div>
           <div style={S.panel}>
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse"}}>
                 <thead><tr>{["#","PO Number","Client","Items Summary","Value","Date Received","Expected Delivery","Supplier Status","Status","Notes",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {pos.length===0&&<tr><td colSpan={11} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>No pending POs.</td></tr>}
-                  {pos.map((p,i)=>(
-                    <tr key={p.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                  {pos.filter(p=>!p.archived).length===0&&!showArchivedPOs&&<tr><td colSpan={11} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>No active POs.</td></tr>}
+                  {pos.filter(p=>showArchivedPOs?p.archived:!p.archived).map((p,i)=>(
+                    <tr key={p.id} style={{background:p.archived?"#fafafa":i%2===0?"#fff":"#fafbfc",opacity:p.archived?0.75:1}}>
                       <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
                       <td style={S.td}><input style={{...S.inp,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={p.poNumber} placeholder="PO-2026-001" onChange={e=>updPO(p.id,{poNumber:e.target.value})}/></td>
                       <td style={S.td}><input style={S.inp} value={p.client} placeholder="Client" onChange={e=>updPO(p.id,{client:e.target.value})}/></td>
@@ -428,7 +439,10 @@ export default function CRM() {
                         </select>
                       </td>
                       <td style={S.td}><input style={S.inp} value={p.notes} placeholder="Notes" onChange={e=>updPO(p.id,{notes:e.target.value})}/></td>
-                      <td style={S.td}><button onClick={()=>delPO(p.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
+                      <td style={{...S.td,whiteSpace:"nowrap"}}>
+                        <button onClick={()=>archivePO(p.id)} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",marginRight:4}}>{p.archived?"Restore":"Archive"}</button>
+                        <button onClick={()=>delPO(p.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+                      </td>
                     </tr>
                   ))}
                 </tbody>
@@ -444,18 +458,23 @@ export default function CRM() {
               <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>Pending RFQ Responses</div>
               <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>Track submitted quotations awaiting response</div>
             </div>
-            <button onClick={addRFQ} style={S.addBtn}>+ Add RFQ</button>
+            <div style={{display:"flex",gap:8,alignItems:"center"}}>
+              <button onClick={()=>setShowArchivedRFQs(s=>!s)} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:`0.5px solid ${showArchivedRFQs?"#854F0B":"#e2e6ea"}`,background:showArchivedRFQs?"#FFF8EC":"#f8f9fb",color:showArchivedRFQs?"#854F0B":"#4a6a8a",cursor:"pointer"}}>
+                {showArchivedRFQs?"Active":"Archived"} ({(data.pendingRFQs||[]).filter(r=>showArchivedRFQs?!r.archived:r.archived).length})
+              </button>
+              <button onClick={addRFQ} style={S.addBtn}>+ Add RFQ</button>
+            </div>
           </div>
           <div style={S.panel}>
             <div style={{overflowX:"auto"}}>
               <table style={{width:"100%",borderCollapse:"collapse"}}>
                 <thead><tr>{["#","RFQ Number","Client","Subject","Date Submitted","Response Deadline","Status","Notes",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
                 <tbody>
-                  {rfqs.length===0&&<tr><td colSpan={9} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>No pending RFQs.</td></tr>}
-                  {rfqs.map((r,i)=>{
-                    const isOverdue=r.deadline&&new Date(r.deadline)<new Date()&&r.status!=="Awarded"&&r.status!=="Lost"&&r.status!=="Cancelled";
+                  {rfqs.filter(r=>!r.archived).length===0&&!showArchivedRFQs&&<tr><td colSpan={9} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>No active RFQs.</td></tr>}
+                  {rfqs.filter(r=>showArchivedRFQs?r.archived:!r.archived).map((r,i)=>{
+                    const isOverdue=r.deadline&&new Date(r.deadline)<new Date()&&r.status==="Submitted";
                     return(
-                      <tr key={r.id} style={{background:isOverdue?"#FFFBF0":i%2===0?"#fff":"#fafbfc"}}>
+                      <tr key={r.id} style={{background:r.archived?"#fafafa":isOverdue?"#FFFBF0":i%2===0?"#fff":"#fafbfc",opacity:r.archived?0.75:1}}>
                         <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
                         <td style={S.td}><input style={{...S.inp,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={r.rfqNumber} placeholder="RFQ-2026-001" onChange={e=>updRFQ(r.id,{rfqNumber:e.target.value})}/></td>
                         <td style={S.td}><input style={S.inp} value={r.client} placeholder="Client" onChange={e=>updRFQ(r.id,{client:e.target.value})}/></td>
@@ -471,7 +490,10 @@ export default function CRM() {
                           </select>
                         </td>
                         <td style={S.td}><input style={S.inp} value={r.notes} placeholder="Notes" onChange={e=>updRFQ(r.id,{notes:e.target.value})}/></td>
-                        <td style={S.td}><button onClick={()=>delRFQ(r.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
+                        <td style={{...S.td,whiteSpace:"nowrap"}}>
+                          <button onClick={()=>archiveRFQ(r.id)} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",marginRight:4}}>{r.archived?"Restore":"Archive"}</button>
+                          <button onClick={()=>delRFQ(r.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+                        </td>
                       </tr>
                     );
                   })}
