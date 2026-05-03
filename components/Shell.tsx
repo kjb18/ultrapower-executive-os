@@ -1,8 +1,6 @@
 'use client';
 
 import { useState } from 'react';
-import { Tab, Tabs, TabList, TabPanel } from 'react-tabs';
-import 'react-tabs/style/react-tabs.css';  // Default styles
 
 type TabId = 'dashboard' | 'secondbrain' | 'mentalfitness' | 'dailylearning';
 
@@ -12,26 +10,27 @@ interface NavProps {
 
 function Dashboard({ onNavigate }: NavProps) {
   return (
-    <div className="p-6 space-y-4">
-      <h1 className="text-2xl font-bold">Dashboard</h1>
-      <div className="grid grid-cols-2 gap-4">
+    <div className="p-6 space-y-6">
+      <h1 className="text-3xl font-bold text-gray-900">Dashboard</h1>
+      <p className="text-gray-600">Ultra Power Industrial Control Center</p>
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <button 
           onClick={() => onNavigate('secondbrain')}
-          className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg transition"
+          className="bg-gradient-to-r from-blue-500 to-blue-600 hover:from-blue-600 hover:to-blue-700 text-white px-8 py-4 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 font-medium"
         >
-          Second Brain
+          → Second Brain
         </button>
         <button 
           onClick={() => onNavigate('mentalfitness')}
-          className="bg-green-500 hover:bg-green-600 text-white px-6 py-3 rounded-lg transition"
+          className="bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-600 hover:to-emerald-700 text-white px-8 py-4 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 font-medium"
         >
-          Mental Fitness
+          → Mental Fitness
         </button>
         <button 
           onClick={() => onNavigate('dailylearning')}
-          className="bg-purple-500 hover:bg-purple-600 text-white px-6 py-3 rounded-lg transition"
+          className="bg-gradient-to-r from-purple-500 to-purple-600 hover:from-purple-600 hover:to-purple-700 text-white px-8 py-4 rounded-xl shadow-lg hover:shadow-xl transition-all duration-200 font-medium col-span-1 md:col-span-2"
         >
-          Daily Learning
+          → Daily Learning
         </button>
       </div>
     </div>
@@ -39,66 +38,54 @@ function Dashboard({ onNavigate }: NavProps) {
 }
 
 function SecondBrain() {
-  return <div className="p-6"><h1>Second Brain</h1><p>Your notes and ideas.</p></div>;
+  return <div className="p-8 bg-gradient-to-br from-indigo-50 to-purple-50 min-h-full"><h1 className="text-3xl font-bold mb-4">Second Brain</h1><p className="text-lg text-gray-700">Organize your knowledge base here.</p></div>;
 }
 
 function MentalFitness() {
-  return <div className="p-6"><h1>Mental Fitness</h1><p>Track your mindset.</p></div>;
+  return <div className="p-8 bg-gradient-to-br from-green-50 to-emerald-50 min-h-full"><h1 className="text-3xl font-bold mb-4">Mental Fitness</h1><p className="text-lg text-gray-700">Track mood, focus, energy.</p></div>;
 }
 
 function DailyLearning() {
-  return <div className="p-6"><h1>Daily Learning</h1><p>What you learned today.</p></div>;
+  return <div className="p-8 bg-gradient-to-br from-orange-50 to-yellow-50 min-h-full"><h1 className="text-3xl font-bold mb-4">Daily Learning</h1><p className="text-lg text-gray-700">What you learned today.</p></div>;
 }
 
 export default function Shell() {
-  const [tab, setTab] = useState<TabId>('dashboard');
-
-  // Map TabId to index (0-based for react-tabs)
-  const tabIndex = {
-    dashboard: 0,
-    secondbrain: 1,
-    mentalfitness: 2,
-    dailylearning: 3
-  }[tab] ?? 0;
-
-  const handleTabChange = (index: number) => {
-    const idMap = ['dashboard', 'secondbrain', 'mentalfitness', 'dailylearning'];
-    setTab(idMap[index] as TabId);
-  };
+  const [activeTab, setActiveTab] = useState<TabId>('dashboard');
+  const tabs: Array<{ id: TabId; label: string; color: string }> = [
+    { id: 'dashboard', label: 'Dashboard', color: 'from-blue-500' },
+    { id: 'secondbrain', label: 'Second Brain', color: 'from-indigo-500' },
+    { id: 'mentalfitness', label: 'Mental Fitness', color: 'from-emerald-500' },
+    { id: 'dailylearning', label: 'Daily Learning', color: 'from-purple-500' },
+  ];
 
   return (
-    <div className="h-screen flex flex-col bg-gray-50">
-      <Tabs selectedIndex={tabIndex} onSelect={handleTabChange}>
-        <TabList className="flex bg-white border-b shadow-sm">
-          <Tab className="px-6 py-4 cursor-pointer hover:bg-gray-100 font-medium" selectedClassName="border-b-2 border-blue-500 text-blue-600 bg-blue-50">
-            Dashboard
-          </Tab>
-          <Tab className="px-6 py-4 cursor-pointer hover:bg-gray-100 font-medium" selectedClassName="border-b-2 border-blue-500 text-blue-600 bg-blue-50">
-            Second Brain
-          </Tab>
-          <Tab className="px-6 py-4 cursor-pointer hover:bg-gray-100 font-medium" selectedClassName="border-b-2 border-blue-500 text-blue-600 bg-blue-50">
-            Mental Fitness
-          </Tab>
-          <Tab className="px-6 py-4 cursor-pointer hover:bg-gray-100 font-medium" selectedClassName="border-b-2 border-blue-500 text-blue-600 bg-blue-50">
-            Daily Learning
-          </Tab>
-        </TabList>
-
-        <div style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-          <TabPanel>
-            <Dashboard onNavigate={setTab} />
-          </TabPanel>
-          <TabPanel>
-            <SecondBrain />
-          </TabPanel>
-          <TabPanel>
-            <MentalFitness />
-          </TabPanel>
-          <TabPanel>
-            <DailyLearning />
-          </TabPanel>
+    <div className="h-screen flex flex-col bg-gradient-to-br from-gray-50 to-gray-100 overflow-hidden">
+      <nav className="bg-white/80 backdrop-blur-md border-b border-gray-200 shadow-sm sticky top-0 z-10">
+        <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
+          <div className="flex space-x-1 py-4">
+            {tabs.map(({ id, label }) => (
+              <button
+                key={id}
+                onClick={() => setActiveTab(id)}
+                className={`px-6 py-3 font-medium text-sm rounded-t-lg transition-all duration-200 ${
+                  activeTab === id
+                    ? 'bg-white text-gray-900 shadow-sm border-b-2 border-blue-500 -mb-px z-20'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                {label}
+              </button>
+            ))}
+          </div>
         </div>
-      </Tabs>
+      </nav>
+
+      <div className="flex-1 overflow-hidden" style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
+        {activeTab === 'dashboard' && <Dashboard onNavigate={setActiveTab} />}
+        {activeTab === 'secondbrain' && <SecondBrain />}
+        {activeTab === 'mentalfitness' && <MentalFitness />}
+        {activeTab === 'dailylearning' && <DailyLearning />}
+      </div>
     </div>
   );
 }
