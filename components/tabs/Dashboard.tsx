@@ -63,7 +63,7 @@ const PO_STATUS_C: Record<string,{bg:string;fg:string}> = {
   "Delivered":{bg:"#f0faf5",fg:"#3B6D11"},"Completed":{bg:"#f0f2f5",fg:"#8a9ab0"},
 };
 
-export default function Dashboard() {
+export default function Dashboard({ onNavigate }: { onNavigate?: (tab: string) => void }) {
   const tk = getTodayKey();
   const [os, setOSRaw] = useState<OSData>(DEFAULT_OS);
   const [mfp, setMFPRaw] = useState<MFPDay>(DEFAULT_MFP);
@@ -262,6 +262,22 @@ export default function Dashboard() {
               <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",letterSpacing:"0.06em",textTransform:"uppercase"}}>Daily Momentum</div>
             </div>
           </div>
+          {/* Mental Fitness Pulse Dot */}
+          {(() => {
+            const mfpDone = !!(mfp.mood && mfp.mitDone && mfp.winDone && mfp.reflDone);
+            const mfpPartial = !!(mfp.mood || mfp.mitDone || mfp.winDone || mfp.reflDone);
+            const dotColor = mfpDone ? "#3B6D11" : mfpPartial ? "#854F0B" : "#d0d8e0";
+            const dotLabel = mfpDone ? "Mental check done" : mfpPartial ? "Mental check partial" : "Mental check pending";
+            return (
+              <div title={dotLabel} onClick={()=>onNavigate?.("mental")}
+                style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",padding:"4px 8px",borderRadius:20,background:mfpDone?"#f0faf5":mfpPartial?"#FFF8EC":"#f0f2f5",border:`0.5px solid ${dotColor}44`}}>
+                <div style={{width:9,height:9,borderRadius:"50%",background:dotColor,flexShrink:0,boxShadow:mfpDone?`0 0 5px ${dotColor}88`:"none"}}/>
+                <div style={{fontSize:10,color:dotColor,fontFamily:"'DM Mono',monospace",fontWeight:600}}>
+                  {mfpDone?"✓ MFP":mfpPartial?"MFP":"MFP"}
+                </div>
+              </div>
+            );
+          })()}
           <div style={{textAlign:"right"}}>
             <div style={{fontSize:14,fontWeight:600,color:"#1a2332",fontFamily:"'DM Mono',monospace"}}>{timeStr}</div>
             <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>{dayStr}</div>
@@ -418,7 +434,7 @@ export default function Dashboard() {
                 })
           )}
           <div style={{marginTop:8,fontSize:11,color:"#b0bec8",textAlign:"right"}}>
-            <button onClick={()=>{}} style={{fontSize:10,color:"#185FA5",background:"none",border:"none",cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>→ Go to CRM</button>
+            <button onClick={()=>onNavigate?.("crm")} style={{fontSize:10,color:"#185FA5",background:"none",border:"none",cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>→ Go to CRM</button>
           </div>
         </div>
 
