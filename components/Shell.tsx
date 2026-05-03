@@ -16,7 +16,7 @@ export default function Shell() {
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", background: "#f0f2f5" }}>
       <Sidebar active={tab} onChange={setTab} />
       <main style={{ flex: 1, overflow: "hidden", display: "flex", flexDirection: "column" }}>
-        {tab === "dashboard" && <Dashboard onNavigate={setTab} />}
+        {tab === "dashboard" && <Dashboard onNavigate={(t) => setTab(t)} />}
         {tab === "brain"     && <SecondBrain />}
         {tab === "mental"    && <MentalFitness />}
         {tab === "learning"  && <DailyLearning />}
