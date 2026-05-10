@@ -9,6 +9,7 @@ import {
   BrewingItem, CrosshairsTarget, MITArchiveEntry,
 } from "@/lib/constants";
 import Calendar from "@/components/Calendar";
+import type { TabId } from "@/components/Sidebar";
 
 // ── Pomodoro modes ──────────────────────────────────────────────────────────
 const POMO_MODES = [
@@ -63,7 +64,7 @@ const PO_STATUS_C: Record<string,{bg:string;fg:string}> = {
   "Delivered":{bg:"#f0faf5",fg:"#3B6D11"},"Completed":{bg:"#f0f2f5",fg:"#8a9ab0"},
 };
 
-export default function Dashboard({ onNavigate }: { onNavigate?: (tab: string) => void }) {
+export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) => void }) {
   const tk = getTodayKey();
   const [os, setOSRaw] = useState<OSData>(DEFAULT_OS);
   const [mfp, setMFPRaw] = useState<MFPDay>(DEFAULT_MFP);
@@ -98,7 +99,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: string) =
   const [mitArchive, setMitArchive] = useState<MITArchiveEntry[]>([]);
 
   // Operations panel
-  const [opsTab, setOpsTab] = useState<"rfqs"|"pos">("rfqs");
+  const [opsTab, setOpsTab] = useState<"projects"|"rfqs"|"pos">("projects");
   const [crmData, setCrmData] = useState<CRMData>({});
 
   // Brewing / Crosshairs forms
@@ -109,12 +110,13 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: string) =
 
   useEffect(() => {
     (async () => {
-      const [osData, mfpData, pomoData, archiveData, crmRaw] = await Promise.all([
+      const [osData, mfpData, pomoData, archiveData, crmRaw, projectsRaw] = await Promise.all([
         kvGet<OSData>("dashboard"),
         kvGet<MFPDay>(`mfp:${getTodayKey()}`),
         kvGet<{sessions:number}>("pomo:sessions"),
         kvGet<MITArchiveEntry[]>("mit:archive"),
         kvGet<CRMData>("crm"),
+        kvGet<{projects:object[];expenses:object[]}>("projects:all").catch(()=>null),
       ]);
       if (osData !== null) {
         const mits = (osData.mits || DEFAULT_OS.mits).map((m: MIT) => ({
@@ -125,7 +127,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: string) =
       if (mfpData) setMFPRaw(mfpData);
       if (pomoData) setPomoSessions(pomoData.sessions||0);
       if (archiveData) setMitArchive(archiveData);
-      if (crmRaw) setCrmData(crmRaw);
+      if (crmRaw) setCrmData({...crmRaw, projects: projectsRaw || []});
       setLoaded(true);
     })();
   }, [tk]);
@@ -383,30 +385,63 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: string) =
           <div style={PL}>
             <span>Operations</span>
             <div style={{display:"flex",gap:4}}>
-              <button onClick={()=>setOpsTab("rfqs")} style={{fontSize:10,padding:"3px 8px",borderRadius:20,border:`0.5px solid ${opsTab==="rfqs"?"#185FA5":"#e2e6ea"}`,background:opsTab==="rfqs"?"#EBF3FC":"#f8f9fb",color:opsTab==="rfqs"?"#185FA5":"#8a9ab0",cursor:"pointer",fontWeight:opsTab==="rfqs"?600:400}}>
-                RFQs{rfqs.length>0?` (${rfqs.length})`:""}
-              </button>
-              <button onClick={()=>setOpsTab("pos")} style={{fontSize:10,padding:"3px 8px",borderRadius:20,border:`0.5px solid ${opsTab==="pos"?"#185FA5":"#e2e6ea"}`,background:opsTab==="pos"?"#EBF3FC":"#f8f9fb",color:opsTab==="pos"?"#185FA5":"#8a9ab0",cursor:"pointer",fontWeight:opsTab==="pos"?600:400}}>
-                POs{pos.length>0?` (${pos.length})`:""}
-              </button>
+              {(["projects","rfqs","pos"] as const).map(t=>(
+                <button key={t} onClick={()=>setOpsTab(t)} style={{fontSize:10,padding:"3px 8px",borderRadius:20,border:`0.5px solid ${opsTab===t?"#185FA5":"#e2e6ea"}`,background:opsTab===t?"#EBF3FC":"#f8f9fb",color:opsTab===t?"#185FA5":"#8a9ab0",cursor:"pointer",fontWeight:opsTab===t?600:400}}>
+                  {t==="projects"?"Projects":t==="rfqs"?`RFQs${rfqs.length>0?` (${rfqs.length})`:""}`:(`POs${pos.length>0?` (${pos.length})`:""}`)}
+                </button>
+              ))}
             </div>
           </div>
 
+          {opsTab==="projects"&&(
+            <>
+              {(crmData as any).projects?.length===0&&<div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"16px 0"}}>No projects yet. Go to Projects tab to create one.</div>}
+              {!((crmData as any).projects?.length===0)&&(
+                <>
+                  {/* Mini stats */}
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+                    {[
+                      ["Open",((crmData as any).projects||[]).filter((p:{stage:string})=>!["Closed","Lost"].includes(p.stage)).length,"#185FA5","#EBF3FC"],
+                      ["Overdue Pay",((crmData as any).projects||[]).filter((p:{paymentStatus:string})=>p.paymentStatus==="Overdue").length,"#A32D2D","#FEF0F0"],
+                    ].map(([lbl,val,fg,bg])=>(
+                      <div key={lbl as string} style={{background:bg as string,borderRadius:7,padding:"6px 10px",textAlign:"center"}}>
+                        <div style={{fontSize:15,fontWeight:600,color:fg as string,fontFamily:"'DM Mono',monospace"}}>{val as number}</div>
+                        <div style={{fontSize:9,color:fg as string,opacity:0.7,textTransform:"uppercase",letterSpacing:"0.06em"}}>{lbl as string}</div>
+                      </div>
+                    ))}
+                  </div>
+                  {((crmData as any).projects||[]).filter((p:{stage:string})=>!["Closed","Lost"].includes(p.stage)).slice(0,4).map((p:{id:string;name:string;client:string;stage:string;paymentStatus?:string;grossProfit?:number},i:number)=>{
+                    const sc = STAGE_C[p.stage]||{bg:"#f0f2f5",fg:"#8a9ab0"};
+                    return(
+                      <div key={p.id} style={{padding:"6px 0",borderBottom:i===3?"none":"0.5px solid #f0f2f5"}}>
+                        <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
+                          <span style={{fontSize:10,padding:"1px 6px",borderRadius:20,background:sc.bg,color:sc.fg,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{p.stage}</span>
+                          {p.paymentStatus==="Overdue"&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:20,background:"#FEF0F0",color:"#A32D2D",fontFamily:"'DM Mono',monospace",fontWeight:600}}>Overdue</span>}
+                        </div>
+                        <div style={{fontSize:12,fontWeight:500,color:"#1a2332",lineHeight:1.3}}>{p.name}</div>
+                        <div style={{fontSize:10,color:"#8a9ab0"}}>{p.client}{p.grossProfit!==undefined?` · ₱${p.grossProfit.toLocaleString()}`:""}</div>
+                      </div>
+                    );
+                  })}
+                </>
+              )}
+            </>
+          )}
+
           {opsTab==="rfqs"&&(
             rfqs.length===0
-              ? <div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"16px 0"}}>No pending RFQs. Add them in CRM.</div>
-              : rfqs.slice(0,6).map((r,i)=>{
+              ? <div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"16px 0"}}>No pending RFQs.</div>
+              : rfqs.slice(0,5).map((r,i)=>{
                   const isOverdue = r.deadline && new Date(r.deadline)<new Date() && r.status==="Submitted";
                   const sc = RFQ_STATUS_C[r.status]||{bg:"#f0f2f5",fg:"#8a9ab0"};
                   return (
-                    <div key={r.id} style={{padding:"7px 0",borderBottom:i===Math.min(rfqs.length,6)-1?"none":"0.5px solid #f0f2f5"}}>
+                    <div key={r.id} style={{padding:"7px 0",borderBottom:i===Math.min(rfqs.length,5)-1?"none":"0.5px solid #f0f2f5"}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
                         <span style={{fontSize:11,fontWeight:600,color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{r.rfqNumber||`RFQ-${r.id}`}</span>
                         <span style={{fontSize:10,padding:"1px 6px",borderRadius:20,background:sc.bg,color:sc.fg,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{r.status}</span>
                         {isOverdue&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:20,background:"#FEF0F0",color:"#A32D2D",fontFamily:"'DM Mono',monospace",fontWeight:600}}>Overdue</span>}
                       </div>
                       <div style={{fontSize:12,color:"#3a4a5a",fontWeight:500}}>{r.client}</div>
-                      <div style={{fontSize:11,color:"#8a9ab0"}}>{r.subject}</div>
                       {r.deadline&&<div style={{fontSize:10,color:isOverdue?"#A32D2D":"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:1}}>Due: {r.deadline}</div>}
                     </div>
                   );
@@ -415,26 +450,27 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: string) =
 
           {opsTab==="pos"&&(
             pos.length===0
-              ? <div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"16px 0"}}>No pending POs. Add them in CRM.</div>
-              : pos.slice(0,6).map((p,i)=>{
+              ? <div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"16px 0"}}>No pending POs.</div>
+              : pos.slice(0,5).map((p,i)=>{
                   const sc = PO_STATUS_C[p.status]||{bg:"#f0f2f5",fg:"#8a9ab0"};
                   const isLate = p.expectedDelivery && new Date(p.expectedDelivery)<new Date() && p.status!=="Delivered"&&p.status!=="Completed";
                   return (
-                    <div key={p.id} style={{padding:"7px 0",borderBottom:i===Math.min(pos.length,6)-1?"none":"0.5px solid #f0f2f5"}}>
+                    <div key={p.id} style={{padding:"7px 0",borderBottom:i===Math.min(pos.length,5)-1?"none":"0.5px solid #f0f2f5"}}>
                       <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:2}}>
                         <span style={{fontSize:11,fontWeight:600,color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{p.poNumber||`PO-${p.id}`}</span>
                         <span style={{fontSize:10,padding:"1px 6px",borderRadius:20,background:sc.bg,color:sc.fg,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{p.status}</span>
                         {isLate&&<span style={{fontSize:10,padding:"1px 6px",borderRadius:20,background:"#FEF0F0",color:"#A32D2D",fontFamily:"'DM Mono',monospace",fontWeight:600}}>Late</span>}
                       </div>
                       <div style={{fontSize:12,color:"#3a4a5a",fontWeight:500}}>{p.client}</div>
-                      <div style={{fontSize:11,color:"#8a9ab0"}}>{p.items}</div>
                       {p.value&&<div style={{fontSize:11,color:"#3B6D11",fontFamily:"'DM Mono',monospace",marginTop:1}}>{p.value}</div>}
                     </div>
                   );
                 })
           )}
-          <div style={{marginTop:8,fontSize:11,color:"#b0bec8",textAlign:"right"}}>
-            <button onClick={()=>onNavigate?.("crm")} style={{fontSize:10,color:"#185FA5",background:"none",border:"none",cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>→ Go to CRM</button>
+          <div style={{marginTop:8,textAlign:"right"}}>
+            <button onClick={()=>onNavigate?.(opsTab==="projects"?"projects":"crm")} style={{fontSize:10,color:"#185FA5",background:"none",border:"none",cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>
+              → Go to {opsTab==="projects"?"Projects":"CRM"}
+            </button>
           </div>
         </div>
 
