@@ -6,6 +6,7 @@ import SecondBrain from "./tabs/SecondBrain";
 import MentalFitness from "./tabs/MentalFitness";
 import DailyLearning from "./tabs/DailyLearning";
 import CRM from "./tabs/CRM";
+import Projects from "./tabs/Projects";
 import SocialMedia from "./tabs/SocialMedia";
 import Tools from "./tabs/Tools";
 
@@ -21,6 +22,7 @@ export default function Shell() {
         {tab === "mental"    && <MentalFitness />}
         {tab === "learning"  && <DailyLearning />}
         {tab === "crm"       && <CRM />}
+        {tab === "projects"  && <Projects />}
         {tab === "social"    && <SocialMedia />}
         {tab === "tools"     && <Tools />}
       </main>
