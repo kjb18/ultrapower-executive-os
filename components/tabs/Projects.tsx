@@ -320,7 +320,7 @@ export default function Projects() {
                     <div key={key}>
                       <span style={S.lbl}>{lbl}</span>
                       {key==="vatType"?(
-                        <select style={S.inp} value={val} onChange={e=>saveProject({...selectedProject,[key]:e.target.value})}>
+                        <select style={S.inp} value={val} onChange={e=>saveProject({...selectedProject, vatType:e.target.value as VatType})}>
                           {VAT_TYPES.map(v=><option key={v}>{v}</option>)}
                         </select>
                       ):key==="paymentTerms"?(
