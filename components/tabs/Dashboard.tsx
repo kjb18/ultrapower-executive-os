@@ -60,8 +60,17 @@ const RFQ_STATUS_C: Record<string,{bg:string;fg:string}> = {
 };
 const PO_STATUS_C: Record<string,{bg:string;fg:string}> = {
   "Received":{bg:"#EBF3FC",fg:"#185FA5"},"Processing":{bg:"#FFF8EC",fg:"#854F0B"},
-  "Ordered from Supplier":{bg:"#F4F3FE",fg:"#534AB7"},"Ready for Delivery":{bg:"#f0faf5",fg:"#3B6D11"},
+  "Ordered from Supplier":{bg:"#F4F3FE",fg:"#534AB7"},
+  "Waiting for Delivery":{bg:"#FFF3CD",fg:"#856404"},
+  "Ready for Delivery":{bg:"#f0faf5",fg:"#3B6D11"},
   "Delivered":{bg:"#f0faf5",fg:"#3B6D11"},"Completed":{bg:"#f0f2f5",fg:"#8a9ab0"},
+};
+const STAGE_C: Record<string,{bg:string;fg:string}> = {
+  "RFQ Submitted":{bg:"#EBF3FC",fg:"#185FA5"},"Negotiation":{bg:"#F4F3FE",fg:"#534AB7"},
+  "PO Received":{bg:"#FFF8EC",fg:"#854F0B"},"In Fulfillment":{bg:"#FFF3CD",fg:"#856404"},
+  "Delivered":{bg:"#f0faf5",fg:"#3B6D11"},"Invoiced":{bg:"#EBF3FC",fg:"#185FA5"},
+  "Payment Pending":{bg:"#FFF8EC",fg:"#854F0B"},"Closed":{bg:"#f0f2f5",fg:"#8a9ab0"},
+  "Lost":{bg:"#FEF0F0",fg:"#A32D2D"},
 };
 
 export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) => void }) {
