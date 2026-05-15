@@ -1,5 +1,6 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
+import { kvGet, kvSet } from "@/lib/kv";
 
 const STAGES = ["RFQ Submitted","Negotiation","PO Received","In Fulfillment","Delivered","Invoiced","Payment Pending","Closed","Lost"] as const;
 const VAT_TYPES = ["VAT Inclusive","Zero Rated","Exempt"] as const;
@@ -40,6 +41,12 @@ interface Expense {
   amount:number; vatApplicable:boolean; vatAmount:number; netAmount:number; createdAt:string;
 }
 
+interface CRMDoc { id:string; type:string; number:string; date:string; amount:string; status:string; html?:string; }
+interface CRMRFQRecord { id:number; rfqNumber:string; client:string; subject:string; dateSubmitted:string; deadline:string; status:string; notes:string; projectId?:string; documents?:CRMDoc[]; archived?:boolean; }
+interface CRMPORecord { id:number; poNumber:string; client:string; items:string; value:string; dateReceived:string; expectedDelivery:string; supplierStatus:string; status:string; notes:string; projectId?:string; documents?:CRMDoc[]; archived?:boolean; }
+interface CRMStore { pendingRFQs?:CRMRFQRecord[]; pendingPOs?:CRMPORecord[]; [key:string]:unknown; }
+interface SourcingSession { id:string; query?:string; subject?:string; date?:string; projectId?:string; [key:string]:unknown; }
+
 function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2,7)}`; }
 function fmt(n?:number) { return n!==undefined ? `₱${n.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}` : "—"; }
 function daysSince(dateStr:string) { return Math.floor((Date.now()-new Date(dateStr).getTime())/(1000*60*60*24)); }
@@ -59,6 +66,14 @@ export default function Projects() {
   const [filterClient, setFilterClient] = useState("");
   const [expenseTab, setExpenseTab] = useState<"project"|"opex">("project");
 
+  // Assets tab system
+  const [assetTab, setAssetTab] = useState<"overview"|"rfqspos"|"sourcing"|"documents">("overview");
+  const [allCRM, setAllCRM] = useState<CRMStore>({});
+  const [allSourcing, setAllSourcing] = useState<SourcingSession[]>([]);
+  const [showLinkRFQ, setShowLinkRFQ] = useState(false);
+  const [showLinkPO, setShowLinkPO] = useState(false);
+  const [showLinkSourcing, setShowLinkSourcing] = useState(false);
+
   // New project form
   const [np, setNP] = useState({name:"",client:"",stage:"RFQ Submitted" as Stage,vatType:"VAT Inclusive" as VatType,rfqDate:new Date().toISOString().split("T")[0],notes:""});
 
@@ -67,6 +82,22 @@ export default function Projects() {
 
   useEffect(() => { loadData(); }, []);
 
+  useEffect(() => {
+    if (!selectedProject) return;
+    setAssetTab("overview");
+    setShowLinkRFQ(false);
+    setShowLinkPO(false);
+    setShowLinkSourcing(false);
+    Promise.all([
+      kvGet<CRMStore>("crm"),
+      kvGet<SourcingSession[]>("sourcing:history"),
+    ]).then(([crm, src]) => {
+      setAllCRM(crm || {});
+      setAllSourcing(src || []);
+    });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedProject?.id]);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -74,7 +105,6 @@ export default function Projects() {
       const data = await res.json();
       setProjects(data.projects||[]);
       setExpenses(data.expenses||[]);
-      // Auto-flag overdue RFQs
       const updated = (data.projects||[]).map((p:Project) => {
         if (p.stage==="RFQ Submitted" && daysSince(p.rfqDate)>30) return {...p, stage:"Lost" as Stage};
         if (p.paymentDueDate && new Date(p.paymentDueDate)<new Date() && p.paymentStatus==="Unpaid") return {...p, paymentStatus:"Overdue" as PaymentStatus};
@@ -121,7 +151,6 @@ export default function Projects() {
       const res = await fetch("/api/projects", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"saveExpense",expense}) });
       const data = await res.json();
       setExpenses(data.expenses||[]);
-      // Refresh projects for updated financials
       const projRes = await fetch("/api/projects");
       const projData = await projRes.json();
       setProjects(projData.projects||[]);
@@ -136,6 +165,34 @@ export default function Projects() {
     if (!confirm("Delete this expense?")) return;
     await fetch("/api/projects", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"deleteExpense",id}) });
     setExpenses(prev=>prev.filter(e=>e.id!==id));
+  };
+
+  const doLinkRFQ = async (rfqId:number) => {
+    if (!selectedProject) return;
+    const updated = {...allCRM, pendingRFQs:(allCRM.pendingRFQs||[]).map(r=>r.id===rfqId?{...r,projectId:selectedProject.id}:r)};
+    await kvSet("crm",updated); setAllCRM(updated);
+  };
+  const doUnlinkRFQ = async (rfqId:number) => {
+    const updated = {...allCRM, pendingRFQs:(allCRM.pendingRFQs||[]).map(r=>{if(r.id!==rfqId)return r;const copy={...r};delete copy.projectId;return copy;})};
+    await kvSet("crm",updated); setAllCRM(updated);
+  };
+  const doLinkPO = async (poId:number) => {
+    if (!selectedProject) return;
+    const updated = {...allCRM, pendingPOs:(allCRM.pendingPOs||[]).map(p=>p.id===poId?{...p,projectId:selectedProject.id}:p)};
+    await kvSet("crm",updated); setAllCRM(updated);
+  };
+  const doUnlinkPO = async (poId:number) => {
+    const updated = {...allCRM, pendingPOs:(allCRM.pendingPOs||[]).map(p=>{if(p.id!==poId)return p;const copy={...p};delete copy.projectId;return copy;})};
+    await kvSet("crm",updated); setAllCRM(updated);
+  };
+  const doLinkSourcing = async (sid:string) => {
+    if (!selectedProject) return;
+    const updated = allSourcing.map(s=>s.id===sid?{...s,projectId:selectedProject.id}:s);
+    await kvSet("sourcing:history",updated); setAllSourcing(updated);
+  };
+  const doUnlinkSourcing = async (sid:string) => {
+    const updated = allSourcing.map(s=>{if(s.id!==sid)return s;const copy={...s};delete copy.projectId;return copy;});
+    await kvSet("sourcing:history",updated); setAllSourcing(updated);
   };
 
   // Filtered projects
@@ -161,6 +218,16 @@ export default function Projects() {
     tabBtn:(a:boolean):React.CSSProperties=>({padding:"8px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,color:a?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${a?"#185FA5":"transparent"}`,fontWeight:a?600:400}),
     addBtn:{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600} as React.CSSProperties,
   };
+
+  // Derived values for Assets tabs
+  type DocWithSource = CRMDoc & {source:string; client:string};
+  const linkedRFQs: CRMRFQRecord[] = selectedProject ? (allCRM.pendingRFQs||[]).filter(r=>r.projectId===selectedProject.id) : [];
+  const linkedPOs: CRMPORecord[] = selectedProject ? (allCRM.pendingPOs||[]).filter(p=>p.projectId===selectedProject.id) : [];
+  const linkedSourcing: SourcingSession[] = selectedProject ? allSourcing.filter(s=>s.projectId===selectedProject.id) : [];
+  const allDocs: DocWithSource[] = [
+    ...linkedRFQs.flatMap(r=>(r.documents||[]).map(d=>({...d,source:`RFQ ${r.rfqNumber||r.id}`,client:r.client}))),
+    ...linkedPOs.flatMap(p=>(p.documents||[]).map(d=>({...d,source:`PO ${p.poNumber||p.id}`,client:p.client}))),
+  ];
 
   const projectExpenses = selectedProject ? expenses.filter(e=>e.projectId===selectedProject.id) : [];
 
@@ -214,7 +281,6 @@ export default function Projects() {
               <button onClick={loadData} style={{fontSize:13,padding:"7px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>↺ Refresh</button>
             </div>
 
-            {/* New Project Form */}
             {showNewProject&&(
               <div style={{...S.card,padding:18,marginBottom:14}}>
                 <div style={{fontSize:12,fontWeight:600,color:"#1a2332",marginBottom:14,textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>New Project</div>
@@ -248,7 +314,6 @@ export default function Projects() {
               </div>
             )}
 
-            {/* Projects table */}
             {loading?<div style={{textAlign:"center",padding:40,color:"#b0bec8"}}><Spinner/></div>:(
               <div style={S.card}>
                 <div style={{overflowX:"auto"}}>
@@ -296,6 +361,7 @@ export default function Projects() {
 
           {/* PROJECT DETAIL VIEW */}
           {(view as string)==="detail"&&selectedProject&&<>
+            {/* Header */}
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
               <button onClick={()=>setView("list")} style={{fontSize:12,padding:"5px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>← Back</button>
               <div style={{fontSize:16,fontWeight:600,color:"#1a2332",flex:1}}>{selectedProject.name}</div>
@@ -303,151 +369,371 @@ export default function Projects() {
               {saving&&<Spinner/>}
             </div>
 
-            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-              {/* Project Info */}
-              <div style={{...S.card,padding:16}}>
-                <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>Project Details</div>
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                  {[
-                    ["Client",selectedProject.client,"client"],
-                    ["VAT Type",selectedProject.vatType,"vatType"],
-                    ["RFQ Date",selectedProject.rfqDate,"rfqDate"],
-                    ["PO Date",selectedProject.poDate||"","poDate"],
-                    ["Invoice Date",selectedProject.invoiceDate||"","invoiceDate"],
-                    ["Payment Terms",selectedProject.paymentTerms||"","paymentTerms"],
-                    ["Payment Due Date",selectedProject.paymentDueDate||"","paymentDueDate"],
-                  ].map(([lbl,val,key])=>(
-                    <div key={key}>
-                      <span style={S.lbl}>{lbl}</span>
-                      {key==="vatType"?(
-                        <select style={S.inp} value={val} onChange={e=>saveProject({...selectedProject, vatType:e.target.value as VatType})}>
-                          {VAT_TYPES.map(v=><option key={v}>{v}</option>)}
-                        </select>
-                      ):key==="paymentTerms"?(
-                        <select style={S.inp} value={val} onChange={e=>{
-                          const pt=e.target.value;
-                          const invDate=selectedProject.invoiceDate;
-                          let dueDate=selectedProject.paymentDueDate||"";
-                          if(invDate&&pt.match(/^\d+ Days/)){const days=parseInt(pt);const d=new Date(invDate);d.setDate(d.getDate()+days);dueDate=d.toISOString().split("T")[0];}
-                          saveProject({...selectedProject,paymentTerms:pt,paymentDueDate:dueDate});
-                        }}>
-                          <option value="">-- Select --</option>
-                          {PAYMENT_TERMS_LIST.map(t=><option key={t}>{t}</option>)}
-                        </select>
-                      ):key.includes("Date")?(
-                        <input style={S.inp} type="date" value={val} onChange={e=>saveProject({...selectedProject,[key]:e.target.value})}/>
-                      ):(
-                        <input style={S.inp} value={val} onChange={e=>saveProject({...selectedProject,[key]:e.target.value})}/>
-                      )}
-                    </div>
-                  ))}
-                  <div>
-                    <span style={S.lbl}>Stage</span>
-                    <select style={{...S.inp,background:STAGE_C[selectedProject.stage]?.bg,color:STAGE_C[selectedProject.stage]?.fg,fontWeight:600}} value={selectedProject.stage} onChange={e=>saveProject({...selectedProject,stage:e.target.value as Stage})}>
-                      {STAGES.map(s=><option key={s}>{s}</option>)}
-                    </select>
-                  </div>
-                  <div>
-                    <span style={S.lbl}>Payment Status</span>
-                    <select style={{...S.inp,background:PAY_C[selectedProject.paymentStatus||"Unpaid"]?.bg,color:PAY_C[selectedProject.paymentStatus||"Unpaid"]?.fg,fontWeight:600}} value={selectedProject.paymentStatus||"Unpaid"} onChange={e=>saveProject({...selectedProject,paymentStatus:e.target.value as PaymentStatus})}>
-                      {PAYMENT_STATUSES.map(s=><option key={s}>{s}</option>)}
-                    </select>
-                  </div>
-                </div>
-              </div>
-
-              {/* P&L Summary */}
-              <div style={{...S.card,padding:16}}>
-                <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>P&L Summary</div>
-                <div style={{marginBottom:10}}>
-                  <span style={S.lbl}>Invoice Amount (Revenue)</span>
-                  <input style={S.inp} type="number" placeholder="0.00" value={selectedProject.invoiceAmount||""} onChange={e=>saveProject({...selectedProject,invoiceAmount:parseFloat(e.target.value)||0})}/>
-                </div>
-                {[
-                  ["Total COGS",selectedProject.totalCogs||0,"#A32D2D"],
-                  ["Total Shipping Cost",selectedProject.totalShipping||0,"#854F0B"],
-                  ["Total Project Expenses",selectedProject.totalProjectExpenses||0,"#534AB7"],
-                ].map(([lbl,val,clr])=>(
-                  <div key={lbl as string} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"0.5px solid #f0f2f5"}}>
-                    <span style={{fontSize:12,color:"#4a6a8a"}}>{lbl as string}</span>
-                    <span style={{fontSize:13,fontFamily:"'DM Mono',monospace",color:clr as string}}>({fmt(val as number)})</span>
-                  </div>
-                ))}
-                <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderTop:"2px solid #1a2332",marginTop:6}}>
-                  <span style={{fontSize:14,fontWeight:600,color:"#1a2332"}}>Gross Profit</span>
-                  <span style={{fontSize:16,fontWeight:600,fontFamily:"'DM Mono',monospace",color:(selectedProject.grossProfit||0)>=0?"#3B6D11":"#A32D2D"}}>{fmt(selectedProject.grossProfit)}</span>
-                </div>
-                {selectedProject.grossMarginPct!==undefined&&(
-                  <div style={{textAlign:"right",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>Gross Margin: {selectedProject.grossMarginPct}%</div>
-                )}
-              </div>
+            {/* Asset tab bar */}
+            <div style={{display:"flex",borderBottom:"0.5px solid #e2e6ea",marginBottom:14,background:"#fff",borderRadius:"12px 12px 0 0"}}>
+              {(["overview","rfqspos","sourcing","documents"] as const).map(t=>(
+                <button key={t} style={S.tabBtn(assetTab===t)} onClick={()=>setAssetTab(t)}>
+                  {t==="overview"?"Overview":t==="rfqspos"?"RFQs & POs":t==="sourcing"?"Sourcing":"Documents"}
+                </button>
+              ))}
             </div>
 
-            {/* Expenses for this project */}
-            <div style={{...S.card,marginBottom:12}}>
-              <div style={{padding:"12px 16px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
-                <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Project Expenses</div>
-                <button onClick={()=>{setNE(n=>({...n,projectId:selectedProject.id,type:"COGS"}));setShowNewExpense(s=>!s);}} style={S.addBtn}>{showNewExpense?"Cancel":"+ Add Expense"}</button>
-              </div>
-              {showNewExpense&&(
-                <div style={{padding:14,borderBottom:"0.5px solid #f0f2f5",background:"#f8f9fb"}}>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,marginBottom:10}}>
-                    <div><span style={S.lbl}>Date</span><input style={S.inp} type="date" value={ne.date} onChange={e=>setNE(n=>({...n,date:e.target.value}))}/></div>
-                    <div><span style={S.lbl}>Type</span>
-                      <select style={S.inp} value={ne.type} onChange={e=>setNE(n=>({...n,type:e.target.value as ExpenseType,category:""}))}>
-                        {["COGS","Shipping Cost","Shipping Revenue","Project Expense"].map(t=><option key={t}>{t}</option>)}
+            {/* OVERVIEW TAB */}
+            {assetTab==="overview"&&<>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
+                {/* Project Details */}
+                <div style={{...S.card,padding:16}}>
+                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>Project Details</div>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
+                    {[
+                      ["Client",selectedProject.client,"client"],
+                      ["VAT Type",selectedProject.vatType,"vatType"],
+                      ["RFQ Date",selectedProject.rfqDate,"rfqDate"],
+                      ["PO Date",selectedProject.poDate||"","poDate"],
+                      ["Invoice Date",selectedProject.invoiceDate||"","invoiceDate"],
+                      ["Payment Terms",selectedProject.paymentTerms||"","paymentTerms"],
+                      ["Payment Due Date",selectedProject.paymentDueDate||"","paymentDueDate"],
+                    ].map(([lbl,val,key])=>(
+                      <div key={key}>
+                        <span style={S.lbl}>{lbl}</span>
+                        {key==="vatType"?(
+                          <select style={S.inp} value={val} onChange={e=>saveProject({...selectedProject, vatType:e.target.value as VatType})}>
+                            {VAT_TYPES.map(v=><option key={v}>{v}</option>)}
+                          </select>
+                        ):key==="paymentTerms"?(
+                          <select style={S.inp} value={val} onChange={e=>{
+                            const pt=e.target.value;
+                            const invDate=selectedProject.invoiceDate;
+                            let dueDate=selectedProject.paymentDueDate||"";
+                            if(invDate&&pt.match(/^\d+ Days/)){const days=parseInt(pt);const d=new Date(invDate);d.setDate(d.getDate()+days);dueDate=d.toISOString().split("T")[0];}
+                            saveProject({...selectedProject,paymentTerms:pt,paymentDueDate:dueDate});
+                          }}>
+                            <option value="">-- Select --</option>
+                            {PAYMENT_TERMS_LIST.map(t=><option key={t}>{t}</option>)}
+                          </select>
+                        ):key.includes("Date")?(
+                          <input style={S.inp} type="date" value={val} onChange={e=>saveProject({...selectedProject,[key]:e.target.value})}/>
+                        ):(
+                          <input style={S.inp} value={val} onChange={e=>saveProject({...selectedProject,[key]:e.target.value})}/>
+                        )}
+                      </div>
+                    ))}
+                    <div>
+                      <span style={S.lbl}>Stage</span>
+                      <select style={{...S.inp,background:STAGE_C[selectedProject.stage]?.bg,color:STAGE_C[selectedProject.stage]?.fg,fontWeight:600}} value={selectedProject.stage} onChange={e=>saveProject({...selectedProject,stage:e.target.value as Stage})}>
+                        {STAGES.map(s=><option key={s}>{s}</option>)}
                       </select>
                     </div>
-                    <div><span style={S.lbl}>Category</span>
-                      {ne.type==="Project Expense"?(
-                        <select style={S.inp} value={ne.category} onChange={e=>setNE(n=>({...n,category:e.target.value}))}>
-                          <option value="">-- Select --</option>{PROJECT_EXPENSE_CATS.map(c=><option key={c}>{c}</option>)}
-                        </select>
-                      ):<input style={S.inp} placeholder="e.g. Supplier name" value={ne.category} onChange={e=>setNE(n=>({...n,category:e.target.value}))}/>}
-                    </div>
-                    <div><span style={S.lbl}>Description</span><input style={S.inp} placeholder="Brief description" value={ne.description} onChange={e=>setNE(n=>({...n,description:e.target.value}))}/></div>
-                    <div><span style={S.lbl}>Amount (₱)</span><input style={S.inp} type="number" placeholder="0.00" value={ne.amount} onChange={e=>setNE(n=>({...n,amount:e.target.value}))}/></div>
-                    <div style={{display:"flex",alignItems:"center",gap:8,paddingTop:20}}>
-                      <input type="checkbox" checked={ne.vatApplicable} onChange={e=>setNE(n=>({...n,vatApplicable:e.target.checked}))} id="vat-chk"/>
-                      <label htmlFor="vat-chk" style={{fontSize:12,color:"#4a6a8a",cursor:"pointer"}}>12% VAT</label>
+                    <div>
+                      <span style={S.lbl}>Payment Status</span>
+                      <select style={{...S.inp,background:PAY_C[selectedProject.paymentStatus||"Unpaid"]?.bg,color:PAY_C[selectedProject.paymentStatus||"Unpaid"]?.fg,fontWeight:600}} value={selectedProject.paymentStatus||"Unpaid"} onChange={e=>saveProject({...selectedProject,paymentStatus:e.target.value as PaymentStatus})}>
+                        {PAYMENT_STATUSES.map(s=><option key={s}>{s}</option>)}
+                      </select>
                     </div>
                   </div>
-                  <button onClick={saveExpense} disabled={saving} style={{...S.addBtn,background:"#1a2332",color:"#fff",borderColor:"#1a2332"}}>{saving?<Spinner/>:<span>Save Expense</span>}</button>
                 </div>
-              )}
-              <div style={{overflowX:"auto"}}>
-                <table style={{width:"100%",borderCollapse:"collapse"}}>
-                  <thead><tr style={{background:"#fafbfc"}}>
-                    {["Date","Type","Category","Description","Amount","VAT","Net",""].map(h=>(
-                      <th key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"8px 13px",textAlign:"left",borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</th>
-                    ))}
-                  </tr></thead>
-                  <tbody>
-                    {projectExpenses.length===0&&<tr><td colSpan={8} style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:12}}>No expenses yet.</td></tr>}
-                    {projectExpenses.map((e,i)=>(
-                      <tr key={e.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
-                        <td style={{padding:"8px 13px",fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{e.date}</td>
-                        <td style={{padding:"8px 13px",fontSize:12}}><span style={S.pill("#EBF3FC","#185FA5")}>{e.type}</span></td>
-                        <td style={{padding:"8px 13px",fontSize:12,color:"#4a6a8a"}}>{e.category||"—"}</td>
-                        <td style={{padding:"8px 13px",fontSize:12,color:"#1a2332"}}>{e.description}</td>
-                        <td style={{padding:"8px 13px",fontSize:12,fontFamily:"'DM Mono',monospace",color:"#A32D2D"}}>{fmt(e.amount)}</td>
-                        <td style={{padding:"8px 13px",fontSize:12,fontFamily:"'DM Mono',monospace",color:"#8a9ab0"}}>{fmt(e.vatAmount)}</td>
-                        <td style={{padding:"8px 13px",fontSize:12,fontFamily:"'DM Mono',monospace",fontWeight:500}}>{fmt(e.netAmount)}</td>
-                        <td style={{padding:"8px 13px"}}><button onClick={()=>deleteExpense(e.id)} style={{fontSize:11,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </div>
 
-            {/* Notes */}
-            <div style={{...S.card,padding:16}}>
-              <span style={S.lbl}>Notes</span>
-              <textarea style={{...S.inp,minHeight:80,resize:"vertical" as const}} value={selectedProject.notes||""}
-                onChange={e=>saveProject({...selectedProject,notes:e.target.value})}
-                placeholder="Project notes, follow-up actions, client context..."/>
-            </div>
+                {/* P&L Summary */}
+                <div style={{...S.card,padding:16}}>
+                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>P&L Summary</div>
+                  <div style={{marginBottom:10}}>
+                    <span style={S.lbl}>Invoice Amount (Revenue)</span>
+                    <input style={S.inp} type="number" placeholder="0.00" value={selectedProject.invoiceAmount||""} onChange={e=>saveProject({...selectedProject,invoiceAmount:parseFloat(e.target.value)||0})}/>
+                  </div>
+                  {[
+                    ["Total COGS",selectedProject.totalCogs||0,"#A32D2D"],
+                    ["Total Shipping Cost",selectedProject.totalShipping||0,"#854F0B"],
+                    ["Total Project Expenses",selectedProject.totalProjectExpenses||0,"#534AB7"],
+                  ].map(([lbl,val,clr])=>(
+                    <div key={lbl as string} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                      <span style={{fontSize:12,color:"#4a6a8a"}}>{lbl as string}</span>
+                      <span style={{fontSize:13,fontFamily:"'DM Mono',monospace",color:clr as string}}>({fmt(val as number)})</span>
+                    </div>
+                  ))}
+                  <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderTop:"2px solid #1a2332",marginTop:6}}>
+                    <span style={{fontSize:14,fontWeight:600,color:"#1a2332"}}>Gross Profit</span>
+                    <span style={{fontSize:16,fontWeight:600,fontFamily:"'DM Mono',monospace",color:(selectedProject.grossProfit||0)>=0?"#3B6D11":"#A32D2D"}}>{fmt(selectedProject.grossProfit)}</span>
+                  </div>
+                  {selectedProject.grossMarginPct!==undefined&&(
+                    <div style={{textAlign:"right",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>Gross Margin: {selectedProject.grossMarginPct}%</div>
+                  )}
+                </div>
+              </div>
+
+              {/* Expenses for this project */}
+              <div style={{...S.card,marginBottom:12}}>
+                <div style={{padding:"12px 16px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Project Expenses</div>
+                  <button onClick={()=>{setNE(n=>({...n,projectId:selectedProject.id,type:"COGS"}));setShowNewExpense(s=>!s);}} style={S.addBtn}>{showNewExpense?"Cancel":"+ Add Expense"}</button>
+                </div>
+                {showNewExpense&&(
+                  <div style={{padding:14,borderBottom:"0.5px solid #f0f2f5",background:"#f8f9fb"}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(150px,1fr))",gap:8,marginBottom:10}}>
+                      <div><span style={S.lbl}>Date</span><input style={S.inp} type="date" value={ne.date} onChange={e=>setNE(n=>({...n,date:e.target.value}))}/></div>
+                      <div><span style={S.lbl}>Type</span>
+                        <select style={S.inp} value={ne.type} onChange={e=>setNE(n=>({...n,type:e.target.value as ExpenseType,category:""}))}>
+                          {["COGS","Shipping Cost","Shipping Revenue","Project Expense"].map(t=><option key={t}>{t}</option>)}
+                        </select>
+                      </div>
+                      <div><span style={S.lbl}>Category</span>
+                        {ne.type==="Project Expense"?(
+                          <select style={S.inp} value={ne.category} onChange={e=>setNE(n=>({...n,category:e.target.value}))}>
+                            <option value="">-- Select --</option>{PROJECT_EXPENSE_CATS.map(c=><option key={c}>{c}</option>)}
+                          </select>
+                        ):<input style={S.inp} placeholder="e.g. Supplier name" value={ne.category} onChange={e=>setNE(n=>({...n,category:e.target.value}))}/>}
+                      </div>
+                      <div><span style={S.lbl}>Description</span><input style={S.inp} placeholder="Brief description" value={ne.description} onChange={e=>setNE(n=>({...n,description:e.target.value}))}/></div>
+                      <div><span style={S.lbl}>Amount (₱)</span><input style={S.inp} type="number" placeholder="0.00" value={ne.amount} onChange={e=>setNE(n=>({...n,amount:e.target.value}))}/></div>
+                      <div style={{display:"flex",alignItems:"center",gap:8,paddingTop:20}}>
+                        <input type="checkbox" checked={ne.vatApplicable} onChange={e=>setNE(n=>({...n,vatApplicable:e.target.checked}))} id="vat-chk"/>
+                        <label htmlFor="vat-chk" style={{fontSize:12,color:"#4a6a8a",cursor:"pointer"}}>12% VAT</label>
+                      </div>
+                    </div>
+                    <button onClick={saveExpense} disabled={saving} style={{...S.addBtn,background:"#1a2332",color:"#fff",borderColor:"#1a2332"}}>{saving?<Spinner/>:<span>Save Expense</span>}</button>
+                  </div>
+                )}
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr style={{background:"#fafbfc"}}>
+                      {["Date","Type","Category","Description","Amount","VAT","Net",""].map(h=>(
+                        <th key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"8px 13px",textAlign:"left",borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {projectExpenses.length===0&&<tr><td colSpan={8} style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:12}}>No expenses yet.</td></tr>}
+                      {projectExpenses.map((e,i)=>(
+                        <tr key={e.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                          <td style={{padding:"8px 13px",fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{e.date}</td>
+                          <td style={{padding:"8px 13px",fontSize:12}}><span style={S.pill("#EBF3FC","#185FA5")}>{e.type}</span></td>
+                          <td style={{padding:"8px 13px",fontSize:12,color:"#4a6a8a"}}>{e.category||"—"}</td>
+                          <td style={{padding:"8px 13px",fontSize:12,color:"#1a2332"}}>{e.description}</td>
+                          <td style={{padding:"8px 13px",fontSize:12,fontFamily:"'DM Mono',monospace",color:"#A32D2D"}}>{fmt(e.amount)}</td>
+                          <td style={{padding:"8px 13px",fontSize:12,fontFamily:"'DM Mono',monospace",color:"#8a9ab0"}}>{fmt(e.vatAmount)}</td>
+                          <td style={{padding:"8px 13px",fontSize:12,fontFamily:"'DM Mono',monospace",fontWeight:500}}>{fmt(e.netAmount)}</td>
+                          <td style={{padding:"8px 13px"}}><button onClick={()=>deleteExpense(e.id)} style={{fontSize:11,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              {/* Notes */}
+              <div style={{...S.card,padding:16}}>
+                <span style={S.lbl}>Notes</span>
+                <textarea style={{...S.inp,minHeight:80,resize:"vertical" as const}} value={selectedProject.notes||""}
+                  onChange={e=>saveProject({...selectedProject,notes:e.target.value})}
+                  placeholder="Project notes, follow-up actions, client context..."/>
+              </div>
+            </>}
+
+            {/* RFQs & POs TAB */}
+            {assetTab==="rfqspos"&&<>
+              <div style={{...S.card,marginBottom:12}}>
+                <div style={{padding:"12px 16px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Linked RFQs</div>
+                  <button onClick={()=>setShowLinkRFQ(true)} style={S.addBtn}>Link RFQ</button>
+                </div>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr style={{background:"#fafbfc"}}>
+                      {["RFQ #","Client","Subject","Submitted","Status",""].map(h=>(
+                        <th key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"8px 13px",textAlign:"left",borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {linkedRFQs.length===0&&<tr><td colSpan={6} style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:12}}>No linked RFQs. Click "Link RFQ" to connect a CRM record.</td></tr>}
+                      {linkedRFQs.map((r,i)=>(
+                        <tr key={r.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#185FA5",fontFamily:"'DM Mono',monospace",fontWeight:600}}>{r.rfqNumber||`RFQ-${r.id}`}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#4a6a8a"}}>{r.client}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#1a2332"}}>{r.subject}</td>
+                          <td style={{padding:"9px 13px",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{r.dateSubmitted}</td>
+                          <td style={{padding:"9px 13px"}}><span style={S.pill("#EBF3FC","#185FA5")}>{r.status}</span></td>
+                          <td style={{padding:"9px 13px"}}><button onClick={()=>doUnlinkRFQ(r.id)} style={{fontSize:11,color:"#A32D2D",background:"none",border:"none",cursor:"pointer"}}>Unlink</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+
+              <div style={S.card}>
+                <div style={{padding:"12px 16px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Linked POs</div>
+                  <button onClick={()=>setShowLinkPO(true)} style={S.addBtn}>Link PO</button>
+                </div>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr style={{background:"#fafbfc"}}>
+                      {["PO #","Client","Items","Value","Status",""].map(h=>(
+                        <th key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"8px 13px",textAlign:"left",borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {linkedPOs.length===0&&<tr><td colSpan={6} style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:12}}>No linked POs. Click "Link PO" to connect a CRM record.</td></tr>}
+                      {linkedPOs.map((p,i)=>(
+                        <tr key={p.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#185FA5",fontFamily:"'DM Mono',monospace",fontWeight:600}}>{p.poNumber||`PO-${p.id}`}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#4a6a8a"}}>{p.client}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#1a2332"}}>{p.items}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#3B6D11",fontFamily:"'DM Mono',monospace"}}>{p.value}</td>
+                          <td style={{padding:"9px 13px"}}><span style={S.pill("#EBF3FC","#185FA5")}>{p.status}</span></td>
+                          <td style={{padding:"9px 13px"}}><button onClick={()=>doUnlinkPO(p.id)} style={{fontSize:11,color:"#A32D2D",background:"none",border:"none",cursor:"pointer"}}>Unlink</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>}
+
+            {/* SOURCING TAB */}
+            {assetTab==="sourcing"&&<>
+              <div style={S.card}>
+                <div style={{padding:"12px 16px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Linked Sourcing Sessions</div>
+                  <button onClick={()=>setShowLinkSourcing(true)} style={S.addBtn}>Link Session</button>
+                </div>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr style={{background:"#fafbfc"}}>
+                      {["Session ID","Query / Subject","Date",""].map(h=>(
+                        <th key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"8px 13px",textAlign:"left",borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {linkedSourcing.length===0&&<tr><td colSpan={4} style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:12}}>No linked sourcing sessions. Click "Link Session" to connect a sourcing search.</td></tr>}
+                      {linkedSourcing.map((s,i)=>(
+                        <tr key={s.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                          <td style={{padding:"9px 13px",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{String(s.id).slice(-8)}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#1a2332"}}>{s.query||s.subject||"—"}</td>
+                          <td style={{padding:"9px 13px",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{s.date||"—"}</td>
+                          <td style={{padding:"9px 13px"}}><button onClick={()=>doUnlinkSourcing(s.id)} style={{fontSize:11,color:"#A32D2D",background:"none",border:"none",cursor:"pointer"}}>Unlink</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>}
+
+            {/* DOCUMENTS TAB */}
+            {assetTab==="documents"&&<>
+              <div style={S.card}>
+                <div style={{padding:"12px 16px",borderBottom:"0.5px solid #f0f2f5"}}>
+                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Documents</div>
+                  <div style={{fontSize:11,color:"#b0bec8",marginTop:2}}>Saved from Document Maker via linked RFQs and POs</div>
+                </div>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr style={{background:"#fafbfc"}}>
+                      {["Source","Type","Number","Date","Amount","Status",""].map(h=>(
+                        <th key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"8px 13px",textAlign:"left",borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {allDocs.length===0&&<tr><td colSpan={7} style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:12}}>No documents yet. Documents saved from Document Maker will appear here once RFQs or POs are linked.</td></tr>}
+                      {allDocs.map((d,i)=>(
+                        <tr key={d.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                          <td style={{padding:"9px 13px",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{d.source}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#4a6a8a"}}>{d.type}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#185FA5",fontFamily:"'DM Mono',monospace",fontWeight:600}}>{d.number}</td>
+                          <td style={{padding:"9px 13px",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{d.date}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#3B6D11",fontFamily:"'DM Mono',monospace"}}>{d.amount}</td>
+                          <td style={{padding:"9px 13px"}}><span style={S.pill("#EBF3FC","#185FA5")}>{d.status}</span></td>
+                          <td style={{padding:"9px 13px"}}>
+                            {d.html&&<button onClick={()=>{const w=window.open("","_blank");if(w){w.document.write(d.html!);w.document.close();}}} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer"}}>View</button>}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            </>}
+
+            {/* LINK RFQ MODAL */}
+            {showLinkRFQ&&<>
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:200}} onClick={()=>setShowLinkRFQ(false)}/>
+              <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:13,padding:20,zIndex:201,width:500,maxHeight:"70vh",overflow:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#1a2332",marginBottom:4}}>Link RFQ</div>
+                <div style={{fontSize:12,color:"#8a9ab0",marginBottom:14}}>Select an RFQ to link to this project</div>
+                {(allCRM.pendingRFQs||[]).filter(r=>!r.archived).length===0&&<div style={{color:"#b0bec8",fontSize:12,textAlign:"center",padding:"16px 0"}}>No RFQ records in CRM.</div>}
+                {(allCRM.pendingRFQs||[]).filter(r=>!r.archived).map(r=>{
+                  const isLinkedHere = r.projectId===selectedProject.id;
+                  const isLinkedElsewhere = !!r.projectId && r.projectId!==selectedProject.id;
+                  return(
+                    <div key={r.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:600,color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{r.rfqNumber||`RFQ-${r.id}`}</div>
+                        <div style={{fontSize:12,color:"#4a6a8a"}}>{r.client} -- {r.subject}</div>
+                        {isLinkedElsewhere&&<div style={{fontSize:10,color:"#854F0B",marginTop:1}}>Linked to another project</div>}
+                      </div>
+                      {isLinkedHere
+                        ? <span style={{fontSize:11,color:"#3B6D11",fontWeight:600}}>Linked</span>
+                        : <button onClick={()=>doLinkRFQ(r.id)} disabled={isLinkedElsewhere} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #185FA5",background:isLinkedElsewhere?"#f0f2f5":"#EBF3FC",color:isLinkedElsewhere?"#b0bec8":"#185FA5",cursor:isLinkedElsewhere?"not-allowed":"pointer"}}>Link</button>
+                      }
+                    </div>
+                  );
+                })}
+                <button onClick={()=>setShowLinkRFQ(false)} style={{...S.addBtn,marginTop:14,width:"100%",justifyContent:"center",display:"block",textAlign:"center"}}>Done</button>
+              </div>
+            </>}
+
+            {/* LINK PO MODAL */}
+            {showLinkPO&&<>
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:200}} onClick={()=>setShowLinkPO(false)}/>
+              <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:13,padding:20,zIndex:201,width:500,maxHeight:"70vh",overflow:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#1a2332",marginBottom:4}}>Link PO</div>
+                <div style={{fontSize:12,color:"#8a9ab0",marginBottom:14}}>Select a PO to link to this project</div>
+                {(allCRM.pendingPOs||[]).filter(p=>!p.archived).length===0&&<div style={{color:"#b0bec8",fontSize:12,textAlign:"center",padding:"16px 0"}}>No PO records in CRM.</div>}
+                {(allCRM.pendingPOs||[]).filter(p=>!p.archived).map(p=>{
+                  const isLinkedHere = p.projectId===selectedProject.id;
+                  const isLinkedElsewhere = !!p.projectId && p.projectId!==selectedProject.id;
+                  return(
+                    <div key={p.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:600,color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{p.poNumber||`PO-${p.id}`}</div>
+                        <div style={{fontSize:12,color:"#4a6a8a"}}>{p.client} -- {p.items}</div>
+                        {isLinkedElsewhere&&<div style={{fontSize:10,color:"#854F0B",marginTop:1}}>Linked to another project</div>}
+                      </div>
+                      {isLinkedHere
+                        ? <span style={{fontSize:11,color:"#3B6D11",fontWeight:600}}>Linked</span>
+                        : <button onClick={()=>doLinkPO(p.id)} disabled={isLinkedElsewhere} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #185FA5",background:isLinkedElsewhere?"#f0f2f5":"#EBF3FC",color:isLinkedElsewhere?"#b0bec8":"#185FA5",cursor:isLinkedElsewhere?"not-allowed":"pointer"}}>Link</button>
+                      }
+                    </div>
+                  );
+                })}
+                <button onClick={()=>setShowLinkPO(false)} style={{...S.addBtn,marginTop:14,width:"100%",display:"block",textAlign:"center"}}>Done</button>
+              </div>
+            </>}
+
+            {/* LINK SOURCING MODAL */}
+            {showLinkSourcing&&<>
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:200}} onClick={()=>setShowLinkSourcing(false)}/>
+              <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:13,padding:20,zIndex:201,width:500,maxHeight:"70vh",overflow:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#1a2332",marginBottom:4}}>Link Sourcing Session</div>
+                <div style={{fontSize:12,color:"#8a9ab0",marginBottom:14}}>Select a sourcing session to link to this project</div>
+                {allSourcing.filter(s=>!s.projectId||s.projectId===selectedProject.id).length===0&&<div style={{color:"#b0bec8",fontSize:12,textAlign:"center",padding:"16px 0"}}>No sourcing sessions available to link.</div>}
+                {allSourcing.filter(s=>!s.projectId||s.projectId===selectedProject.id).map(s=>{
+                  const isLinkedHere = s.projectId===selectedProject.id;
+                  return(
+                    <div key={s.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                      <div>
+                        <div style={{fontSize:12,color:"#1a2332",fontWeight:500}}>{s.query||s.subject||"Untitled session"}</div>
+                        <div style={{fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{s.date||""} -- {String(s.id).slice(-8)}</div>
+                      </div>
+                      {isLinkedHere
+                        ? <span style={{fontSize:11,color:"#3B6D11",fontWeight:600}}>Linked</span>
+                        : <button onClick={()=>doLinkSourcing(s.id)} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer"}}>Link</button>
+                      }
+                    </div>
+                  );
+                })}
+                <button onClick={()=>setShowLinkSourcing(false)} style={{...S.addBtn,marginTop:14,width:"100%",display:"block",textAlign:"center"}}>Done</button>
+              </div>
+            </>}
           </>}
 
           {/* EXPENSES VIEW -- General OpEx */}

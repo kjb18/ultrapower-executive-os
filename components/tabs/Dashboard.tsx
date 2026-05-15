@@ -525,10 +525,11 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
               {!((crmData as any).projects?.length===0)&&(
                 <>
                   {/* Mini stats */}
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:10}}>
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
                     {[
-                      ["Open",((crmData as any).projects||[]).filter((p:{stage:string})=>!["Closed","Lost"].includes(p.stage)).length,"#185FA5","#EBF3FC"],
+                      ["Open Projects",((crmData as any).projects||[]).filter((p:{stage:string})=>!["Closed","Lost"].includes(p.stage)).length,"#185FA5","#EBF3FC"],
                       ["Overdue Pay",((crmData as any).projects||[]).filter((p:{paymentStatus:string})=>p.paymentStatus==="Overdue").length,"#A32D2D","#FEF0F0"],
+                      ["Follow Up",((crmData as any).projects||[]).filter((p:{stage:string;rfqDate:string})=>{const d=Math.floor((Date.now()-new Date(p.rfqDate).getTime())/86400000);return p.stage==="RFQ Submitted"&&d>=15&&d<=30;}).length,"#854F0B","#FFF8EC"],
                     ].map(([lbl,val,fg,bg])=>(
                       <div key={lbl as string} style={{background:bg as string,borderRadius:7,padding:"6px 10px",textAlign:"center"}}>
                         <div style={{fontSize:15,fontWeight:600,color:fg as string,fontFamily:"'DM Mono',monospace"}}>{val as number}</div>
