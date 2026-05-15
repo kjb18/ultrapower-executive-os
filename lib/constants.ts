@@ -96,7 +96,7 @@ export const pctColor = (p: number) =>
 
 export interface MIT { id: number; text: string; done: boolean; doneAt?: number; clickupId?: string; dueDate?: string; }
 export interface MITArchiveEntry { text: string; doneAt: number; dayKey: string; }
-export interface OKR { id: number; name: string; pct: number; note: string; }
+export interface OKR { id: number; objective: string; keyResult: string; current: number; target: number; unit: string; }
 export interface KPI { id: number; label: string; value: string; delta: string; up: boolean | null; }
 export interface TimeBlock { id: number; time: string; label: string; sub: string; type: string; }
 export interface BrainItem { id: number; type: BrainType; text: string; }
@@ -157,10 +157,10 @@ export const DEFAULT_OS: OSData = {
     { id:3, text:"Update Goodlite pricing in Document Maker", done:false },
   ],
   okrs: [
-    { id:1, name:"Revenue Growth", pct:68, note:"Q2 pipeline strong" },
-    { id:2, name:"Client Acquisition", pct:45, note:"3 prospects in negotiation" },
-    { id:3, name:"Bid Win Rate", pct:80, note:"4 of 5 bids won YTD" },
-    { id:4, name:"System Automation", pct:30, note:"Executive OS in progress" },
+    { id:1, objective:"Revenue Growth", keyResult:"Achieve ₱5M quarterly revenue", current:3.4, target:5, unit:"M₱" },
+    { id:2, objective:"Client Acquisition", keyResult:"Close 5 new accounts", current:2, target:5, unit:"clients" },
+    { id:3, objective:"Bid Win Rate", keyResult:"Win 80% of submitted bids", current:4, target:5, unit:"bids" },
+    { id:4, objective:"System Automation", keyResult:"Deploy Executive OS", current:80, target:100, unit:"%" },
   ],
   kpis: [
     { id:1, label:"Pipeline", value:"₱2.4M", delta:"+12%", up:true },
