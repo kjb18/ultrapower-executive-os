@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
-import type { ProductItem, Supplier } from "@/lib/constants";
+import type { ProductItem, Supplier, LineItem } from "@/lib/constants";
 
 const STAGES = ["Prospecting","Qualified","Proposal","Follow-Up","Negotiation","Closed-Won","Closed-Lost"];
 const LABELS = ["Unlabeled","To Reactivate","Key Account","Refer to Alex","Dead Lead","Watch List","Needs Follow-Up"];
@@ -42,8 +42,8 @@ const PAYMENT_TERMS_OPTIONS = ["30 Days","60 Days","COD","Upon Delivery","Consig
 interface Prospect { id:number;company:string;contact:string;stage:string;lastAction:string;nextStep:string;nextUpdate:string;notes:string; }
 interface Contact { id:number;name:string;company:string;email:string;sector:string;source:string;notes:string;date:string; }
 interface CRMDocument { id:string;type:string;number:string;date:string;amount:string;status:string;html?:string; }
-interface PendingPO { id:number;poNumber:string;client:string;items:string;value:string;dateReceived:string;expectedDelivery:string;supplierStatus:string;status:string;notes:string;archived?:boolean;documents?:CRMDocument[]; }
-interface PendingRFQ { id:number;rfqNumber:string;client:string;subject:string;dateSubmitted:string;deadline:string;status:string;notes:string;archived?:boolean;documents?:CRMDocument[]; }
+interface PendingPO { id:number;poNumber:string;client:string;items:string;value:string;dateReceived:string;expectedDelivery:string;supplierStatus:string;status:string;notes:string;archived?:boolean;documents?:CRMDocument[];lineItems?:LineItem[];contactPersonId?:number;contactPersonName?:string;projectId?:string;docNumber?:string; }
+interface PendingRFQ { id:number;rfqNumber:string;client:string;subject:string;dateSubmitted:string;deadline:string;status:string;notes:string;archived?:boolean;documents?:CRMDocument[];lineItems?:LineItem[];contactPersonId?:number;contactPersonName?:string;projectId?:string;docNumber?:string; }
 interface OldContact { _id: string; _label: string; _archived: boolean; [key:string]: string|boolean; }
 interface CRMData { prospects:Prospect[];contacts:Contact[];pendingPOs:PendingPO[];pendingRFQs:PendingRFQ[];nid:number; }
 
@@ -81,7 +81,7 @@ export default function CRM() {
   const [nc,setNC]=useState({name:"",company:"",email:"",sector:"",source:"",notes:""});
   const [loaded,setLoaded]=useState(false);
   const [slideOver, setSlideOver]=useState<{type:"rfq"|"po";id:number}|null>(null);
-  const [slideTab, setSlideTab]=useState<"details"|"documents">("details");
+  const [slideTab, setSlideTab]=useState<"details"|"items"|"documents">("details");
   const [products, setProducts]=useState<ProductItem[]>([]);
   const [suppliers, setSuppliers]=useState<Supplier[]>([]);
   const [prodQ, setProdQ]=useState("");
@@ -89,18 +89,27 @@ export default function CRM() {
   const [prodForm, setProdForm]=useState<ProductItem|null>(null);
   const [suppForm, setSuppForm]=useState<Supplier|null>(null);
   const [suppCatsInput, setSuppCatsInput]=useState("");
+  const [projects, setProjects]=useState<{id:string;name:string;stage:string;vatType:string}[]>([]);
+  const [itemForm, setItemForm]=useState<{description:string;quantity:number;unit:string;unitPrice:number;productSearch:string}|null>(null);
+  const [contactSearch, setContactSearch]=useState("");
 
   useEffect(()=>{(async()=>{
-    const [d,oc,prodRes,suppRes]=await Promise.all([
+    const [d,oc,prodRes,suppRes,projRes]=await Promise.all([
       kvGet<CRMData>("crm"),
       kvGet<OldContact[]>("crm:old-contacts"),
       fetch("/api/catalog?type=products").then(r=>r.json()).catch(()=>({data:[]})),
       fetch("/api/catalog?type=suppliers").then(r=>r.json()).catch(()=>({data:[]})),
+      fetch("/api/projects").then(r=>r.json()).catch(()=>({projects:[]})),
     ]);
     if(d) setDataRaw({...d,pendingPOs:d.pendingPOs||[],pendingRFQs:d.pendingRFQs||[]});
     if(oc) setOldContactsRaw(oc);
     if(prodRes?.data) setProducts(prodRes.data as ProductItem[]);
     if(suppRes?.data) setSuppliers(suppRes.data as Supplier[]);
+    if(projRes?.projects) setProjects(
+      (projRes.projects as Array<{id:string;name:string;stage:string;vatType?:string}>)
+        .filter(p=>p.stage!=="Closed"&&p.stage!=="Lost")
+        .map(p=>({id:p.id,name:p.name,stage:p.stage,vatType:p.vatType||""}))
+    );
     setLoaded(true);
   })();},[]);
 
@@ -740,128 +749,380 @@ export default function CRM() {
       </div>
 
       {/* SLIDE-OVER PANEL */}
-      {slideOver&&(slideRFQ||slidePO)&&(
-        <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",justifyContent:"flex-end"}}>
-          <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.3)"}} onClick={()=>setSlideOver(null)}/>
-          <div style={{position:"relative",width:480,background:"#fff",height:"100%",overflow:"auto",boxShadow:"-4px 0 24px rgba(0,0,0,0.12)",display:"flex",flexDirection:"column"}}>
+      {slideOver&&(slideRFQ||slidePO)&&(()=>{
+        const closeSlide=()=>{setSlideOver(null);setItemForm(null);setContactSearch("");};
+        const lbl={fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase" as const,color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"};
+        const inp={fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"} as React.CSSProperties;
+        const fmtPHP=(v:number)=>`₱${v.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+        const rec=slideRFQ||slidePO!;
+        const lineItems=rec.lineItems||[];
+        const linkedProject=projects.find(p=>p.id===rec.projectId);
+        const vatRate=linkedProject?.vatType==="VAT Inclusive"?0.12:0;
+        const subtotal=lineItems.reduce((s,i)=>s+i.total,0);
+        const vatAmount=Math.round(subtotal*vatRate*100)/100;
+        const grandTotal=subtotal+vatAmount;
 
-            {/* Header */}
-            <div style={{padding:"16px 18px",borderBottom:"0.5px solid #e2e6ea",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",position:"sticky",top:0,zIndex:2}}>
-              <div>
-                <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>
-                  {slideRFQ?(slideRFQ.rfqNumber||`RFQ-${slideRFQ.id}`):(slidePO?.poNumber||`PO-${slidePO?.id}`)}
-                </div>
-                <div style={{fontSize:12,color:"#8a9ab0",marginTop:1}}>{slideRFQ?slideRFQ.client:slidePO?.client}</div>
-              </div>
-              <button onClick={()=>setSlideOver(null)} style={{fontSize:18,color:"#b0bec8",background:"none",border:"none",cursor:"pointer",padding:"4px 8px"}}>✕</button>
-            </div>
+        const addLineItem=()=>{
+          if(!itemForm||!itemForm.description.trim())return;
+          const newLine:LineItem={id:genId(),description:itemForm.description,quantity:itemForm.quantity,unit:itemForm.unit,unitPrice:itemForm.unitPrice,total:Math.round(itemForm.quantity*itemForm.unitPrice*100)/100};
+          if(slideRFQ)updRFQ(slideRFQ.id,{lineItems:[...lineItems,newLine]});
+          else if(slidePO)updPO(slidePO.id,{lineItems:[...lineItems,newLine]});
+          setItemForm(null);
+        };
+        const deleteLineItem=(itemId:string)=>{
+          const updated=lineItems.filter(i=>i.id!==itemId);
+          if(slideRFQ)updRFQ(slideRFQ.id,{lineItems:updated});
+          else if(slidePO)updPO(slidePO.id,{lineItems:updated});
+        };
+        const filteredContacts=data.contacts.filter(c=>
+          c.name.toLowerCase().includes(contactSearch.toLowerCase())||
+          c.company.toLowerCase().includes(contactSearch.toLowerCase())
+        );
 
-            {/* Tabs */}
-            <div style={{display:"flex",borderBottom:"0.5px solid #e2e6ea"}}>
-              {(["details","documents"] as const).map(t=>(
-                <button key={t} onClick={()=>setSlideTab(t)}
-                  style={{padding:"10px 18px",border:"none",background:"none",cursor:"pointer",fontSize:13,color:slideTab===t?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${slideTab===t?"#185FA5":"transparent"}`,fontWeight:slideTab===t?600:400}}>
-                  {t==="details"?"Details":`Documents (${((slideRFQ?.documents||slidePO?.documents)||[]).length})`}
-                </button>
-              ))}
-            </div>
+        return(
+          <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",justifyContent:"flex-end"}}>
+            <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.3)"}} onClick={closeSlide}/>
+            <div style={{position:"relative",width:500,background:"#fff",height:"100%",overflow:"auto",boxShadow:"-4px 0 24px rgba(0,0,0,0.12)",display:"flex",flexDirection:"column"}}>
 
-            <div style={{flex:1,overflow:"auto",padding:18}}>
-              {slideTab==="details"&&(
-                <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                  {slideRFQ&&<>
-                    {[
-                      {lbl:"RFQ Number",key:"rfqNumber",type:"text",ph:"RFQ-2026-001"},
-                      {lbl:"Client",key:"client",type:"text",ph:"Client name"},
-                      {lbl:"Subject",key:"subject",type:"text",ph:"e.g. Supply of LED Lighting"},
-                      {lbl:"Date Submitted",key:"dateSubmitted",type:"date",ph:""},
-                      {lbl:"Response Deadline",key:"deadline",type:"date",ph:""},
-                      {lbl:"Notes",key:"notes",type:"textarea",ph:"Additional notes..."},
-                    ].map(f=>(
-                      <div key={f.key}>
-                        <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>{f.lbl}</div>
-                        {f.type==="textarea"
-                          ? <textarea style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%",minHeight:80,resize:"vertical"} as React.CSSProperties} value={((slideRFQ as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
-                          : <input style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"}} type={f.type} value={((slideRFQ as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
-                        }
-                      </div>
-                    ))}
-                    <div>
-                      <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Status</div>
-                      <select style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:`0.5px solid ${RFQ_STATUS_C[slideRFQ.status]?.fg||"#e2e6ea"}44`,background:RFQ_STATUS_C[slideRFQ.status]?.bg||"#f8f9fb",color:RFQ_STATUS_C[slideRFQ.status]?.fg||"#3a4a5a",fontWeight:600,width:"100%"}} value={slideRFQ.status} onChange={e=>updRFQ(slideRFQ.id,{status:e.target.value})}>
-                        {RFQ_STATUSES.map(s=><option key={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <a href={`/tools/docmaker.html?rfq=${encodeURIComponent(slideRFQ.rfqNumber||"")}&client=${encodeURIComponent(slideRFQ.client||"")}&subject=${encodeURIComponent(slideRFQ.subject||"")}`}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{display:"block",textAlign:"center",padding:"10px",borderRadius:9,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",fontSize:13,fontWeight:600,textDecoration:"none",marginTop:4}}>
-                      📄 Open in Document Maker
-                    </a>
-                  </>}
-
-                  {slidePO&&<>
-                    {[
-                      {lbl:"PO Number",key:"poNumber",type:"text",ph:"PO-2026-001"},
-                      {lbl:"Client",key:"client",type:"text",ph:"Client name"},
-                      {lbl:"Items Summary",key:"items",type:"text",ph:"Items description"},
-                      {lbl:"Value",key:"value",type:"text",ph:"₱0.00"},
-                      {lbl:"Date Received",key:"dateReceived",type:"date",ph:""},
-                      {lbl:"Expected Delivery",key:"expectedDelivery",type:"date",ph:""},
-                      {lbl:"Supplier Status",key:"supplierStatus",type:"text",ph:"e.g. Ordered, ETA 2 weeks"},
-                      {lbl:"Notes",key:"notes",type:"textarea",ph:"Additional notes..."},
-                    ].map(f=>(
-                      <div key={f.key}>
-                        <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>{f.lbl}</div>
-                        {f.type==="textarea"
-                          ? <textarea style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%",minHeight:80,resize:"vertical"} as React.CSSProperties} value={((slidePO as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updPO(slidePO.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
-                          : <input style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"}} type={f.type} value={((slidePO as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updPO(slidePO.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
-                        }
-                      </div>
-                    ))}
-                    <div>
-                      <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Status</div>
-                      <select style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:`0.5px solid ${PO_STATUS_C[slidePO.status]?.fg||"#e2e6ea"}44`,background:PO_STATUS_C[slidePO.status]?.bg||"#f8f9fb",color:PO_STATUS_C[slidePO.status]?.fg||"#3a4a5a",fontWeight:600,width:"100%"}} value={slidePO.status} onChange={e=>updPO(slidePO.id,{status:e.target.value})}>
-                        {PO_STATUSES.map(s=><option key={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <a href={`/tools/docmaker.html?po=${encodeURIComponent(slidePO.poNumber||"")}&client=${encodeURIComponent(slidePO.client||"")}&subject=${encodeURIComponent(slidePO.items||"")}`}
-                      target="_blank" rel="noopener noreferrer"
-                      style={{display:"block",textAlign:"center",padding:"10px",borderRadius:9,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",fontSize:13,fontWeight:600,textDecoration:"none",marginTop:4}}>
-                      📄 Open in Document Maker
-                    </a>
-                  </>}
-                </div>
-              )}
-
-              {slideTab==="documents"&&(
+              {/* Header */}
+              <div style={{padding:"16px 18px",borderBottom:"0.5px solid #e2e6ea",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",position:"sticky",top:0,zIndex:2}}>
                 <div>
-                  <div style={{fontSize:12,color:"#b0bec8",marginBottom:14,lineHeight:1.6}}>
-                    Documents saved from Document Maker appear here. Use the Save to CRM button in Document Maker and select this RFQ or PO.
+                  <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>
+                    {slideRFQ?(slideRFQ.rfqNumber||`RFQ-${slideRFQ.id}`):(slidePO?.poNumber||`PO-${slidePO?.id}`)}
                   </div>
-                  {((slideRFQ?.documents||slidePO?.documents)||[]).length===0&&(
-                    <div style={{textAlign:"center",padding:"28px 0",color:"#b0bec8",fontSize:13}}>No documents saved yet.</div>
-                  )}
-                  {((slideRFQ?.documents||slidePO?.documents)||[]).map((doc:CRMDocument)=>(
-                    <div key={doc.id} style={{padding:"12px 14px",borderRadius:9,border:"0.5px solid #e2e6ea",marginBottom:8,background:"#fafbfc"}}>
-                      <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
-                        <div style={{fontSize:13,fontWeight:500,color:"#1a2332"}}>{doc.type} — {doc.number}</div>
-                        <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace",fontWeight:600}}>{doc.status||"Saved"}</span>
+                  <div style={{fontSize:12,color:"#8a9ab0",marginTop:1}}>{slideRFQ?slideRFQ.client:slidePO?.client}</div>
+                </div>
+                <button onClick={closeSlide} style={{fontSize:18,color:"#b0bec8",background:"none",border:"none",cursor:"pointer",padding:"4px 8px"}}>✕</button>
+              </div>
+
+              {/* Tabs */}
+              <div style={{display:"flex",borderBottom:"0.5px solid #e2e6ea"}}>
+                {(["details","items","documents"] as const).map(t=>(
+                  <button key={t} onClick={()=>{setSlideTab(t);setItemForm(null);setContactSearch("");}}
+                    style={{padding:"10px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,color:slideTab===t?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${slideTab===t?"#185FA5":"transparent"}`,fontWeight:slideTab===t?600:400,whiteSpace:"nowrap" as const}}>
+                    {t==="details"?"Details":t==="items"?`Items (${lineItems.length})`:`Documents (${((slideRFQ?.documents||slidePO?.documents)||[]).length})`}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{flex:1,overflow:"auto",padding:18}}>
+
+                {/* DETAILS TAB */}
+                {slideTab==="details"&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                    {slideRFQ&&<>
+                      {/* RFQ Number + Generate */}
+                      <div>
+                        <div style={lbl}>RFQ Number</div>
+                        <div style={{display:"flex",gap:6}}>
+                          <input style={{...inp,flex:1,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={slideRFQ.rfqNumber} placeholder="RFQ-2026-001" onChange={e=>updRFQ(slideRFQ.id,{rfqNumber:e.target.value})}/>
+                          <button disabled={!!slideRFQ.rfqNumber} onClick={async()=>{const r=await fetch("/api/docnum?type=RFQ").then(x=>x.json());if(r.docNumber)updRFQ(slideRFQ.id,{rfqNumber:r.docNumber});}}
+                            style={{fontSize:12,padding:"0 12px",borderRadius:8,border:"0.5px solid #185FA5",background:slideRFQ.rfqNumber?"#f0f2f5":"#EBF3FC",color:slideRFQ.rfqNumber?"#b0bec8":"#185FA5",cursor:slideRFQ.rfqNumber?"not-allowed":"pointer",whiteSpace:"nowrap" as const,fontWeight:600}}>
+                            Generate
+                          </button>
+                        </div>
                       </div>
-                      <div style={{fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{doc.date}{doc.amount?` · ${doc.amount}`:""}</div>
-                      {doc.html&&(
-                        <button onClick={()=>{const w=window.open("","_blank");if(w){w.document.write(doc.html as string);w.document.close();}}}
-                          style={{fontSize:11,padding:"4px 9px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginTop:8}}>
-                          View Document
-                        </button>
+
+                      {/* Client */}
+                      <div>
+                        <div style={lbl}>Client</div>
+                        <input style={inp} value={slideRFQ.client} placeholder="Client name" onChange={e=>updRFQ(slideRFQ.id,{client:e.target.value})}/>
+                      </div>
+
+                      {/* Contact Person */}
+                      <div>
+                        <div style={lbl}>Contact Person</div>
+                        {slideRFQ.contactPersonId?(
+                          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb"}}>
+                            <span style={{fontSize:13,fontWeight:500,color:"#1a2332",flex:1}}>{slideRFQ.contactPersonName}</span>
+                            {data.contacts.find(c=>c.id===slideRFQ.contactPersonId)?.company&&(
+                              <Pill t={data.contacts.find(c=>c.id===slideRFQ.contactPersonId)!.company} c={{bg:"#EBF3FC",fg:"#185FA5"}}/>
+                            )}
+                            <button onClick={()=>updRFQ(slideRFQ.id,{contactPersonId:undefined,contactPersonName:""})} style={{fontSize:13,color:"#b0bec8",background:"none",border:"none",cursor:"pointer",lineHeight:1}}>x</button>
+                          </div>
+                        ):(
+                          <div style={{position:"relative"}}>
+                            <input style={inp} placeholder="Type name or company..." value={contactSearch} onChange={e=>setContactSearch(e.target.value)}/>
+                            {contactSearch&&filteredContacts.length>0&&(
+                              <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:8,zIndex:20,maxHeight:180,overflowY:"auto" as const,boxShadow:"0 4px 12px rgba(0,0,0,0.1)"}}>
+                                {filteredContacts.map(c=>(
+                                  <div key={c.id} onMouseDown={()=>{updRFQ(slideRFQ.id,{contactPersonId:c.id,contactPersonName:c.name});setContactSearch("");}}
+                                    style={{padding:"8px 12px",cursor:"pointer",borderBottom:"0.5px solid #f0f2f5",fontSize:13,display:"flex",alignItems:"center",gap:8}}>
+                                    <span style={{fontWeight:500}}>{c.name}</span>
+                                    {c.company&&<span style={{color:"#8a9ab0",fontSize:11}}>{c.company}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Project */}
+                      <div>
+                        <div style={lbl}>Linked Project</div>
+                        <div style={{display:"flex",gap:6}}>
+                          <select style={{...inp,flex:1}} value={slideRFQ.projectId||""} onChange={e=>updRFQ(slideRFQ.id,{projectId:e.target.value||undefined})}>
+                            <option value="">-- No project linked --</option>
+                            {projects.map(p=><option key={p.id} value={p.id}>{p.name} ({p.stage})</option>)}
+                          </select>
+                          {slideRFQ.projectId&&<button onClick={()=>updRFQ(slideRFQ.id,{projectId:undefined})} style={{fontSize:13,padding:"0 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#8a9ab0",cursor:"pointer"}}>x</button>}
+                        </div>
+                      </div>
+
+                      {/* Remaining fields */}
+                      {([
+                        {lbl2:"Subject",key:"subject",type:"text",ph:"e.g. Supply of LED Lighting"},
+                        {lbl2:"Date Submitted",key:"dateSubmitted",type:"date",ph:""},
+                        {lbl2:"Response Deadline",key:"deadline",type:"date",ph:""},
+                        {lbl2:"Notes",key:"notes",type:"textarea",ph:"Additional notes..."},
+                      ] as {lbl2:string;key:string;type:string;ph:string}[]).map(f=>(
+                        <div key={f.key}>
+                          <div style={lbl}>{f.lbl2}</div>
+                          {f.type==="textarea"
+                            ? <textarea style={{...inp,minHeight:80,resize:"vertical"} as React.CSSProperties} value={((slideRFQ as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
+                            : <input style={inp} type={f.type} value={((slideRFQ as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
+                          }
+                        </div>
+                      ))}
+
+                      {/* Status */}
+                      <div>
+                        <div style={lbl}>Status</div>
+                        <select style={{...inp,border:`0.5px solid ${RFQ_STATUS_C[slideRFQ.status]?.fg||"#e2e6ea"}44`,background:RFQ_STATUS_C[slideRFQ.status]?.bg||"#f8f9fb",color:RFQ_STATUS_C[slideRFQ.status]?.fg||"#3a4a5a",fontWeight:600}} value={slideRFQ.status} onChange={e=>updRFQ(slideRFQ.id,{status:e.target.value})}>
+                          {RFQ_STATUSES.map(s=><option key={s}>{s}</option>)}
+                        </select>
+                      </div>
+
+                      <a href={`/tools/docmaker.html?rfq=${encodeURIComponent(slideRFQ.rfqNumber||"")}&client=${encodeURIComponent(slideRFQ.client||"")}&subject=${encodeURIComponent(slideRFQ.subject||"")}`}
+                        target="_blank" rel="noopener noreferrer"
+                        style={{display:"block",textAlign:"center",padding:"10px",borderRadius:9,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",fontSize:13,fontWeight:600,textDecoration:"none",marginTop:4}}>
+                        Open in Document Maker
+                      </a>
+                    </>}
+
+                    {slidePO&&<>
+                      {/* PO Number + Generate */}
+                      <div>
+                        <div style={lbl}>PO Number</div>
+                        <div style={{display:"flex",gap:6}}>
+                          <input style={{...inp,flex:1,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={slidePO.poNumber} placeholder="PO-2026-001" onChange={e=>updPO(slidePO.id,{poNumber:e.target.value})}/>
+                          <button disabled={!!slidePO.poNumber} onClick={async()=>{const r=await fetch("/api/docnum?type=PO").then(x=>x.json());if(r.docNumber)updPO(slidePO.id,{poNumber:r.docNumber});}}
+                            style={{fontSize:12,padding:"0 12px",borderRadius:8,border:"0.5px solid #185FA5",background:slidePO.poNumber?"#f0f2f5":"#EBF3FC",color:slidePO.poNumber?"#b0bec8":"#185FA5",cursor:slidePO.poNumber?"not-allowed":"pointer",whiteSpace:"nowrap" as const,fontWeight:600}}>
+                            Generate
+                          </button>
+                        </div>
+                      </div>
+
+                      {/* Client */}
+                      <div>
+                        <div style={lbl}>Client</div>
+                        <input style={inp} value={slidePO.client} placeholder="Client name" onChange={e=>updPO(slidePO.id,{client:e.target.value})}/>
+                      </div>
+
+                      {/* Contact Person */}
+                      <div>
+                        <div style={lbl}>Contact Person</div>
+                        {slidePO.contactPersonId?(
+                          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb"}}>
+                            <span style={{fontSize:13,fontWeight:500,color:"#1a2332",flex:1}}>{slidePO.contactPersonName}</span>
+                            {data.contacts.find(c=>c.id===slidePO.contactPersonId)?.company&&(
+                              <Pill t={data.contacts.find(c=>c.id===slidePO.contactPersonId)!.company} c={{bg:"#EBF3FC",fg:"#185FA5"}}/>
+                            )}
+                            <button onClick={()=>updPO(slidePO.id,{contactPersonId:undefined,contactPersonName:""})} style={{fontSize:13,color:"#b0bec8",background:"none",border:"none",cursor:"pointer",lineHeight:1}}>x</button>
+                          </div>
+                        ):(
+                          <div style={{position:"relative"}}>
+                            <input style={inp} placeholder="Type name or company..." value={contactSearch} onChange={e=>setContactSearch(e.target.value)}/>
+                            {contactSearch&&filteredContacts.length>0&&(
+                              <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:8,zIndex:20,maxHeight:180,overflowY:"auto" as const,boxShadow:"0 4px 12px rgba(0,0,0,0.1)"}}>
+                                {filteredContacts.map(c=>(
+                                  <div key={c.id} onMouseDown={()=>{updPO(slidePO.id,{contactPersonId:c.id,contactPersonName:c.name});setContactSearch("");}}
+                                    style={{padding:"8px 12px",cursor:"pointer",borderBottom:"0.5px solid #f0f2f5",fontSize:13,display:"flex",alignItems:"center",gap:8}}>
+                                    <span style={{fontWeight:500}}>{c.name}</span>
+                                    {c.company&&<span style={{color:"#8a9ab0",fontSize:11}}>{c.company}</span>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                          </div>
+                        )}
+                      </div>
+
+                      {/* Project */}
+                      <div>
+                        <div style={lbl}>Linked Project</div>
+                        <div style={{display:"flex",gap:6}}>
+                          <select style={{...inp,flex:1}} value={slidePO.projectId||""} onChange={e=>updPO(slidePO.id,{projectId:e.target.value||undefined})}>
+                            <option value="">-- No project linked --</option>
+                            {projects.map(p=><option key={p.id} value={p.id}>{p.name} ({p.stage})</option>)}
+                          </select>
+                          {slidePO.projectId&&<button onClick={()=>updPO(slidePO.id,{projectId:undefined})} style={{fontSize:13,padding:"0 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#8a9ab0",cursor:"pointer"}}>x</button>}
+                        </div>
+                      </div>
+
+                      {/* Remaining fields */}
+                      {([
+                        {lbl2:"Items Summary",key:"items",type:"text",ph:"Items description"},
+                        {lbl2:"Value",key:"value",type:"text",ph:"₱0.00"},
+                        {lbl2:"Date Received",key:"dateReceived",type:"date",ph:""},
+                        {lbl2:"Expected Delivery",key:"expectedDelivery",type:"date",ph:""},
+                        {lbl2:"Supplier Status",key:"supplierStatus",type:"text",ph:"e.g. Ordered, ETA 2 weeks"},
+                        {lbl2:"Notes",key:"notes",type:"textarea",ph:"Additional notes..."},
+                      ] as {lbl2:string;key:string;type:string;ph:string}[]).map(f=>(
+                        <div key={f.key}>
+                          <div style={lbl}>{f.lbl2}</div>
+                          {f.type==="textarea"
+                            ? <textarea style={{...inp,minHeight:80,resize:"vertical"} as React.CSSProperties} value={((slidePO as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updPO(slidePO.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
+                            : <input style={inp} type={f.type} value={((slidePO as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updPO(slidePO.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
+                          }
+                        </div>
+                      ))}
+
+                      {/* Status */}
+                      <div>
+                        <div style={lbl}>Status</div>
+                        <select style={{...inp,border:`0.5px solid ${PO_STATUS_C[slidePO.status]?.fg||"#e2e6ea"}44`,background:PO_STATUS_C[slidePO.status]?.bg||"#f8f9fb",color:PO_STATUS_C[slidePO.status]?.fg||"#3a4a5a",fontWeight:600}} value={slidePO.status} onChange={e=>updPO(slidePO.id,{status:e.target.value})}>
+                          {PO_STATUSES.map(s=><option key={s}>{s}</option>)}
+                        </select>
+                      </div>
+
+                      <a href={`/tools/docmaker.html?po=${encodeURIComponent(slidePO.poNumber||"")}&client=${encodeURIComponent(slidePO.client||"")}&subject=${encodeURIComponent(slidePO.items||"")}`}
+                        target="_blank" rel="noopener noreferrer"
+                        style={{display:"block",textAlign:"center",padding:"10px",borderRadius:9,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",fontSize:13,fontWeight:600,textDecoration:"none",marginTop:4}}>
+                        Open in Document Maker
+                      </a>
+                    </>}
+                  </div>
+                )}
+
+                {/* ITEMS TAB */}
+                {slideTab==="items"&&(
+                  <div>
+                    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
+                      <button onClick={()=>setItemForm({description:"",quantity:1,unit:"pcs",unitPrice:0,productSearch:""})} style={S.addBtn}>+ Add Item</button>
+                    </div>
+
+                    {itemForm&&(
+                      <div style={{...S.panel,padding:14,marginBottom:12}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                          <div style={{gridColumn:"1/-1"}}>
+                            <div style={lbl}>Search Products</div>
+                            <select style={S.inp} value={itemForm.productSearch} onChange={e=>{
+                              const prod=products.find(p=>p.id===e.target.value);
+                              if(prod) setItemForm(f=>f?{...f,productSearch:e.target.value,description:prod.description,unit:prod.unit,unitPrice:prod.standardPrice}:f);
+                              else setItemForm(f=>f?{...f,productSearch:e.target.value}:f);
+                            }}>
+                              <option value="">-- Select product to pre-fill --</option>
+                              {products.map(p=><option key={p.id} value={p.id}>{p.code} -- {p.description}</option>)}
+                            </select>
+                          </div>
+                          <div style={{gridColumn:"1/-1"}}>
+                            <div style={lbl}>Description</div>
+                            <input style={S.inp} value={itemForm.description} placeholder="Item description" onChange={e=>setItemForm(f=>f?{...f,description:e.target.value}:f)}/>
+                          </div>
+                          <div>
+                            <div style={lbl}>Qty</div>
+                            <input style={S.inp} type="number" min="0" value={itemForm.quantity} onChange={e=>setItemForm(f=>f?{...f,quantity:parseFloat(e.target.value)||0}:f)}/>
+                          </div>
+                          <div>
+                            <div style={lbl}>Unit</div>
+                            <input style={S.inp} value={itemForm.unit} placeholder="pcs" onChange={e=>setItemForm(f=>f?{...f,unit:e.target.value}:f)}/>
+                          </div>
+                          <div>
+                            <div style={lbl}>Unit Price (PHP)</div>
+                            <input style={S.inp} type="number" min="0" value={itemForm.unitPrice} onChange={e=>setItemForm(f=>f?{...f,unitPrice:parseFloat(e.target.value)||0}:f)}/>
+                          </div>
+                          <div>
+                            <div style={lbl}>Total</div>
+                            <input style={{...S.inp,background:"#f0f2f5",color:"#8a9ab0"}} readOnly value={fmtPHP(Math.round(itemForm.quantity*itemForm.unitPrice*100)/100)}/>
+                          </div>
+                        </div>
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={addLineItem} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"none",background:"#1a2332",color:"#fff",cursor:"pointer",fontWeight:600}}>Add</button>
+                          <button onClick={()=>setItemForm(null)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+
+                    <div style={S.panel}>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead>
+                            <tr>{["#","Description","Qty","Unit","Unit Price","Total",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr>
+                          </thead>
+                          <tbody>
+                            {lineItems.length===0&&(
+                              <tr><td colSpan={7} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"24px"}}>No items yet. Click + Add Item above.</td></tr>
+                            )}
+                            {lineItems.map((item,i)=>(
+                              <tr key={item.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                                <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
+                                <td style={{...S.td,fontWeight:500}}>{item.description}</td>
+                                <td style={{...S.td,fontFamily:"'DM Mono',monospace",textAlign:"right" as const}}>{item.quantity}</td>
+                                <td style={{...S.td,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{item.unit}</td>
+                                <td style={{...S.td,fontFamily:"'DM Mono',monospace",textAlign:"right" as const}}>{fmtPHP(item.unitPrice)}</td>
+                                <td style={{...S.td,fontFamily:"'DM Mono',monospace",fontWeight:600,textAlign:"right" as const}}>{fmtPHP(item.total)}</td>
+                                <td style={S.td}><button onClick={()=>deleteLineItem(item.id)} style={{fontSize:12,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {lineItems.length>0&&(
+                        <div style={{padding:"10px 16px",borderTop:"0.5px solid #f0f2f5",display:"flex",flexDirection:"column",alignItems:"flex-end",gap:5}}>
+                          <div style={{display:"flex",gap:32}}>
+                            <span style={{fontSize:12,color:"#8a9ab0"}}>Subtotal</span>
+                            <span style={{fontSize:13,fontFamily:"'DM Mono',monospace"}}>{fmtPHP(subtotal)}</span>
+                          </div>
+                          <div style={{display:"flex",gap:32}}>
+                            <span style={{fontSize:12,color:"#8a9ab0"}}>
+                              {linkedProject?`VAT (${linkedProject.vatType==="VAT Inclusive"?"12%":linkedProject.vatType})`:"VAT"}
+                            </span>
+                            <span style={{fontSize:13,fontFamily:"'DM Mono',monospace"}}>{fmtPHP(vatAmount)}</span>
+                          </div>
+                          <div style={{display:"flex",gap:32,paddingTop:5,borderTop:"0.5px solid #e2e6ea",marginTop:2}}>
+                            <span style={{fontSize:13,fontWeight:600,color:"#1a2332"}}>Grand Total</span>
+                            <span style={{fontSize:14,fontFamily:"'DM Mono',monospace",fontWeight:700,color:"#185FA5"}}>{fmtPHP(grandTotal)}</span>
+                          </div>
+                        </div>
                       )}
                     </div>
-                  ))}
-                </div>
-              )}
+                  </div>
+                )}
+
+                {/* DOCUMENTS TAB */}
+                {slideTab==="documents"&&(
+                  <div>
+                    <div style={{fontSize:12,color:"#b0bec8",marginBottom:14,lineHeight:1.6}}>
+                      Documents saved from Document Maker appear here. Use the Save to CRM button in Document Maker and select this RFQ or PO.
+                    </div>
+                    {((slideRFQ?.documents||slidePO?.documents)||[]).length===0&&(
+                      <div style={{textAlign:"center",padding:"28px 0",color:"#b0bec8",fontSize:13}}>No documents saved yet.</div>
+                    )}
+                    {((slideRFQ?.documents||slidePO?.documents)||[]).map((doc:CRMDocument)=>(
+                      <div key={doc.id} style={{padding:"12px 14px",borderRadius:9,border:"0.5px solid #e2e6ea",marginBottom:8,background:"#fafbfc"}}>
+                        <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
+                          <div style={{fontSize:13,fontWeight:500,color:"#1a2332"}}>{doc.type} -- {doc.number}</div>
+                          <span style={{fontSize:10,padding:"2px 8px",borderRadius:20,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace",fontWeight:600}}>{doc.status||"Saved"}</span>
+                        </div>
+                        <div style={{fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{doc.date}{doc.amount?` · ${doc.amount}`:""}</div>
+                        {doc.html&&(
+                          <button onClick={()=>{const w=window.open("","_blank");if(w){w.document.write(doc.html as string);w.document.close();}}}
+                            style={{fontSize:11,padding:"4px 9px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginTop:8}}>
+                            View Document
+                          </button>
+                        )}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        );
+      })()}
 
     </div>
   );
