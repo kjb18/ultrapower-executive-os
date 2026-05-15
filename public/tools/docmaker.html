@@ -311,6 +311,12 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
         <button class="doc-tab" onclick="setDocType('dr',this)">Delivery Receipt</button>
       </div>
 
+      <!-- CRM record link indicator -- shown when ?rfq= or ?po= URL params are present -->
+      <div id="crm-link-bar" style="display:none;background:#EBF3FC;border:0.5px solid #185FA5;border-radius:8px;padding:9px 16px;margin-bottom:14px;font-size:12px;color:#185FA5;font-family:'DM Mono',monospace">
+        <span style="opacity:0.7">Linked to:</span>
+        <span id="crm-link-text" style="font-weight:600;margin-left:6px"></span>
+      </div>
+
       <!-- Doc reference -->
       <div class="card">
         <div class="card-title"><span class="dot"></span> Document Reference</div>
@@ -399,6 +405,10 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
               <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;cursor:pointer;padding:8px 14px;border:1.5px solid #e0e0de;border-radius:7px;flex:1;transition:all 0.15s" id="sal-maam-lbl">
                 <input type="radio" name="salutation" id="sal-maam" value="Dear Ma'am," style="accent-color:#0066cc;width:15px;height:15px;cursor:pointer" onchange="updateSalutation()">
                 Dear Ma'am,
+              </label>
+              <label style="display:flex;align-items:center;gap:7px;font-size:13px;font-weight:400;cursor:pointer;padding:8px 14px;border:1.5px solid #e0e0de;border-radius:7px;flex:1;transition:all 0.15s" id="sal-sirmaam-lbl">
+                <input type="radio" name="salutation" id="sal-sirmaam" value="Dear Sir/Ma'am," style="accent-color:#0066cc;width:15px;height:15px;cursor:pointer" onchange="updateSalutation()">
+                Dear Sir/Ma'am,
               </label>
             </div>
           </div>
@@ -641,10 +651,49 @@ const DOC_LABELS = {
 const CUR_SYMBOLS = { PHP: 'Php', USD: 'US$', EUR: '€', SGD: 'S$' };
 
 // ─── INIT ───
-document.addEventListener('DOMContentLoaded', () => {
+document.addEventListener('DOMContentLoaded', function() {
   document.getElementById('doc-date').value = new Date().toISOString().split('T')[0];
   addItem();
   updateDocCount();
+
+  // Parse URL params for pre-fill from CRM
+  var params = new URLSearchParams(window.location.search);
+  var rfqParam = params.get('rfq') || '';
+  var poParam = params.get('po') || '';
+  var clientParam = params.get('client') || '';
+  var subjectParam = params.get('subject') || '';
+
+  // Pre-fill client name and subject from URL params
+  if (clientParam) {
+    var clientEl = document.getElementById('client-name');
+    if (clientEl && !clientEl.value) clientEl.value = decodeURIComponent(clientParam);
+  }
+  if (subjectParam) {
+    var subjEl = document.getElementById('doc-subject');
+    if (subjEl && !subjEl.value) subjEl.value = decodeURIComponent(subjectParam);
+  }
+
+  // Show CRM link bar if rfq or po param present
+  if (rfqParam || poParam) {
+    var bar = document.getElementById('crm-link-bar');
+    var linkText = document.getElementById('crm-link-text');
+    if (bar && linkText) {
+      bar.style.display = 'block';
+      var label = rfqParam ? ('RFQ: ' + decodeURIComponent(rfqParam)) : ('PO: ' + decodeURIComponent(poParam));
+      if (clientParam) label += ' · ' + decodeURIComponent(clientParam);
+      linkText.textContent = label;
+    }
+    // Auto-fill line items from linked CRM record after form initializes
+    setTimeout(function() {
+      autoFillFromCRM(
+        rfqParam ? decodeURIComponent(rfqParam) : '',
+        poParam ? decodeURIComponent(poParam) : ''
+      );
+    }, 500);
+  }
+
+  // Auto-generate doc number if field is still empty
+  autoGenDocNum();
 });
 
 function showView(v) {
@@ -1111,14 +1160,113 @@ function getSalutation() {
   return sal ? sal.value : "Dear Sir,";
 }
 function updateSalutation() {
-  const sirLbl = document.getElementById('sal-sir-lbl');
-  const maamLbl = document.getElementById('sal-maam-lbl');
-  const sal = document.querySelector('input[name="salutation"]:checked');
-  if (sirLbl) sirLbl.style.borderColor = sal && sal.value === "Dear Sir," ? '#0066cc' : '#e0e0de';
-  if (maamLbl) maamLbl.style.borderColor = sal && sal.value !== "Dear Sir," ? '#0066cc' : '#e0e0de';
+  var sal = document.querySelector('input[name="salutation"]:checked');
+  var val = sal ? sal.value : '';
+  ['sal-sir-lbl', 'sal-maam-lbl', 'sal-sirmaam-lbl'].forEach(function(id) {
+    var lbl = document.getElementById(id);
+    if (!lbl) return;
+    var inp = lbl.querySelector('input[type="radio"]');
+    lbl.style.borderColor = (inp && inp.value === val) ? '#0066cc' : '#e0e0de';
+  });
 }
 // Init on load
 document.addEventListener('DOMContentLoaded', function() { updateSalutation(); });
+
+// ── TOAST NOTIFICATION ──────────────────────────────────────────────────────
+function showToast(msg, type) {
+  var bg = type === 'error' ? '#FEF0F0' : '#f0faf5';
+  var fg = type === 'error' ? '#A32D2D' : '#0f7a4f';
+  var bdr = type === 'error' ? '#A32D2D' : '#0f7a4f';
+  var t = document.createElement('div');
+  t.style.cssText = 'position:fixed;bottom:24px;right:24px;background:' + bg + ';color:' + fg + ';border:0.5px solid ' + bdr + ';border-radius:9px;padding:10px 18px;font-size:13px;font-weight:500;z-index:9999;box-shadow:0 4px 16px rgba(0,0,0,0.12);max-width:340px;line-height:1.4';
+  t.textContent = msg;
+  document.body.appendChild(t);
+  setTimeout(function() {
+    t.style.transition = 'opacity 0.3s';
+    t.style.opacity = '0';
+    setTimeout(function() { if (t.parentNode) t.parentNode.removeChild(t); }, 350);
+  }, 3500);
+}
+
+// ── AUTO-GENERATE DOC NUMBER ─────────────────────────────────────────────────
+async function autoGenDocNum() {
+  var docNumEl = document.getElementById('doc-number');
+  if (!docNumEl || docNumEl.value.trim()) return;
+  var typeMap = { quotation:'QUOT', po:'PO', invoice:'INV', dr:'DR', rfq:'RFQ' };
+  var apiType = typeMap[currentDocType] || 'QUOT';
+  try {
+    var res = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/docnum?type=' + apiType);
+    var d = await res.json();
+    if (d.docNumber && docNumEl && !docNumEl.value.trim()) {
+      docNumEl.value = d.docNumber;
+    }
+  } catch(e) {}
+}
+
+// ── AUTO-FILL FROM LINKED CRM RECORD ─────────────────────────────────────────
+async function autoFillFromCRM(rfqNum, poNum) {
+  if (!rfqNum && !poNum) return;
+  try {
+    var res = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=crm');
+    var d = await res.json();
+    var crm = d && d.value ? JSON.parse(d.value) : {};
+    var record = null;
+    var recordLabel = '';
+    if (rfqNum) {
+      record = (crm.pendingRFQs || []).find(function(r) { return r.rfqNumber === rfqNum; });
+      if (record) recordLabel = 'RFQ';
+    }
+    if (!record && poNum) {
+      record = (crm.pendingPOs || []).find(function(p) { return p.poNumber === poNum; });
+      if (record) recordLabel = 'PO';
+    }
+    if (!record) return;
+
+    // Fill Attention field from contactPersonName if currently empty
+    if (record.contactPersonName) {
+      var attnEl = document.getElementById('client-attn');
+      if (attnEl && !attnEl.value) attnEl.value = record.contactPersonName;
+    }
+
+    // Auto-populate line items table
+    var lineItems = record.lineItems || [];
+    if (lineItems.length > 0) {
+      document.getElementById('items-body').innerHTML = '';
+      itemCount = 0;
+      lineItems.forEach(function(item) {
+        addItem();
+        var id = itemCount;
+        var descEl = document.getElementById('item-desc-' + id);
+        var unitEl = document.getElementById('item-unit-' + id);
+        var qtyEl = document.getElementById('item-qty-' + id);
+        var priceEl = document.getElementById('item-price-' + id);
+        if (descEl) descEl.value = item.description || item.desc || '';
+        if (unitEl) unitEl.value = item.unit || 'PCS';
+        if (qtyEl) qtyEl.value = (item.quantity !== undefined ? item.quantity : (item.qty !== undefined ? item.qty : 1));
+        if (priceEl) priceEl.value = (item.unitPrice !== undefined ? item.unitPrice : (item.price !== undefined ? item.price : 0));
+      });
+      recalc();
+      showToast('Auto-filled ' + lineItems.length + ' item' + (lineItems.length === 1 ? '' : 's') + ' from ' + recordLabel, 'success');
+    }
+
+    // If linked to a project, apply the project VAT type
+    if (record.projectId) {
+      try {
+        var projRes = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/projects');
+        var projData = await projRes.json();
+        var project = (projData.projects || []).find(function(p) { return p.id === record.projectId; });
+        if (project) {
+          var vatVal = project.vatType === 'VAT Inclusive' ? 'inclusive' : 'zero';
+          document.querySelectorAll('.vat-opt').forEach(function(b) {
+            if (b.getAttribute('onclick') && b.getAttribute('onclick').indexOf("'" + vatVal + "'") !== -1) {
+              b.click();
+            }
+          });
+        }
+      } catch(e) {}
+    }
+  } catch(e) {}
+}
 
 // ── DOCX EXPORT ────────────────────────────────────────────────────────────────
 function exportDocx() {
@@ -1235,8 +1383,12 @@ ${subject ? `<div class="subject-block"><strong>Subject:</strong> ${subject}</di
 var _crmRFQs = [];
 var _crmPOs = [];
 
+function closeSaveToCRMModal() {
+  var m = document.getElementById('crm-save-modal');
+  if (m && m.parentNode) m.parentNode.removeChild(m);
+}
+
 async function showSaveToCRM() {
-  // Load CRM data
   try {
     var res = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=crm');
     var d = await res.json();
@@ -1245,52 +1397,92 @@ async function showSaveToCRM() {
     _crmPOs = (crm.pendingPOs || []).filter(function(p) { return !p.archived; });
   } catch(e) { _crmRFQs = []; _crmPOs = []; }
 
-  var modal = document.getElementById('crm-save-modal');
-  if (!modal) {
-    modal = document.createElement('div');
-    modal.id = 'crm-save-modal';
-    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
-    modal.innerHTML = '<div style="background:#fff;border-radius:14px;padding:24px;width:440px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.18)">' +
-      '<div style="font-size:15px;font-weight:600;color:#1a2332;margin-bottom:14px">Save to CRM</div>' +
-      '<div style="font-size:12px;color:#b0bec8;font-family:DM Mono,monospace;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Link to RFQ</div>' +
-      '<select id="crm-rfq-sel" style="width:100%;padding:8px 10px;border-radius:8px;border:0.5px solid #e2e6ea;background:#f8f9fb;font-size:13px;margin-bottom:12px"><option value="">-- None --</option></select>' +
-      '<div style="font-size:12px;color:#b0bec8;font-family:DM Mono,monospace;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Link to PO</div>' +
-      '<select id="crm-po-sel" style="width:100%;padding:8px 10px;border-radius:8px;border:0.5px solid #e2e6ea;background:#f8f9fb;font-size:13px;margin-bottom:16px"><option value="">-- None --</option></select>' +
-      '<div style="display:flex;gap:8px">' +
-      '<button onclick="saveToCRM()" style="flex:1;padding:10px;border-radius:9px;border:none;background:#185FA5;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Save</button>' +
-      '<button onclick="document.getElementById('crm-save-modal').style.display='none'" style="padding:10px 16px;border-radius:9px;border:0.5px solid #e2e6ea;background:#f8f9fb;color:#4a6a8a;font-size:13px;cursor:pointer">Cancel</button>' +
-      '</div></div>';
-    document.body.appendChild(modal);
+  // Compute current document summary for preview
+  recalc();
+  var items = getItems();
+  var itemsCount = items.length;
+  var grand = items.reduce(function(s,i) { return s + i.total; }, 0);
+  var vatAmt = currentVAT === 'exclusive' ? grand * 0.12 : 0;
+  var total = grand + vatAmt;
+  var sym = CUR_SYMBOLS[currentCurrency] || currentCurrency;
+  var docNum = document.getElementById('doc-number') ? document.getElementById('doc-number').value : '';
+  var docTypeLabel = { quotation:'Quotation', po:'Purchase Order', rfq:'RFQ Response', invoice:'Invoice', dr:'Delivery Receipt' }[currentDocType] || currentDocType;
+
+  // Remove any existing modal
+  var existing = document.getElementById('crm-save-modal');
+  if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
+
+  var rfqOptions = '<option value="">-- None --</option>' +
+    _crmRFQs.map(function(r) {
+      return '<option value="' + r.id + '">' + (r.rfqNumber || 'RFQ-' + r.id) + ' · ' + r.client + '</option>';
+    }).join('');
+  var poOptions = '<option value="">-- None --</option>' +
+    _crmPOs.map(function(p) {
+      return '<option value="' + p.id + '">' + (p.poNumber || 'PO-' + p.id) + ' · ' + p.client + '</option>';
+    }).join('');
+
+  var summaryHTML = itemsCount > 0
+    ? '<div style="background:#f0faf5;border:0.5px solid #3B6D11;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#1a2332">' +
+      '<span style="color:#3B6D11;font-weight:600;font-family:DM Mono,monospace">' + docTypeLabel + (docNum ? ' ' + docNum : '') + '</span>' +
+      '&nbsp;&nbsp;·&nbsp;&nbsp;' + itemsCount + ' line item' + (itemsCount === 1 ? '' : 's') +
+      '&nbsp;&nbsp;·&nbsp;&nbsp;<span style="font-family:DM Mono,monospace;font-weight:600">' + sym + ' ' + formatNum(total) + '</span>' +
+      '</div>'
+    : '';
+
+  var modal = document.createElement('div');
+  modal.id = 'crm-save-modal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+  modal.innerHTML =
+    '<div style="background:#fff;border-radius:14px;padding:24px;width:460px;max-width:92vw;box-shadow:0 8px 32px rgba(0,0,0,0.18)">' +
+    '<div style="font-size:15px;font-weight:600;color:#1a2332;margin-bottom:14px">Save to CRM</div>' +
+    summaryHTML +
+    '<div style="font-size:11px;color:#b0bec8;font-family:DM Mono,monospace;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Link to RFQ</div>' +
+    '<select id="crm-rfq-sel" style="width:100%;padding:8px 10px;border-radius:8px;border:0.5px solid #e2e6ea;background:#f8f9fb;font-size:13px;margin-bottom:12px">' + rfqOptions + '</select>' +
+    '<div style="font-size:11px;color:#b0bec8;font-family:DM Mono,monospace;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Link to PO</div>' +
+    '<select id="crm-po-sel" style="width:100%;padding:8px 10px;border-radius:8px;border:0.5px solid #e2e6ea;background:#f8f9fb;font-size:13px;margin-bottom:16px">' + poOptions + '</select>' +
+    '<div style="display:flex;gap:8px">' +
+    '<button onclick="saveToCRM()" style="flex:1;padding:10px;border-radius:9px;border:none;background:#185FA5;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Save</button>' +
+    '<button onclick="closeSaveToCRMModal()" style="padding:10px 16px;border-radius:9px;border:0.5px solid #e2e6ea;background:#f8f9fb;color:#4a6a8a;font-size:13px;cursor:pointer">Cancel</button>' +
+    '</div></div>';
+  document.body.appendChild(modal);
+
+  // Pre-select dropdowns from URL params if available
+  var params = new URLSearchParams(window.location.search);
+  var rfqParam = params.get('rfq') || '';
+  var poParam = params.get('po') || '';
+  if (rfqParam) {
+    var rfqMatch = _crmRFQs.find(function(r) { return r.rfqNumber === rfqParam; });
+    if (rfqMatch) document.getElementById('crm-rfq-sel').value = String(rfqMatch.id);
   }
-
-  // Populate dropdowns
-  var rfqSel = document.getElementById('crm-rfq-sel');
-  var poSel = document.getElementById('crm-po-sel');
-  rfqSel.innerHTML = '<option value="">-- None --</option>' +
-    _crmRFQs.map(function(r) { return '<option value="' + r.id + '">' + (r.rfqNumber||'RFQ-'+r.id) + ' · ' + r.client + '</option>'; }).join('');
-  poSel.innerHTML = '<option value="">-- None --</option>' +
-    _crmPOs.map(function(p) { return '<option value="' + p.id + '">' + (p.poNumber||'PO-'+p.id) + ' · ' + p.client + '</option>'; }).join('');
-
-  modal.style.display = 'flex';
+  if (poParam) {
+    var poMatch = _crmPOs.find(function(p) { return p.poNumber === poParam; });
+    if (poMatch) document.getElementById('crm-po-sel').value = String(poMatch.id);
+  }
 }
 
 async function saveToCRM() {
-  var rfqId = parseInt(document.getElementById('crm-rfq-sel').value);
-  var poId = parseInt(document.getElementById('crm-po-sel').value);
-  if (!rfqId && !poId) { alert('Please select an RFQ or PO to link this document to.'); return; }
+  var rfqId = parseInt(document.getElementById('crm-rfq-sel').value) || 0;
+  var poId = parseInt(document.getElementById('crm-po-sel').value) || 0;
+  if (!rfqId && !poId) { showToast('Please select an RFQ or PO to link this document to.', 'error'); return; }
 
-  // Get current document info
   var docNum = document.getElementById('doc-number') ? document.getElementById('doc-number').value : '';
   var docType = currentDocType || 'quotation';
-  var client = document.getElementById('client-name') ? document.getElementById('client-name').value : '';
+  var docTypeLabel = { quotation:'Quotation', po:'Purchase Order', rfq:'RFQ Response', invoice:'Invoice', dr:'Delivery Receipt' }[docType] || docType;
+
+  recalc();
+  var items = getItems();
+  var grand = items.reduce(function(s,i) { return s + i.total; }, 0);
+  var vatAmt = currentVAT === 'exclusive' ? grand * 0.12 : 0;
+  var totalAmount = grand + vatAmt;
+
   var preview = document.getElementById('doc-preview');
   var html = preview ? preview.innerHTML : '';
   var newDoc = {
     id: Date.now().toString(),
-    type: docType.charAt(0).toUpperCase() + docType.slice(1),
-    number: docNum,
+    type: docTypeLabel,
+    number: docNum || '—',
     date: new Date().toLocaleDateString('en-PH'),
-    amount: '',
+    amount: (CUR_SYMBOLS[currentCurrency] || currentCurrency) + ' ' + formatNum(totalAmount),
     status: 'Saved',
     html: html
   };
@@ -1298,22 +1490,27 @@ async function saveToCRM() {
   try {
     var res = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=crm');
     var d = await res.json();
-    var crm = d && d.value ? JSON.parse(d.value) : {pendingRFQs:[], pendingPOs:[]};
+    var crm = d && d.value ? JSON.parse(d.value) : { pendingRFQs:[], pendingPOs:[] };
+
+    var linkedName = '';
+    var linkedProjectId = '';
 
     if (rfqId) {
-      crm.pendingRFQs = (crm.pendingRFQs||[]).map(function(r) {
+      crm.pendingRFQs = (crm.pendingRFQs || []).map(function(r) {
         if (r.id === rfqId) {
-          var docs = r.documents || [];
-          return {...r, documents: [...docs, newDoc]};
+          linkedName = (r.rfqNumber || 'RFQ-' + r.id) + ' · ' + r.client;
+          linkedProjectId = r.projectId || '';
+          return Object.assign({}, r, { documents: (r.documents || []).concat([newDoc]) });
         }
         return r;
       });
     }
     if (poId) {
-      crm.pendingPOs = (crm.pendingPOs||[]).map(function(p) {
+      crm.pendingPOs = (crm.pendingPOs || []).map(function(p) {
         if (p.id === poId) {
-          var docs = p.documents || [];
-          return {...p, documents: [...docs, newDoc]};
+          linkedName = (p.poNumber || 'PO-' + p.id) + ' · ' + p.client;
+          linkedProjectId = p.projectId || '';
+          return Object.assign({}, p, { documents: (p.documents || []).concat([newDoc]) });
         }
         return p;
       });
@@ -1321,14 +1518,36 @@ async function saveToCRM() {
 
     await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv', {
       method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({key:'crm', value: JSON.stringify(crm)})
+      headers: { 'Content-Type':'application/json' },
+      body: JSON.stringify({ key:'crm', value: JSON.stringify(crm) })
     });
 
-    document.getElementById('crm-save-modal').style.display = 'none';
-    alert('Document saved to CRM successfully.');
+    // If Invoice and linked to a project with no invoiceAmount set, update it
+    if (docType === 'invoice' && linkedProjectId && totalAmount > 0) {
+      try {
+        var projRes = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/projects');
+        var projData = await projRes.json();
+        var project = (projData.projects || []).find(function(p) { return p.id === linkedProjectId; });
+        if (project && !project.invoiceAmount) {
+          var updatedProject = Object.assign({}, project, {
+            invoiceAmount: totalAmount,
+            updatedAt: new Date().toISOString()
+          });
+          await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/projects', {
+            method: 'POST',
+            headers: { 'Content-Type':'application/json' },
+            body: JSON.stringify({ action:'saveProject', project: updatedProject })
+          });
+        }
+      } catch(e) {}
+    }
+
+    closeSaveToCRMModal();
+    var msg = docTypeLabel + (docNum ? ' ' + docNum : '') + ' saved to CRM';
+    if (linkedName) msg += ' -- ' + linkedName;
+    showToast(msg, 'success');
   } catch(e) {
-    alert('Error saving to CRM: ' + e.message);
+    showToast('Error saving to CRM: ' + e.message, 'error');
   }
 }
 </script>
