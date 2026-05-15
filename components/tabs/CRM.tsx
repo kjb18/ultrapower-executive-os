@@ -555,8 +555,8 @@ export default function CRM() {
                       <div key={f.key}>
                         <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>{f.lbl}</div>
                         {f.type==="textarea"
-                          ? <textarea style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%",minHeight:80,resize:"vertical"} as React.CSSProperties} value={(slideRFQ as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
-                          : <input style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"}} type={f.type} value={(slideRFQ as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
+                          ? <textarea style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%",minHeight:80,resize:"vertical"} as React.CSSProperties} value={((slideRFQ as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
+                          : <input style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"}} type={f.type} value={((slideRFQ as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
                         }
                       </div>
                     ))}
@@ -587,8 +587,8 @@ export default function CRM() {
                       <div key={f.key}>
                         <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>{f.lbl}</div>
                         {f.type==="textarea"
-                          ? <textarea style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%",minHeight:80,resize:"vertical"} as React.CSSProperties} value={(slidePO as Record<string,string>)[f.key]||""} onChange={e=>updPO(slidePO.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
-                          : <input style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"}} type={f.type} value={(slidePO as Record<string,string>)[f.key]||""} onChange={e=>updPO(slidePO.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
+                          ? <textarea style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%",minHeight:80,resize:"vertical"} as React.CSSProperties} value={((slidePO as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updPO(slidePO.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
+                          : <input style={{fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"}} type={f.type} value={((slidePO as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updPO(slidePO.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
                         }
                       </div>
                     ))}
