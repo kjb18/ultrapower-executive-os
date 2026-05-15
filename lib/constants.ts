@@ -95,6 +95,7 @@ export const pctColor = (p: number) =>
   p >= 70 ? "#3B6D11" : p >= 40 ? "#185FA5" : "#A32D2D";
 
 export interface MIT { id: number; text: string; done: boolean; doneAt?: number; clickupId?: string; dueDate?: string; }
+export interface MITArchiveEntry { text: string; doneAt: number; dayKey: string; }
 export interface OKR { id: number; name: string; pct: number; note: string; }
 export interface KPI { id: number; label: string; value: string; delta: string; up: boolean | null; }
 export interface TimeBlock { id: number; time: string; label: string; sub: string; type: string; }
