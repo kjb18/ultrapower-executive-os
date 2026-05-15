@@ -194,7 +194,85 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const dayStr = now.toLocaleDateString("en-PH",{weekday:"short",year:"numeric",month:"short",day:"numeric"}).toUpperCase();
   const timeStr = now.toLocaleTimeString("en-PH",{hour:"2-digit",minute:"2-digit"});
 
-  const addMIT = () => { if(!newMIT.trim())return; const id=os.nid||100; setOS({mits:[...os.mits,{id,text:newMIT.trim(),done:false}],nid:id+1}); setNewMIT(""); };
+  // ClickUp MIT sync state
+  const [cuEnabled, setCuEnabled] = useState(false);
+  const [cuPicker, setCuPicker] = useState(false);
+  const [cuTasks, setCuTasks] = useState<{id:string;name:string;dueDate?:string|null;listName?:string}[]>([]);
+  const [cuLoading, setCuLoading] = useState(false);
+
+  // Check if ClickUp token is available on mount
+  useEffect(() => {
+    fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"fetch"}) })
+      .then(r => r.json())
+      .then(d => { if (!d.error) setCuEnabled(true); })
+      .catch(() => {});
+  }, []);
+
+  // Poll ClickUp every 2 minutes to sync completion status
+  useEffect(() => {
+    if (!cuEnabled) return;
+    const poll = async () => {
+      const linked = os.mits.filter(m => m.clickupId && !m.done);
+      if (!linked.length) return;
+      const ids = linked.map(m => m.clickupId).join(",");
+      try {
+        const res = await fetch(`/api/clickup-mit?ids=${ids}`);
+        const data = await res.json();
+        const statuses = data.statuses || {};
+        const nowDone = linked.filter(m => statuses[m.clickupId!]);
+        if (nowDone.length > 0) {
+          setOS({ mits: os.mits.map(m => nowDone.find(d => d.id === m.id) ? {...m, done:true, doneAt:Date.now()} : m) });
+        }
+      } catch {}
+    };
+    const id = setInterval(poll, 120000);
+    return () => clearInterval(id);
+  }, [cuEnabled, os.mits]);
+
+  const addMIT = async () => {
+    if (!newMIT.trim()) return;
+    const id = os.nid || 100;
+    const mit: MIT = {id, text:newMIT.trim(), done:false};
+    // Create in ClickUp if enabled
+    if (cuEnabled) {
+      try {
+        const res = await fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"create", name:newMIT.trim()}) });
+        const data = await res.json();
+        if (data.taskId) mit.clickupId = data.taskId;
+      } catch {}
+    }
+    setOS({mits:[...os.mits, mit], nid:id+1});
+    setNewMIT("");
+  };
+
+  const openCuPicker = async () => {
+    setCuPicker(true); setCuLoading(true);
+    try {
+      const res = await fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"fetchAll"}) });
+      const data = await res.json();
+      // Filter out tasks already in MITs
+      const existingIds = new Set(os.mits.map(m => m.clickupId).filter(Boolean));
+      setCuTasks((data.tasks||[]).filter((t:{id:string}) => !existingIds.has(t.id)));
+    } catch { setCuTasks([]); }
+    setCuLoading(false);
+  };
+
+  const addFromClickUp = (task: {id:string;name:string;dueDate?:string|null}) => {
+    const id = os.nid || 100;
+    setOS({mits:[...os.mits, {id, text:task.name, done:false, clickupId:task.id, dueDate:task.dueDate||undefined}], nid:id+1});
+    setCuPicker(false);
+  };
+
+  const toggleMITDone = async (m: MIT) => {
+    const nowDone = !m.done;
+    setOS({mits: os.mits.map(x => x.id===m.id ? {...x, done:nowDone, doneAt:nowDone?Date.now():undefined} : x)});
+    if (m.clickupId && cuEnabled) {
+      try {
+        await fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"},
+          body: JSON.stringify({action: nowDone?"complete":"reopen", taskId:m.clickupId}) });
+      } catch {}
+    }
+  };
 
   // MIT drag handlers
   const onDragStart = (idx:number) => setDragIdx(idx);
@@ -305,6 +383,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
           <div style={PL}><span>MITs</span>
             <div style={{display:"flex",alignItems:"center",gap:6}}>
               <span style={{color:mitsDone===mitsTotal?"#3B6D11":"#854F0B",fontSize:11}}>{mitsDone}/{mitsTotal}</span>
+              {cuEnabled&&<button onClick={openCuPicker} style={{...SBTN,color:"#534AB7",borderColor:"#AFA9EC",background:"#F4F3FE",fontSize:10}}>↓ ClickUp</button>}
               <button style={{...SBTN,color:"#534AB7",borderColor:"#534AB744",background:"#F4F3FE"}} onClick={()=>setShowArchive(a=>!a)}>Wins</button>
               <button style={SBTN} onClick={()=>toggleCollapse("mits")}>{isCollapsed("mits")?"▼":"▲"}</button>
             </div>
@@ -316,11 +395,19 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                 className={`${dragIdx===i?"mit-dragging":""} ${dragOverIdx===i&&dragIdx!==i?"mit-dragover":""}`}
                 style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 0",borderBottom:i===os.mits.length-1?"none":"0.5px solid #f0f2f5"}}>
                 <span className="mit-drag">⠿</span>
-                <div onClick={()=>setOS({mits:os.mits.map(x=>x.id===m.id?{...x,done:!x.done,doneAt:!x.done?Date.now():undefined}:x)})}
+                <div onClick={()=>toggleMITDone(m)}
                   style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${m.done?"#185FA5":"#d0d8e0"}`,background:m.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:10,color:"#fff"}}>
                   {m.done?"✓":""}
                 </div>
-                <div style={{fontSize:13,color:m.done?"#b0bec8":m.id===activeMIT?.id?"#185FA5":"#3a4a5a",flex:1,lineHeight:1.4,textDecoration:m.done?"line-through":"none"}}>{m.text}</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,color:m.done?"#b0bec8":m.id===activeMIT?.id?"#185FA5":"#3a4a5a",lineHeight:1.4,textDecoration:m.done?"line-through":"none"}}>{m.text}</div>
+                  {(m.dueDate||m.clickupId)&&(
+                    <div style={{display:"flex",alignItems:"center",gap:5,marginTop:2}}>
+                      {m.clickupId&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"#F4F3FE",color:"#534AB7",fontFamily:"'DM Mono',monospace",fontWeight:600}}>CU</span>}
+                      {m.dueDate&&<span style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>{m.dueDate}</span>}
+                    </div>
+                  )}
+                </div>
                 {m.done&&<button onClick={()=>archiveMIT(m)} style={{fontSize:10,padding:"1px 6px",borderRadius:6,border:"0.5px solid #AFA9EC",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",flexShrink:0}}>Archive</button>}
                 <div className="del-btn" onClick={()=>setOS({mits:os.mits.filter(x=>x.id!==m.id)})}>✕</div>
               </div>
@@ -331,6 +418,36 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             </div>
           </>}
         </div>
+
+        {/* ClickUp Task Picker */}
+        {cuPicker&&(
+          <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",alignItems:"center",justifyContent:"center"}}>
+            <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.3)"}} onClick={()=>setCuPicker(false)}/>
+            <div style={{position:"relative",background:"#fff",borderRadius:14,width:440,maxHeight:"70vh",display:"flex",flexDirection:"column",boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}>
+              <div style={{padding:"14px 18px",borderBottom:"0.5px solid #e2e6ea",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#1a2332"}}>Pull from ClickUp</div>
+                <button onClick={()=>setCuPicker(false)} style={{fontSize:16,color:"#b0bec8",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+              </div>
+              <div style={{flex:1,overflow:"auto",padding:12}}>
+                {cuLoading&&<div style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:13}}>Loading tasks...</div>}
+                {!cuLoading&&cuTasks.length===0&&<div style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:13}}>No open tasks found.</div>}
+                {!cuLoading&&cuTasks.map(t=>(
+                  <div key={t.id} onClick={()=>addFromClickUp(t)}
+                    style={{padding:"9px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",marginBottom:6,cursor:"pointer",background:"#fafbfc",display:"flex",alignItems:"center",justifyContent:"space-between"}}
+                    onMouseEnter={e=>(e.currentTarget.style.background="#EBF3FC")}
+                    onMouseLeave={e=>(e.currentTarget.style.background="#fafbfc")}>
+                    <div>
+                      <div style={{fontSize:13,color:"#1a2332",fontWeight:500}}>{t.name}</div>
+                      {t.listName&&<div style={{fontSize:10,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",marginTop:1}}>{t.listName}</div>}
+                    </div>
+                    {t.dueDate&&<span style={{fontSize:10,color:"#854F0B",fontFamily:"'DM Mono',monospace",flexShrink:0,marginLeft:8}}>{t.dueDate}</span>}
+                  </div>
+                ))}
+              </div>
+              <div style={{padding:"10px 14px",borderTop:"0.5px solid #f0f2f5",fontSize:11,color:"#b0bec8",textAlign:"center"}}>Click any task to add it as an MIT</div>
+            </div>
+          </div>
+        )}
 
         {/* Pomodoro */}
         <div style={{...P,display:"flex",flexDirection:"column",alignItems:"center"}}>
