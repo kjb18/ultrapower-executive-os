@@ -97,7 +97,7 @@ export const pctColor = (p: number) =>
 export interface MIT { id: number; text: string; done: boolean; doneAt?: number; clickupId?: string; dueDate?: string; }
 export interface MITArchiveEntry { text: string; doneAt: number; dayKey: string; }
 export interface OKR { id: number; objective: string; keyResult: string; current: number; target: number; unit: string; }
-export interface KPI { id: number; label: string; value: string; delta: string; up: boolean | null; }
+export interface KPI { id: number; label: string; value: string; delta: string; up: boolean | null; } // displayed as "Vitals" in UI
 export interface TimeBlock { id: number; time: string; label: string; sub: string; type: string; }
 export interface BrainItem { id: number; type: BrainType; text: string; }
 export interface MFPDay {
@@ -199,3 +199,87 @@ export const DEFAULT_MFP: MFPDay = {
   mitDone: false, win: "", winDone: false,
   refl: "", reflDone: false,
 };
+
+export interface LineItem {
+  id: string;
+  description: string;
+  quantity: number;
+  unit: string;
+  unitPrice: number;
+  total: number;
+  productId?: string;
+}
+
+export interface ProductItem {
+  id: string;
+  code: string;
+  description: string;
+  unit: string;
+  standardPrice: number;
+  category: string;
+  supplierId?: string;
+  notes?: string;
+  createdAt: string;
+}
+
+export interface Supplier {
+  id: string;
+  name: string;
+  contactPerson: string;
+  email: string;
+  phone: string;
+  address: string;
+  paymentTerms: string;
+  leadTimeDays: number;
+  categories: string[];
+  notes?: string;
+  createdAt: string;
+}
+
+export interface CRMDocument {
+  id: string;
+  type: string;
+  number: string;
+  date: string;
+  amount: string;
+  status: string;
+  html?: string;
+}
+
+export interface PendingRFQ {
+  id: number;
+  rfqNumber: string;
+  client: string;
+  subject: string;
+  dateSubmitted: string;
+  deadline: string;
+  status: string;
+  notes: string;
+  archived?: boolean;
+  documents?: CRMDocument[];
+  lineItems?: LineItem[];
+  contactPersonId?: number;
+  contactPersonName?: string;
+  projectId?: string;
+  docNumber?: string;
+}
+
+export interface PendingPO {
+  id: number;
+  poNumber: string;
+  client: string;
+  items: string;
+  value: string;
+  dateReceived: string;
+  expectedDelivery: string;
+  supplierStatus: string;
+  status: string;
+  notes: string;
+  archived?: boolean;
+  documents?: CRMDocument[];
+  lineItems?: LineItem[];
+  contactPersonId?: number;
+  contactPersonName?: string;
+  projectId?: string;
+  docNumber?: string;
+}
