@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
+import type { ProductItem, Supplier } from "@/lib/constants";
 
 const STAGES = ["Prospecting","Qualified","Proposal","Follow-Up","Negotiation","Closed-Won","Closed-Lost"];
 const LABELS = ["Unlabeled","To Reactivate","Key Account","Refer to Alex","Dead Lead","Watch List","Needs Follow-Up"];
@@ -35,6 +36,9 @@ const RFQ_STATUS_C: Record<string,{bg:string;fg:string}> = {
   "Lost":{bg:"#FEF0F0",fg:"#A32D2D"},"Cancelled":{bg:"#f0f2f5",fg:"#8a9ab0"},
 };
 
+const PRODUCT_CATEGORIES = ["LED Lighting","Mechanical","Electrical","Instrumentation","Safety","Consumables","Other"];
+const PAYMENT_TERMS_OPTIONS = ["30 Days","60 Days","COD","Upon Delivery","Consignment"];
+
 interface Prospect { id:number;company:string;contact:string;stage:string;lastAction:string;nextStep:string;nextUpdate:string;notes:string; }
 interface Contact { id:number;name:string;company:string;email:string;sector:string;source:string;notes:string;date:string; }
 interface CRMDocument { id:string;type:string;number:string;date:string;amount:string;status:string;html?:string; }
@@ -64,7 +68,7 @@ function parseCSV(text: string): Record<string,string>[] {
 }
 
 export default function CRM() {
-  const [tab,setTab]=useState<"pipeline"|"contacts"|"old"|"pos"|"rfqs">("pipeline");
+  const [tab,setTab]=useState<"pipeline"|"contacts"|"old"|"pos"|"rfqs"|"products"|"suppliers">("pipeline");
   const [data,setDataRaw]=useState<CRMData>({prospects:[],contacts:[],pendingPOs:[],pendingRFQs:[],nid:1});
   const [showArchivedPOs, setShowArchivedPOs]=useState(false);
   const [showArchivedRFQs, setShowArchivedRFQs]=useState(false);
@@ -78,11 +82,25 @@ export default function CRM() {
   const [loaded,setLoaded]=useState(false);
   const [slideOver, setSlideOver]=useState<{type:"rfq"|"po";id:number}|null>(null);
   const [slideTab, setSlideTab]=useState<"details"|"documents">("details");
+  const [products, setProducts]=useState<ProductItem[]>([]);
+  const [suppliers, setSuppliers]=useState<Supplier[]>([]);
+  const [prodQ, setProdQ]=useState("");
+  const [suppQ, setSuppQ]=useState("");
+  const [prodForm, setProdForm]=useState<ProductItem|null>(null);
+  const [suppForm, setSuppForm]=useState<Supplier|null>(null);
+  const [suppCatsInput, setSuppCatsInput]=useState("");
 
   useEffect(()=>{(async()=>{
-    const [d,oc]=await Promise.all([kvGet<CRMData>("crm"),kvGet<OldContact[]>("crm:old-contacts")]);
+    const [d,oc,prodRes,suppRes]=await Promise.all([
+      kvGet<CRMData>("crm"),
+      kvGet<OldContact[]>("crm:old-contacts"),
+      fetch("/api/catalog?type=products").then(r=>r.json()).catch(()=>({data:[]})),
+      fetch("/api/catalog?type=suppliers").then(r=>r.json()).catch(()=>({data:[]})),
+    ]);
     if(d) setDataRaw({...d,pendingPOs:d.pendingPOs||[],pendingRFQs:d.pendingRFQs||[]});
     if(oc) setOldContactsRaw(oc);
+    if(prodRes?.data) setProducts(prodRes.data as ProductItem[]);
+    if(suppRes?.data) setSuppliers(suppRes.data as Supplier[]);
     setLoaded(true);
   })();},[]);
 
@@ -120,6 +138,19 @@ export default function CRM() {
   const updRFQ=(id:number,p:Partial<PendingRFQ>)=>setData({pendingRFQs:(data.pendingRFQs||[]).map(x=>x.id===id?{...x,...p}:x)});
   const delRFQ=(id:number)=>setData({pendingRFQs:(data.pendingRFQs||[]).filter(x=>x.id!==id)});
   const archiveRFQ=(id:number)=>setData({pendingRFQs:(data.pendingRFQs||[]).map(x=>x.id===id?{...x,archived:!x.archived}:x)});
+
+  // Catalog
+  const genId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,5);
+  const saveProducts=async(action:"save"|"delete",item:ProductItem)=>{
+    const res=await fetch("/api/catalog",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"products",action,item})});
+    const json=await res.json();
+    if(json.data)setProducts(json.data as ProductItem[]);
+  };
+  const saveSuppliers=async(action:"save"|"delete",item:Supplier)=>{
+    const res=await fetch("/api/catalog",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({type:"suppliers",action,item})});
+    const json=await res.json();
+    if(json.data)setSuppliers(json.data as Supplier[]);
+  };
 
   // Old contacts -- CSV merge
   const handleCSV=(e:React.ChangeEvent<HTMLInputElement>)=>{
@@ -199,9 +230,9 @@ export default function CRM() {
           <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Industrial Sales Intelligence</div>
         </div>
         <div style={{display:"flex",overflowX:"auto"}}>
-          {(["pipeline","contacts","old","pos","rfqs"] as const).map(t=>(
+          {(["pipeline","contacts","old","pos","rfqs","products","suppliers"] as const).map(t=>(
             <button key={t} style={S.tabBtn(tab===t)} onClick={()=>setTab(t)}>
-              {t==="pipeline"?"Pipeline":t==="contacts"?"New Contacts":t==="old"?"Old Contacts":t==="pos"?"Pending POs"+(pos.length>0?` (${pos.length})`:""):"Pending RFQs"+(rfqs.length>0?` (${rfqs.length})`:"")}
+              {t==="pipeline"?"Pipeline":t==="contacts"?"New Contacts":t==="old"?"Old Contacts":t==="pos"?"Pending POs"+(pos.length>0?` (${pos.length})`:""):t==="rfqs"?"Pending RFQs"+(rfqs.length>0?` (${rfqs.length})`:""):t==="products"?"Products"+(products.length>0?` (${products.length})`:""):"Suppliers"+(suppliers.length>0?` (${suppliers.length})`:"")}
             </button>
           ))}
         </div>
@@ -510,6 +541,201 @@ export default function CRM() {
             </div>
           </div>
         </>}
+
+        {/* PRODUCTS */}
+        {tab==="products"&&(()=>{
+          const filteredProds=products.filter(p=>{
+            if(!prodQ)return true;
+            const q=prodQ.toLowerCase();
+            return p.code.toLowerCase().includes(q)||p.description.toLowerCase().includes(q);
+          });
+          return(<>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:10,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>Product Master</div>
+                <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>Catalog of products and standard pricing</div>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                <input style={{...S.inp,width:220,flex:"none"}} placeholder="Search code or description..." value={prodQ} onChange={e=>setProdQ(e.target.value)}/>
+                <button onClick={()=>setProdForm({id:"",code:"",description:"",category:"LED Lighting",unit:"pcs",standardPrice:0,notes:"",createdAt:""})} style={S.addBtn}>+ Add Product</button>
+              </div>
+            </div>
+
+            {prodForm!==null&&(
+              <div style={{...S.panel,padding:18,marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:14,fontFamily:"'DM Mono',monospace"}}>
+                  {prodForm.id?"Edit Product":"New Product"}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:14}}>
+                  {([["Code","code","text","LED-200W-IP65"],["Description","description","text","LED Flood Light 200W IP65 220V"],["Unit","unit","text","pcs"]] as [string,string,string,string][]).map(([lbl,k,t,ph])=>(
+                    <div key={k}>
+                      <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>{lbl}</div>
+                      <input style={S.inp} type={t} placeholder={ph} value={(prodForm as unknown as Record<string,string|number>)[k] as string} onChange={e=>setProdForm(f=>f?{...f,[k]:e.target.value}:f)}/>
+                    </div>
+                  ))}
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Category</div>
+                    <select style={S.inp} value={prodForm.category} onChange={e=>setProdForm(f=>f?{...f,category:e.target.value}:f)}>
+                      {PRODUCT_CATEGORIES.map(c=><option key={c}>{c}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Standard Price (PHP)</div>
+                    <input style={S.inp} type="number" placeholder="0" value={prodForm.standardPrice||""} onChange={e=>setProdForm(f=>f?{...f,standardPrice:parseFloat(e.target.value)||0}:f)}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Notes</div>
+                    <input style={S.inp} placeholder="Optional" value={prodForm.notes||""} onChange={e=>setProdForm(f=>f?{...f,notes:e.target.value}:f)}/>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={async()=>{
+                    if(!prodForm)return;
+                    if(!prodForm.code.trim()||!prodForm.description.trim())return;
+                    const item:ProductItem={...prodForm,id:prodForm.id||genId(),createdAt:prodForm.createdAt||new Date().toISOString()};
+                    await saveProducts("save",item);
+                    setProdForm(null);
+                  }} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"none",background:"#1a2332",color:"#fff",cursor:"pointer",fontWeight:600}}>Save Product</button>
+                  <button onClick={()=>setProdForm(null)} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            <div style={S.panel}>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["#","Code","Description","Category","Unit","Standard Price","Supplier",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {filteredProds.length===0&&(
+                      <tr><td colSpan={8} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>
+                        {products.length===0?"No products yet. Add your first product above.":"No products match your search."}
+                      </td></tr>
+                    )}
+                    {filteredProds.map((p,i)=>(
+                      <tr key={p.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                        <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
+                        <td style={{...S.td,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5",whiteSpace:"nowrap"}}>{p.code||"--"}</td>
+                        <td style={{...S.td,fontWeight:500}}>{p.description||"--"}</td>
+                        <td style={S.td}><Pill t={p.category||"Other"} c={{bg:"#EBF3FC",fg:"#185FA5"}}/></td>
+                        <td style={{...S.td,fontFamily:"'DM Mono',monospace",color:"#8a9ab0"}}>{p.unit||"--"}</td>
+                        <td style={{...S.td,fontFamily:"'DM Mono',monospace",fontWeight:600}}>
+                          {p.standardPrice>0?`₱${p.standardPrice.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}`:"--"}
+                        </td>
+                        <td style={{...S.td,color:"#8a9ab0",fontSize:12}}>
+                          {p.supplierId?(suppliers.find(s=>s.id===p.supplierId)?.name||"--"):"--"}
+                        </td>
+                        <td style={{...S.td,whiteSpace:"nowrap"}}>
+                          <button onClick={()=>setProdForm(p)} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginRight:4}}>Edit</button>
+                          <button onClick={async()=>{if(confirm("Delete this product?"))await saveProducts("delete",p);}} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>);
+        })()}
+
+        {/* SUPPLIERS */}
+        {tab==="suppliers"&&(()=>{
+          const filteredSupps=suppliers.filter(s=>{
+            if(!suppQ)return true;
+            const q=suppQ.toLowerCase();
+            return s.name.toLowerCase().includes(q)||s.contactPerson.toLowerCase().includes(q);
+          });
+          return(<>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,gap:10,flexWrap:"wrap"}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>Supplier Master</div>
+                <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>Approved suppliers and vendor information</div>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                <input style={{...S.inp,width:220,flex:"none"}} placeholder="Search name or contact..." value={suppQ} onChange={e=>setSuppQ(e.target.value)}/>
+                <button onClick={()=>{setSuppForm({id:"",name:"",contactPerson:"",email:"",phone:"",address:"",paymentTerms:"30 Days",leadTimeDays:7,categories:[],notes:"",createdAt:""});setSuppCatsInput("");}} style={S.addBtn}>+ Add Supplier</button>
+              </div>
+            </div>
+
+            {suppForm!==null&&(
+              <div style={{...S.panel,padding:18,marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:14,fontFamily:"'DM Mono',monospace"}}>
+                  {suppForm.id?"Edit Supplier":"New Supplier"}
+                </div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(160px,1fr))",gap:10,marginBottom:14}}>
+                  {([["Name","name","text","Company name"],["Contact Person","contactPerson","text","Full name"],["Email","email","email","email@domain.com"],["Phone","phone","text","+63 9XX XXX XXXX"]] as [string,string,string,string][]).map(([lbl,k,t,ph])=>(
+                    <div key={k}>
+                      <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>{lbl}</div>
+                      <input style={S.inp} type={t} placeholder={ph} value={(suppForm as unknown as Record<string,string|number|string[]>)[k] as string} onChange={e=>setSuppForm(f=>f?{...f,[k]:e.target.value}:f)}/>
+                    </div>
+                  ))}
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Payment Terms</div>
+                    <select style={S.inp} value={suppForm.paymentTerms} onChange={e=>setSuppForm(f=>f?{...f,paymentTerms:e.target.value}:f)}>
+                      {PAYMENT_TERMS_OPTIONS.map(o=><option key={o}>{o}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Lead Time (days)</div>
+                    <input style={S.inp} type="number" placeholder="7" value={suppForm.leadTimeDays||""} onChange={e=>setSuppForm(f=>f?{...f,leadTimeDays:parseInt(e.target.value)||0}:f)}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Categories (comma-separated)</div>
+                    <input style={S.inp} placeholder="LED Lighting, Electrical" value={suppCatsInput} onChange={e=>setSuppCatsInput(e.target.value)}/>
+                  </div>
+                  <div style={{gridColumn:"1/-1"}}>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Address</div>
+                    <textarea style={{...S.inp,minHeight:60,resize:"vertical"} as React.CSSProperties} placeholder="Full address" value={suppForm.address} onChange={e=>setSuppForm(f=>f?{...f,address:e.target.value}:f)}/>
+                  </div>
+                  <div style={{gridColumn:"1/-1"}}>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Notes</div>
+                    <textarea style={{...S.inp,minHeight:60,resize:"vertical"} as React.CSSProperties} placeholder="Optional" value={suppForm.notes||""} onChange={e=>setSuppForm(f=>f?{...f,notes:e.target.value}:f)}/>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={async()=>{
+                    if(!suppForm)return;
+                    if(!suppForm.name.trim())return;
+                    const item:Supplier={...suppForm,id:suppForm.id||genId(),categories:suppCatsInput.split(",").map(s=>s.trim()).filter(Boolean),createdAt:suppForm.createdAt||new Date().toISOString()};
+                    await saveSuppliers("save",item);
+                    setSuppForm(null);
+                    setSuppCatsInput("");
+                  }} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"none",background:"#1a2332",color:"#fff",cursor:"pointer",fontWeight:600}}>Save Supplier</button>
+                  <button onClick={()=>{setSuppForm(null);setSuppCatsInput("");}} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            <div style={S.panel}>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["#","Name","Contact Person","Email","Phone","Payment Terms","Lead Time",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {filteredSupps.length===0&&(
+                      <tr><td colSpan={8} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>
+                        {suppliers.length===0?"No suppliers yet. Add your first supplier above.":"No suppliers match your search."}
+                      </td></tr>
+                    )}
+                    {filteredSupps.map((s,i)=>(
+                      <tr key={s.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                        <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
+                        <td style={{...S.td,fontWeight:600}}>{s.name||"--"}</td>
+                        <td style={S.td}>{s.contactPerson||"--"}</td>
+                        <td style={{...S.td,color:"#185FA5",fontSize:12}}>{s.email||"--"}</td>
+                        <td style={{...S.td,fontFamily:"'DM Mono',monospace",fontSize:12}}>{s.phone||"--"}</td>
+                        <td style={S.td}><Pill t={s.paymentTerms||"--"} c={{bg:"#f0faf5",fg:"#3B6D11"}}/></td>
+                        <td style={{...S.td,fontFamily:"'DM Mono',monospace",color:"#8a9ab0"}}>{s.leadTimeDays?`${s.leadTimeDays}d`:"--"}</td>
+                        <td style={{...S.td,whiteSpace:"nowrap"}}>
+                          <button onClick={()=>{setSuppForm(s);setSuppCatsInput((s.categories||[]).join(", "));}} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginRight:4}}>Edit</button>
+                          <button onClick={async()=>{if(confirm("Delete this supplier?"))await saveSuppliers("delete",s);}} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>Delete</button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>);
+        })()}
 
       </div>
 
