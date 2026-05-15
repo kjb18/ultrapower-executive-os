@@ -214,14 +214,12 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 /* ─── PRINT ─── */
 @media print{
   @page {
-    margin: 10mm 12mm;
+    margin: 12mm 14mm;
     size: A4;
   }
-  /* Remove browser-added header/footer markings */
-  @page { margin-top: 0; margin-bottom: 0; }
-  html { margin: 10mm 12mm; }
-  /* Hide everything except document */
+  /* Hide everything on the page */
   body > * { display: none !important; }
+  /* Show only the isolated print root */
   body > #print-root { display: block !important; }
   #print-root {
     display: block !important;
@@ -232,37 +230,19 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     background: white !important;
     padding: 0 !important;
     margin: 0 !important;
-    font-size: 10pt !important;
   }
+  /* Apply doc-preview styles to print-root content */
   #print-root, #print-root * {
     -webkit-print-color-adjust: exact !important;
     print-color-adjust: exact !important;
-    color-adjust: exact !important;
   }
-  body { background: white !important; margin: 0 !important; padding: 0 !important; }
-  /* Compact spacing for single-page fit */
-  #print-root .doc-header { margin-bottom: 10pt !important; padding-bottom: 8pt !important; }
-  #print-root .doc-meta { margin-bottom: 8pt !important; padding: 8pt !important; }
-  #print-root .doc-subject { margin: 6pt 0 !important; padding: 6pt 10pt !important; }
-  #print-root .doc-salutation { margin-bottom: 4pt !important; }
-  #print-root .doc-intro { margin-bottom: 8pt !important; }
-  #print-root .doc-table { margin-bottom: 6pt !important; }
-  #print-root table td, #print-root table th { font-size: 9pt !important; padding: 4pt 6pt !important; }
-  #print-root .doc-totals { padding: 6pt 0 !important; }
-  #print-root .doc-notes { margin-top: 8pt !important; padding: 8pt !important; }
-  #print-root .doc-note-row { padding: 2pt 0 !important; font-size: 9pt !important; }
-  #print-root .doc-signature { margin-top: 12pt !important; }
-  #print-root .doc-footer { margin-top: 10pt !important; padding-top: 6pt !important; font-size: 8pt !important; }
-  /* Prevent tables breaking across pages */
-  table { page-break-inside: avoid; }
-  /* Slight scale to help content fit */
-  #print-root { transform: scale(0.97); transform-origin: top left; }
+  body {
+    background: white !important;
+    margin: 0 !important;
+    padding: 0 !important;
+  }
 }
 
-.field-suggestions{position:absolute;background:#fff;border:0.5px solid #e0e0de;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.08);z-index:200;min-width:200px;max-height:160px;overflow-y:auto;margin-top:2px}
-.field-sug-item{padding:8px 12px;font-size:13px;cursor:pointer;color:#1a2332;border-bottom:0.5px solid #f0f2f5}
-.field-sug-item:hover{background:#f0f4ff}
-.field-sug-item:last-child{border-bottom:none}
 .empty-state{text-align:center;padding:64px 24px;color:var(--up-gray)}
 .empty-state h3{font-family:'Playfair Display',serif;font-size:20px;margin-bottom:8px;color:var(--up-dark)}
 .empty-state p{font-size:13px;line-height:1.6}
@@ -296,8 +276,6 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     <div class="nav-item active" onclick="showView('create')"><span class="nav-icon">✦</span> New Document</div>
     <div class="nav-section">Manage</div>
     <div class="nav-item" onclick="showView('tracker')"><span class="nav-icon">◈</span> Document Tracker <span class="nav-badge" id="doc-count">0</span></div>
-    <div class="nav-item" onclick="showView('templates')"><span class="nav-icon">⊞</span> Templates</div>
-    <div class="nav-item" onclick="showView('settings')"><span class="nav-icon">✦</span> Saved Fields</div>
     <div class="nav-section">Doc Types</div>
     <div class="nav-item" onclick="setDocType('quotation');showView('create')"><span class="nav-icon">◇</span> Quotation / Offer</div>
     <div class="nav-item" onclick="setDocType('po');showView('create')"><span class="nav-icon">◻</span> Purchase Order</div>
@@ -314,11 +292,9 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     <div class="topbar-title">Document <span>Maker</span></div>
     <div class="topbar-actions">
       <button class="btn btn-outline" onclick="clearForm()">↺ Clear</button>
-      <div style="font-size:11px;color:#8a9ab0;margin-bottom:6px;font-family:'DM Mono',monospace">
-  Print tip: In the print dialog, uncheck "Headers and footers" to remove URL and date markings.
-</div>
-<button class="btn btn-primary" onclick="openPreview()">⊞ Preview & Print</button>
+      <button class="btn btn-primary" onclick="openPreview()">⊞ Preview & Print</button>
       <button class="btn btn-outline" onclick="exportDocx()" id="docx-btn" style="margin-left:6px">📄 Export DOCX</button>
+      <button class="btn btn-outline" onclick="showSaveToCRM()" style="margin-left:6px;background:#f0faf5;border-color:#3B6D11;color:#3B6D11">💾 Save to CRM</button>
     </div>
   </div>
 
@@ -384,11 +360,7 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
         <div class="form-grid">
           <div class="form-group">
             <label class="form-label">Company Name</label>
-            <div style="position:relative">
-              <input class="form-input" id="client-name" placeholder="e.g. Philippine Geothermal Production Co." autocomplete="off"
-                oninput="onCompanyInput(this.value)" onblur="setTimeout(hideDropdown,200)" />
-              <div id="company-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:0.5px solid #e0e0de;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.08);z-index:100;max-height:200px;overflow-y:auto;margin-top:2px"></div>
-            </div>
+            <input class="form-input" id="client-name" placeholder="e.g. Philippine Geothermal Production Co." />
           </div>
           <div class="form-group">
             <label class="form-label">TIN (if applicable)</label>
@@ -396,20 +368,11 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
           </div>
           <div class="form-group full">
             <label class="form-label">Address</label>
-            <div style="display:flex;gap:6px;align-items:flex-start">
-              <input class="form-input" id="client-address" placeholder="Full address" style="flex:1" />
-              <button type="button" onclick="addAltAddress()" title="Add alternate address"
-                style="padding:8px 10px;border-radius:7px;border:0.5px solid #e0e0de;background:#f8f9fc;color:#888;cursor:pointer;font-size:13px;flex-shrink:0">+</button>
-            </div>
-            <div id="alt-addresses" style="margin-top:6px;display:flex;flex-direction:column;gap:5px"></div>
+            <input class="form-input" id="client-address" placeholder="Full address" />
           </div>
           <div class="form-group">
             <label class="form-label">Attention (person)</label>
-            <div style="position:relative">
-              <input class="form-input" id="client-attn" placeholder="e.g. Ariane Libat" autocomplete="off"
-                oninput="onAttnInput(this.value)" onblur="setTimeout(hideAttnDropdown,200)" />
-              <div id="attn-dropdown" style="display:none;position:absolute;top:100%;left:0;right:0;background:#fff;border:0.5px solid #e0e0de;border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.08);z-index:100;max-height:160px;overflow-y:auto;margin-top:2px"></div>
-            </div>
+            <input class="form-input" id="client-attn" placeholder="e.g. Ariane Libat" />
           </div>
           <div class="form-group">
             <label class="form-label">Department</label>
@@ -424,8 +387,7 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
         <div class="form-grid">
           <div class="form-group full">
             <label class="form-label">Subject Line</label>
-            <input class="form-input" id="doc-subject" placeholder="e.g. Offer for High Pressure Ball Valves" autocomplete="off" onfocus="showSuggestions(this,'subject')" onblur="setTimeout(()=>hideSugg('subject'),200)"/>
-          <div id="sug-subject" class="field-suggestions" style="display:none"></div>
+            <input class="form-input" id="doc-subject" placeholder="e.g. Offer for High Pressure Ball Valves" />
           </div>
           <div class="form-group">
             <label class="form-label">Salutation</label>
@@ -533,8 +495,7 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
           </div>
           <div class="form-group">
             <label class="form-label">Delivery Lead Time</label>
-            <input class="form-input" id="note-delivery" placeholder="e.g. 6 to 8 Weeks" autocomplete="off" onfocus="showSuggestions(this,'delivery')" onblur="setTimeout(()=>hideSugg('delivery'),200)" style="position:relative"/>
-            <div id="sug-delivery" class="field-suggestions" style="display:none;position:absolute"></div>
+            <input class="form-input" id="note-delivery" placeholder="e.g. 6 to 8 Weeks" />
           </div>
           <div class="form-group">
             <label class="form-label">Delivery Point</label>
@@ -546,13 +507,11 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
           </div>
           <div class="form-group">
             <label class="form-label">Price Validity</label>
-            <input class="form-input" id="note-validity" placeholder="e.g. 15 Days" autocomplete="off" onfocus="showSuggestions(this,'validity')" onblur="setTimeout(()=>hideSugg('validity'),200)" style="position:relative"/>
-            <div id="sug-validity" class="field-suggestions" style="display:none;position:absolute"></div>
+            <input class="form-input" id="note-validity" placeholder="e.g. 15 Days" />
           </div>
           <div class="form-group">
             <label class="form-label">Warranty</label>
-            <input class="form-input" id="note-warranty" placeholder="e.g. 6 Months" autocomplete="off" onfocus="showSuggestions(this,'warranty')" onblur="setTimeout(()=>hideSugg('warranty'),200)" style="position:relative"/>
-            <div id="sug-warranty" class="field-suggestions" style="display:none;position:absolute"></div>
+            <input class="form-input" id="note-warranty" placeholder="e.g. 6 Months" />
           </div>
           <div class="form-group full">
             <label class="form-label">Additional Notes</label>
@@ -626,32 +585,6 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
       </div>
     </div>
 
-    <div id="view-templates" style="display:none">
-      <div class="card" style="margin-bottom:16px">
-        <div class="card-title">Templates</div>
-        <p style="font-size:13px;color:var(--up-gray);margin-bottom:14px">Save current form as a named template to reuse later.</p>
-        <div style="display:flex;gap:8px;margin-bottom:16px">
-          <input class="form-input" id="tpl-name" placeholder="Template name e.g. Standard PGPC Quotation" style="flex:1"/>
-          <button class="btn btn-primary" onclick="saveTemplate()">Save Current Form as Template</button>
-        </div>
-        <div id="templates-list"></div>
-      </div>
-      <div class="card">
-        <div class="card-title">Recover Lost Documents</div>
-        <p style="font-size:13px;color:var(--up-gray);margin-bottom:12px">If you created documents before the last update, they may still be in this browser's local storage. Click to recover them.</p>
-        <button class="btn btn-outline" onclick="recoverFromLocalStorage()">Recover from Browser Storage</button>
-        <div id="recovery-result" style="margin-top:10px;font-size:13px"></div>
-      </div>
-    </div>
-
-    <div id="view-settings" style="display:none">
-      <div class="card">
-        <div class="card-title">Saved Fields</div>
-        <p style="font-size:13px;color:var(--up-gray);margin-bottom:16px">These values appear as suggestions when filling out documents. Click any field below to add a new saved value.</p>
-        <div id="settings-content"></div>
-      </div>
-    </div>
-
   </div>
 </main>
 </div>
@@ -679,7 +612,7 @@ let currentDocType = 'quotation';
 let currentCurrency = 'PHP';
 let currentVAT = 'zero';
 let currentSignatory = 'alexander';
-let docs = [];
+let docs = JSON.parse(localStorage.getItem('up_docs') || '[]');
 let itemCount = 0;
 
 const COMPANY = {
@@ -718,10 +651,6 @@ function showView(v) {
   document.getElementById('view-create').style.display = v==='create'?'block':'none';
   document.getElementById('view-tracker').style.display = v==='tracker'?'block':'none';
   if(v==='tracker') renderTracker();
-  document.getElementById('view-templates').style.display = v==='templates'?'block':'none';
-  if(v==='templates') renderTemplates();
-  document.getElementById('view-settings').style.display = v==='settings'?'block':'none';
-  if(v==='settings') renderSettings();
 }
 
 // ─── DOC TYPE ───
@@ -841,7 +770,7 @@ function formatDate(d) {
 }
 
 // ─── PREVIEW ───
-function openPreview() { saveClientFromForm();
+function openPreview() {
   recalc();
   const items = getItems();
   const sig = SIGNATORIES[currentSignatory];
@@ -1036,10 +965,8 @@ function saveDoc() {
   recalc();
   const items = getItems();
   const grand = items.reduce((s,i)=>s+i.total,0) * (currentVAT==='exclusive'?1.12:1);
-  const docHtmlSnapshot = document.getElementById('doc-preview') ? document.getElementById('doc-preview').innerHTML : '';
   const doc = {
     id: Date.now(),
-    html: docHtmlSnapshot,
     type: currentDocType,
     number: document.getElementById('doc-number').value||'—',
     date: document.getElementById('doc-date').value,
@@ -1053,8 +980,7 @@ function saveDoc() {
     created: new Date().toISOString()
   };
   docs.push(doc);
-  autoSaveSuggestions();
-  kvSaveDocs(docs);
+  localStorage.setItem('up_docs', JSON.stringify(docs));
   updateDocCount();
   alert(`✓ Document ${doc.number} saved to tracker.`);
 }
@@ -1094,19 +1020,9 @@ function renderTracker() {
         <td style="font-weight:500">${d.client}</td>
         <td style="font-size:12px;color:var(--up-gray);max-width:180px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${d.subject}</td>
         <td style="text-align:right;font-family:'DM Mono',monospace;font-size:12px">${sym(d)} ${formatNum(d.amount)}</td>
-        <td>
-          <select style="font-size:11px;padding:3px 7px;border-radius:6px;border:0.5px solid #e0e0de;background:var(--up-light);cursor:pointer;font-family:'DM Sans',sans-serif" 
-            onchange="updateDocStatus(${d.id}, this.value)">
-            ${['draft','sent','followed-up','awarded','lost','cancelled'].map(s=>`<option value="${s}" ${d.status===s?'selected':''}>${s}</option>`).join('')}
-          </select>
-        </td>
+        <td><span class="status-badge ${statusClass[d.status]||'status-draft'}">${d.status}</span></td>
         <td style="font-size:12px;color:var(--up-gray)">${SIGNATORIES[d.signatory]?.name.split(' ')[0]||d.signatory}</td>
-        <td style="white-space:nowrap">
-          <button class="btn btn-outline" style="padding:4px 8px;font-size:11px;margin-right:3px" onclick="viewDoc(${d.id})">View</button>
-          <button class="btn btn-outline" style="padding:4px 8px;font-size:11px;margin-right:3px" onclick="editDoc(${d.id})">Edit</button>
-          <button class="btn btn-outline" style="padding:4px 8px;font-size:11px;margin-right:3px" onclick="duplicateDoc(${d.id})">Dup</button>
-          <button class="btn btn-danger" style="padding:4px 8px;font-size:11px" onclick="deleteDoc(${d.id})">×</button>
-        </td>
+        <td><button class="btn btn-danger" style="padding:4px 10px;font-size:11px" onclick="deleteDoc(${d.id})">×</button></td>
       </tr>`).join('')}
     </tbody>
   </table>`;
@@ -1115,7 +1031,7 @@ function renderTracker() {
 function deleteDoc(id) {
   if(!confirm('Delete this document from tracker?')) return;
   docs = docs.filter(d=>d.id!==id);
-  kvSaveDocs(docs);
+  localStorage.setItem('up_docs', JSON.stringify(docs));
   updateDocCount();
   renderTracker();
 }
@@ -1315,452 +1231,106 @@ ${subject ? `<div class="subject-block"><strong>Subject:</strong> ${subject}</di
   if (docxBtn) { docxBtn.textContent = '📄 Export DOCX'; docxBtn.disabled = false; }
 }
 
-// ── CLIENT MEMORY ──────────────────────────────────────────────────────────────
-const KV_URL = 'https://ultrapower-executive-os-vgrr.vercel.app/api/kv';
-const CLIENT_KEY = 'docmaker:clients';
+// ── SAVE TO CRM ──────────────────────────────────────────────────────────────
+var _crmRFQs = [];
+var _crmPOs = [];
 
-async function kvGetClients() {
+async function showSaveToCRM() {
+  // Load CRM data
   try {
-    const res = await fetch(KV_URL + '?key=' + CLIENT_KEY);
-    const d = await res.json();
-    return d.value ? JSON.parse(d.value) : [];
-  } catch(e) { return []; }
-}
+    var res = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=crm');
+    var d = await res.json();
+    var crm = d && d.value ? JSON.parse(d.value) : {};
+    _crmRFQs = (crm.pendingRFQs || []).filter(function(r) { return !r.archived; });
+    _crmPOs = (crm.pendingPOs || []).filter(function(p) { return !p.archived; });
+  } catch(e) { _crmRFQs = []; _crmPOs = []; }
 
-async function kvSetClients(clients) {
-  try {
-    await fetch(KV_URL, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({key: CLIENT_KEY, value: JSON.stringify(clients)})
-    });
-  } catch(e) {}
-}
-
-let _clients = [];
-
-async function loadClients() {
-  _clients = await kvGetClients();
-}
-
-// Call on page load
-loadClients();
-
-function getClientByName(name) {
-  return _clients.find(c => c.company.toLowerCase() === name.toLowerCase());
-}
-
-function onCompanyInput(val) {
-  const dd = document.getElementById('company-dropdown');
-  if (!val.trim()) { dd.style.display='none'; return; }
-  const matches = _clients.filter(c => c.company.toLowerCase().includes(val.toLowerCase()));
-  if (!matches.length) { dd.style.display='none'; return; }
-  dd.innerHTML = matches.map(c => `
-    <div onclick="selectCompany('${c.company.replace(/'/g,"\'")}','${(c.address||'').replace(/'/g,"\'")}','${(c.altAddresses||[]).join('|||').replace(/'/g,"\'")}','${JSON.stringify(c.contacts||[]).replace(/'/g,"\'").replace(/"/g,"&quot;")}')"
-      style="padding:10px 14px;cursor:pointer;border-bottom:0.5px solid #f0f2f5;font-size:13px;color:#1a2332"
-      onmouseenter="this.style.background='#f8f9fc'" onmouseleave="this.style.background='#fff'">
-      <div style="font-weight:600">${c.company}</div>
-      <div style="font-size:11px;color:#8a9ab0;margin-top:2px">${c.address||'No address saved'} · ${(c.contacts||[]).length} contact${(c.contacts||[]).length!==1?'s':''}</div>
-    </div>
-  `).join('');
-  dd.style.display = 'block';
-}
-
-function selectCompany(company, address, altAddressesStr, contactsJson) {
-  document.getElementById('client-name').value = company;
-  document.getElementById('client-address').value = address;
-  document.getElementById('company-dropdown').style.display = 'none';
-  // Restore alt addresses
-  const altDiv = document.getElementById('alt-addresses');
-  altDiv.innerHTML = '';
-  if (altAddressesStr) {
-    altAddressesStr.split('|||').filter(Boolean).forEach(addr => addAltAddressRow(addr));
-  }
-  // Pre-fill contacts for attention field
-  try {
-    const contacts = JSON.parse(contactsJson.replace(/&quot;/g,'"'));
-    window._currentContacts = contacts;
-  } catch(e) { window._currentContacts = []; }
-}
-
-function hideDropdown() {
-  const dd = document.getElementById('company-dropdown');
-  if (dd) dd.style.display = 'none';
-}
-
-function onAttnInput(val) {
-  const dd = document.getElementById('attn-dropdown');
-  const contacts = window._currentContacts || [];
-  if (!contacts.length) { dd.style.display='none'; return; }
-  const matches = val.trim()
-    ? contacts.filter(c => c.name.toLowerCase().includes(val.toLowerCase()))
-    : contacts;
-  if (!matches.length) { dd.style.display='none'; return; }
-  dd.innerHTML = matches.map(c => `
-    <div onclick="selectContact('${c.name.replace(/'/g,"\'")}','${(c.title||'').replace(/'/g,"\'")}')"
-      style="padding:9px 14px;cursor:pointer;border-bottom:0.5px solid #f0f2f5;font-size:13px;color:#1a2332"
-      onmouseenter="this.style.background='#f8f9fc'" onmouseleave="this.style.background='#fff'">
-      <div style="font-weight:600">${c.name}</div>
-      ${c.title?`<div style="font-size:11px;color:#8a9ab0;margin-top:1px">${c.title}</div>`:''}
-    </div>
-  `).join('');
-  dd.style.display = 'block';
-}
-
-function selectContact(name, title) {
-  document.getElementById('client-attn').value = name;
-  document.getElementById('attn-dropdown').style.display = 'none';
-  // Also fill dept if title exists and dept is empty
-  const deptEl = document.getElementById('client-dept');
-  if (deptEl && !deptEl.value && title) deptEl.value = title;
-}
-
-function hideAttnDropdown() {
-  const dd = document.getElementById('attn-dropdown');
-  if (dd) dd.style.display = 'none';
-}
-
-function addAltAddress() {
-  addAltAddressRow('');
-}
-
-function addAltAddressRow(val) {
-  const container = document.getElementById('alt-addresses');
-  const row = document.createElement('div');
-  row.style.cssText = 'display:flex;gap:6px;align-items:center';
-  row.innerHTML = `
-    <input class="form-input" placeholder="Alternate address (e.g. plant location)" value="${val.replace(/"/g,'&quot;')}" style="flex:1;font-size:12px" />
-    <button type="button" onclick="this.parentElement.remove()" style="padding:6px 9px;border-radius:7px;border:0.5px solid #f5c6c6;background:#FEF0F0;color:#A32D2D;cursor:pointer;font-size:12px;flex-shrink:0">✕</button>
-  `;
-  container.appendChild(row);
-}
-
-// Auto-save client after document generation
-function saveClientFromForm() {
-  const company = document.getElementById('client-name').value.trim();
-  const address = document.getElementById('client-address').value.trim();
-  const attn = document.getElementById('client-attn').value.trim();
-  const dept = document.getElementById('client-dept') ? document.getElementById('client-dept').value.trim() : '';
-  if (!company) return;
-
-  // Collect alt addresses
-  const altAddresses = Array.from(document.querySelectorAll('#alt-addresses input')).map(i => i.value.trim()).filter(Boolean);
-
-  const existing = _clients.findIndex(c => c.company.toLowerCase() === company.toLowerCase());
-  if (existing >= 0) {
-    // Update existing -- merge address and contacts
-    const client = {..._clients[existing]};
-    if (address) client.address = address;
-    if (altAddresses.length) client.altAddresses = altAddresses;
-    if (attn) {
-      const contacts = client.contacts || [];
-      const hasContact = contacts.some(c => c.name.toLowerCase() === attn.toLowerCase());
-      if (!hasContact) contacts.push({name:attn, title:dept||''});
-      client.contacts = contacts;
-    }
-    _clients[existing] = client;
-  } else {
-    // New client
-    const newClient = {company, address, altAddresses, contacts: attn ? [{name:attn, title:dept||''}] : []};
-    _clients = [newClient, ..._clients];
-  }
-  kvSetClients(_clients);
-}
-
-// ── DOCUMENT TRACKER KV PERSISTENCE ──────────────────────────────────────────
-const DOC_KV_URL = 'https://ultrapower-executive-os-vgrr.vercel.app/api/kv';
-const DOC_KV_KEY = 'docmaker:documents';
-
-async function kvLoadDocs() {
-  try {
-    const res = await fetch(DOC_KV_URL + '?key=' + DOC_KV_KEY);
-    const d = await res.json();
-    if (d && d.value) {
-      docs = JSON.parse(d.value);
-      updateDocCount();
-    }
-  } catch(e) { console.log('KV load docs error:', e); }
-}
-
-async function kvSaveDocs(docsArr) {
-  try {
-    await fetch(DOC_KV_URL, {
-      method: 'POST',
-      headers: {'Content-Type':'application/json'},
-      body: JSON.stringify({key: DOC_KV_KEY, value: JSON.stringify(docsArr)})
-    });
-  } catch(e) { console.log('KV save docs error:', e); }
-}
-
-function updateDocStatus(id, newStatus) {
-  docs = docs.map(d => d.id === id ? {...d, status: newStatus} : d);
-  kvSaveDocs(docs);
-  renderTracker();
-}
-
-// Load docs on page init
-kvLoadDocs();
-
-// ── TEMPLATES ────────────────────────────────────────────────────────────────
-var templates = [];
-var savedFields = {
-  delivery: ['7 Days','14 Days','30 Days','45 Days','60 Days','90 Days'],
-  validity: ['30 Days','60 Days','90 Days','120 Days'],
-  warranty: ['3 Months','6 Months','1 Year','2 Years','As per manufacturer'],
-  subject: [],
-  department: ['Procurement Operations','Engineering','Finance','Plant Operations','HSE','Maintenance'],
-  payment: ['30 Days','COD','Upon Delivery','50% DP 50% Balance','7 Days upon receipt']
-};
-
-async function loadSettings() {
-  try {
-    var r = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=docmaker:settings');
-    var d = await r.json();
-    if (d && d.value) {
-      var parsed = JSON.parse(d.value);
-      if (parsed.savedFields) savedFields = Object.assign(savedFields, parsed.savedFields);
-      if (parsed.templates) templates = parsed.templates;
-    }
-  } catch(e) {}
-}
-
-async function saveSettings() {
-  try {
-    await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv', {
-      method:'POST', headers:{'Content-Type':'application/json'},
-      body: JSON.stringify({key:'docmaker:settings', value: JSON.stringify({savedFields, templates})})
-    });
-  } catch(e) {}
-}
-
-function showSuggestions(input, field) {
-  var list = document.getElementById('sug-'+field);
-  if (!list) return;
-  var items = savedFields[field] || [];
-  var val = input.value.toLowerCase();
-  var filtered = val ? items.filter(function(i){return i.toLowerCase().includes(val);}) : items;
-  if (!filtered.length) { list.style.display='none'; return; }
-  list.innerHTML = filtered.map(function(item) {
-    return '<div class="field-sug-item" onmousedown="pickSugg(&quot;'+field+'&quot;,&quot;'+item.replace(/"/g,'&quot;')+'&quot;)">' + item + '</div>';
-  }).join('');
-  list.style.display = 'block';
-}
-
-function pickSugg(field, value) {
-  var fieldMap = {delivery:'note-delivery',validity:'note-validity',warranty:'note-warranty',subject:'doc-subject'};
-  var inputId = fieldMap[field] || ('doc-'+field);
-  var input = document.getElementById(inputId);
-  if (input) input.value = value;
-  hideSugg(field);
-  // Auto-save new subject lines when they are used
-  if (field === 'subject' && value && !savedFields.subject.includes(value)) {
-    savedFields.subject.push(value);
-    saveSettings();
-  }
-}
-
-function hideSugg(field) {
-  var list = document.getElementById('sug-'+field);
-  if (list) list.style.display='none';
-}
-
-function renderSettings() {
-  var el = document.getElementById('settings-content');
-  if (!el) return;
-  var fieldDefs = [
-    {key:'delivery', label:'Delivery Periods'},
-    {key:'validity', label:'Validity Periods'},
-    {key:'warranty', label:'Warranty Periods'},
-    {key:'payment', label:'Payment Terms'},
-    {key:'department', label:'Department Names'},
-    {key:'subject', label:'Subject Lines'}
-  ];
-  el.innerHTML = fieldDefs.map(function(f) {
-    var items = savedFields[f.key] || [];
-    return '<div style="margin-bottom:20px"><div style="font-size:11px;font-weight:700;color:var(--up-gray);text-transform:uppercase;letter-spacing:0.05em;margin-bottom:8px">'+f.label+'</div>' +
-      '<div style="display:flex;flex-wrap:wrap;gap:6px;margin-bottom:8px">' +
-      items.map(function(item,i){
-        return '<div style="display:flex;align-items:center;gap:4px;background:#f0f4ff;border:0.5px solid #c5d5f0;border-radius:20px;padding:3px 10px;font-size:12px">' +
-          '<span>'+item+'</span>' +
-          '<button onclick="removeFieldItem(&quot;'+f.key+'&quot;,'+i+')" style="background:none;border:none;color:#999;cursor:pointer;font-size:11px;padding:0 2px;line-height:1">×</button>' +
-          '</div>';
-      }).join('') +
-      '</div><div style="display:flex;gap:6px">' +
-      '<input id="add-'+f.key+'" class="form-input" style="flex:1;font-size:12px" placeholder="Add new '+f.label.toLowerCase().replace('s','').trim()+'..."/>' +
-      '<button class="btn btn-outline" style="font-size:12px;padding:5px 10px" onclick="addFieldItem(&quot;'+f.key+'&quot;)">+ Add</button>' +
+  var modal = document.getElementById('crm-save-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.id = 'crm-save-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+    modal.innerHTML = '<div style="background:#fff;border-radius:14px;padding:24px;width:440px;max-width:90vw;box-shadow:0 8px 32px rgba(0,0,0,0.18)">' +
+      '<div style="font-size:15px;font-weight:600;color:#1a2332;margin-bottom:14px">Save to CRM</div>' +
+      '<div style="font-size:12px;color:#b0bec8;font-family:DM Mono,monospace;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Link to RFQ</div>' +
+      '<select id="crm-rfq-sel" style="width:100%;padding:8px 10px;border-radius:8px;border:0.5px solid #e2e6ea;background:#f8f9fb;font-size:13px;margin-bottom:12px"><option value="">-- None --</option></select>' +
+      '<div style="font-size:12px;color:#b0bec8;font-family:DM Mono,monospace;text-transform:uppercase;letter-spacing:0.08em;margin-bottom:6px">Link to PO</div>' +
+      '<select id="crm-po-sel" style="width:100%;padding:8px 10px;border-radius:8px;border:0.5px solid #e2e6ea;background:#f8f9fb;font-size:13px;margin-bottom:16px"><option value="">-- None --</option></select>' +
+      '<div style="display:flex;gap:8px">' +
+      '<button onclick="saveToCRM()" style="flex:1;padding:10px;border-radius:9px;border:none;background:#185FA5;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Save</button>' +
+      '<button onclick="document.getElementById('crm-save-modal').style.display='none'" style="padding:10px 16px;border-radius:9px;border:0.5px solid #e2e6ea;background:#f8f9fb;color:#4a6a8a;font-size:13px;cursor:pointer">Cancel</button>' +
       '</div></div>';
-  }).join('');
+    document.body.appendChild(modal);
+  }
+
+  // Populate dropdowns
+  var rfqSel = document.getElementById('crm-rfq-sel');
+  var poSel = document.getElementById('crm-po-sel');
+  rfqSel.innerHTML = '<option value="">-- None --</option>' +
+    _crmRFQs.map(function(r) { return '<option value="' + r.id + '">' + (r.rfqNumber||'RFQ-'+r.id) + ' · ' + r.client + '</option>'; }).join('');
+  poSel.innerHTML = '<option value="">-- None --</option>' +
+    _crmPOs.map(function(p) { return '<option value="' + p.id + '">' + (p.poNumber||'PO-'+p.id) + ' · ' + p.client + '</option>'; }).join('');
+
+  modal.style.display = 'flex';
 }
 
-function addFieldItem(field) {
-  var input = document.getElementById('add-'+field);
-  if (!input || !input.value.trim()) return;
-  if (!savedFields[field]) savedFields[field] = [];
-  savedFields[field].push(input.value.trim());
-  input.value = '';
-  saveSettings();
-  renderSettings();
-}
+async function saveToCRM() {
+  var rfqId = parseInt(document.getElementById('crm-rfq-sel').value);
+  var poId = parseInt(document.getElementById('crm-po-sel').value);
+  if (!rfqId && !poId) { alert('Please select an RFQ or PO to link this document to.'); return; }
 
-function removeFieldItem(field, idx) {
-  savedFields[field].splice(idx, 1);
-  saveSettings();
-  renderSettings();
-}
-
-// ── TEMPLATES ────────────────────────────────────────────────────────────────
-function captureFormData() {
-  return {
-    type: currentDocType,
-    currency: currentCurrency,
-    vat: currentVAT,
-    signatory: currentSignatory,
-    clientName: document.getElementById('client-name').value,
-    clientAddress: document.getElementById('client-address').value,
-    clientAttn: document.getElementById('client-attn').value,
-    clientDept: document.getElementById('client-dept') ? document.getElementById('client-dept').value : '',
-    subject: document.getElementById('doc-subject').value,
-    delivery: document.getElementById('note-delivery').value,
-    validity: document.getElementById('note-validity').value,
-    warranty: document.getElementById('note-warranty').value,
-    salutation: document.querySelector('input[name="salutation"]:checked') ? document.querySelector('input[name="salutation"]:checked').value : 'Dear Sir,'
-  };
-}
-
-function applyFormData(data) {
-  if (!data) return;
-  if (data.type) { currentDocType = data.type; document.querySelectorAll('.doc-type-btn').forEach(function(b){b.classList.toggle('active',b.dataset.type===data.type);}); }
-  if (data.clientName) document.getElementById('client-name').value = data.clientName;
-  if (data.clientAddress) document.getElementById('client-address').value = data.clientAddress;
-  if (data.clientAttn) document.getElementById('client-attn').value = data.clientAttn;
-  if (data.clientDept && document.getElementById('client-dept')) document.getElementById('client-dept').value = data.clientDept;
-  if (data.subject) document.getElementById('doc-subject').value = data.subject;
-  if (data.delivery) document.getElementById('note-delivery').value = data.delivery;
-  if (data.validity) document.getElementById('note-validity').value = data.validity;
-  if (data.warranty) document.getElementById('note-warranty').value = data.warranty;
-}
-
-function saveTemplate() {
-  var name = document.getElementById('tpl-name').value.trim();
-  if (!name) { alert('Please enter a template name.'); return; }
-  var tpl = Object.assign({id: Date.now(), name: name}, captureFormData());
-  templates = templates.filter(function(t){return t.name !== name;});
-  templates.unshift(tpl);
-  saveSettings();
-  document.getElementById('tpl-name').value = '';
-  renderTemplates();
-  alert('Template saved: ' + name);
-}
-
-function renderTemplates() {
-  var el = document.getElementById('templates-list');
-  if (!el) return;
-  if (!templates.length) { el.innerHTML = '<p style="font-size:13px;color:var(--up-gray)">No templates yet. Fill out the form and click Save.</p>'; return; }
-  el.innerHTML = templates.map(function(t) {
-    return '<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 14px;border:0.5px solid #e0e0de;border-radius:9px;margin-bottom:8px;background:#fafbfc">' +
-      '<div><div style="font-size:14px;font-weight:600;color:#1a2332">'+t.name+'</div>' +
-      '<div style="font-size:11px;color:var(--up-gray);margin-top:2px">'+(t.type||'quotation')+' · '+(t.clientName||'No client')+'</div></div>' +
-      '<div style="display:flex;gap:6px">' +
-      '<button class="btn btn-primary" style="font-size:12px;padding:5px 10px" onclick="loadTemplate('+t.id+')">Load Template</button>' +
-      '<button class="btn btn-danger" style="font-size:12px;padding:5px 10px" onclick="deleteTemplate('+t.id+')">×</button>' +
-      '</div></div>';
-  }).join('');
-}
-
-function loadTemplate(id) {
-  var tpl = templates.find(function(t){return t.id===id;});
-  if (!tpl) return;
-  applyFormData(tpl);
-  showView('create');
-  alert('Template loaded: ' + tpl.name);
-}
-
-function deleteTemplate(id) {
-  if (!confirm('Delete this template?')) return;
-  templates = templates.filter(function(t){return t.id!==id;});
-  saveSettings();
-  renderTemplates();
-}
-
-// ── VIEW / EDIT / DUPLICATE ──────────────────────────────────────────────────
-function viewDoc(id) {
-  var doc = docs.find(function(d){return d.id===id;});
-  if (!doc || !doc.html) { alert('Document preview not available. Try re-saving.'); return; }
-  // Inject into existing preview modal
+  // Get current document info
+  var docNum = document.getElementById('doc-number') ? document.getElementById('doc-number').value : '';
+  var docType = currentDocType || 'quotation';
+  var client = document.getElementById('client-name') ? document.getElementById('client-name').value : '';
   var preview = document.getElementById('doc-preview');
-  if (preview) {
-    preview.innerHTML = doc.html;
-    document.getElementById('modal').style.display = 'flex';
-  }
-}
+  var html = preview ? preview.innerHTML : '';
+  var newDoc = {
+    id: Date.now().toString(),
+    type: docType.charAt(0).toUpperCase() + docType.slice(1),
+    number: docNum,
+    date: new Date().toLocaleDateString('en-PH'),
+    amount: '',
+    status: 'Saved',
+    html: html
+  };
 
-function editDoc(id) {
-  var doc = docs.find(function(d){return d.id===id;});
-  if (!doc) return;
-  applyFormData(doc);
-  if (doc.number) document.getElementById('doc-number').value = doc.number;
-  if (doc.date) document.getElementById('doc-date').value = doc.date;
-  showView('create');
-  alert('Document loaded for editing. Make changes and click Save to Tracker to update.');
-}
-
-function duplicateDoc(id) {
-  var doc = docs.find(function(d){return d.id===id;});
-  if (!doc) return;
-  applyFormData(doc);
-  // New number and today's date
-  document.getElementById('doc-date').value = new Date().toISOString().split('T')[0];
-  var numEl = document.getElementById('doc-number');
-  if (numEl && doc.number) {
-    // Increment last numeric part
-    var parts = doc.number.split('-');
-    var last = parts[parts.length-1];
-    var num = parseInt(last);
-    if (!isNaN(num)) { parts[parts.length-1] = String(num+1).padStart(last.length,'0'); numEl.value = parts.join('-'); }
-    else numEl.value = doc.number + '-copy';
-  }
-  showView('create');
-  alert('Document duplicated. Review and save to tracker.');
-}
-
-// ── RECOVER FROM LOCALSTORAGE ────────────────────────────────────────────────
-function recoverFromLocalStorage() {
-  var result = document.getElementById('recovery-result');
   try {
-    var old = localStorage.getItem('up_docs');
-    if (!old) { result.innerHTML = '<span style="color:#854F0B">No documents found in browser storage.</span>'; return; }
-    var oldDocs = JSON.parse(old);
-    if (!oldDocs.length) { result.innerHTML = '<span style="color:#854F0B">No documents found in browser storage.</span>'; return; }
-    var existingIds = new Set(docs.map(function(d){return d.id;}));
-    var newDocs = oldDocs.filter(function(d){return !existingIds.has(d.id);});
-    if (!newDocs.length) { result.innerHTML = '<span style="color:#854F0B">All documents already in tracker.</span>'; return; }
-    docs = docs.concat(newDocs);
-    kvSaveDocs(docs);
-    updateDocCount();
-    renderTracker();
-    result.innerHTML = '<span style="color:#3B6D11">✓ Recovered '+newDocs.length+' document(s) from browser storage.</span>';
+    var res = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=crm');
+    var d = await res.json();
+    var crm = d && d.value ? JSON.parse(d.value) : {pendingRFQs:[], pendingPOs:[]};
+
+    if (rfqId) {
+      crm.pendingRFQs = (crm.pendingRFQs||[]).map(function(r) {
+        if (r.id === rfqId) {
+          var docs = r.documents || [];
+          return {...r, documents: [...docs, newDoc]};
+        }
+        return r;
+      });
+    }
+    if (poId) {
+      crm.pendingPOs = (crm.pendingPOs||[]).map(function(p) {
+        if (p.id === poId) {
+          var docs = p.documents || [];
+          return {...p, documents: [...docs, newDoc]};
+        }
+        return p;
+      });
+    }
+
+    await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv', {
+      method: 'POST',
+      headers: {'Content-Type':'application/json'},
+      body: JSON.stringify({key:'crm', value: JSON.stringify(crm)})
+    });
+
+    document.getElementById('crm-save-modal').style.display = 'none';
+    alert('Document saved to CRM successfully.');
   } catch(e) {
-    result.innerHTML = '<span style="color:#A32D2D">Error: '+e.message+'</span>';
+    alert('Error saving to CRM: ' + e.message);
   }
 }
-
-// ── SAVE SUBJECT TO SUGGESTIONS AUTOMATICALLY ────────────────────────────────
-var _origSaveDoc = typeof saveDoc === 'function' ? saveDoc : null;
-
-// Auto-save subject and department to suggestions when saving a doc
-function autoSaveSuggestions() {
-  var subject = document.getElementById('doc-subject') ? document.getElementById('doc-subject').value.trim() : '';
-  var dept = document.getElementById('client-dept') ? document.getElementById('client-dept').value.trim() : '';
-  var changed = false;
-  if (subject && !savedFields.subject.includes(subject)) { savedFields.subject.push(subject); changed = true; }
-  if (dept && !savedFields.department.includes(dept)) { savedFields.department.push(dept); changed = true; }
-  if (changed) saveSettings();
-}
-
-// Load settings and templates on page load
-document.addEventListener('DOMContentLoaded', function() {
-  loadSettings();
-});
 </script>
 </body>
 </html>
