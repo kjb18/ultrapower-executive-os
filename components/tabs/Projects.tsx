@@ -44,7 +44,8 @@ interface Expense {
 interface CRMDoc { id:string; type:string; number:string; date:string; amount:string; status:string; html?:string; }
 interface CRMRFQRecord { id:number; rfqNumber:string; client:string; subject:string; dateSubmitted:string; deadline:string; status:string; notes:string; projectId?:string; documents?:CRMDoc[]; archived?:boolean; }
 interface CRMPORecord { id:number; poNumber:string; client:string; items:string; value:string; dateReceived:string; expectedDelivery:string; supplierStatus:string; status:string; notes:string; projectId?:string; documents?:CRMDoc[]; archived?:boolean; }
-interface CRMStore { pendingRFQs?:CRMRFQRecord[]; pendingPOs?:CRMPORecord[]; [key:string]:unknown; }
+interface CRMSPORecord { id:number; poNumber:string; supplierName:string; projectId?:string; totalAmount:number; expectedDelivery:string; status:string; archived?:boolean; items?:Array<{id:string;description:string;quantity:number;unit:string;unitPrice:number;total:number}>; }
+interface CRMStore { pendingRFQs?:CRMRFQRecord[]; pendingPOs?:CRMPORecord[]; supplierPOs?:CRMSPORecord[]; [key:string]:unknown; }
 interface SourcingSession { id:string; query?:string; subject?:string; date?:string; projectId?:string; [key:string]:unknown; }
 
 function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2,7)}`; }
@@ -73,6 +74,7 @@ export default function Projects() {
   const [showLinkRFQ, setShowLinkRFQ] = useState(false);
   const [showLinkPO, setShowLinkPO] = useState(false);
   const [showLinkSourcing, setShowLinkSourcing] = useState(false);
+  const [showLinkSPO, setShowLinkSPO] = useState(false);
 
   // New project form
   const [np, setNP] = useState({name:"",client:"",stage:"RFQ Submitted" as Stage,vatType:"VAT Inclusive" as VatType,rfqDate:new Date().toISOString().split("T")[0],notes:""});
@@ -88,6 +90,7 @@ export default function Projects() {
     setShowLinkRFQ(false);
     setShowLinkPO(false);
     setShowLinkSourcing(false);
+    setShowLinkSPO(false);
     Promise.all([
       kvGet<CRMStore>("crm"),
       kvGet<SourcingSession[]>("sourcing:history"),
@@ -194,6 +197,15 @@ export default function Projects() {
     const updated = allSourcing.map(s=>{if(s.id!==sid)return s;const copy={...s};delete copy.projectId;return copy;});
     await kvSet("sourcing:history",updated); setAllSourcing(updated);
   };
+  const doLinkSPO = async (spoId:number) => {
+    if (!selectedProject) return;
+    const updated = {...allCRM, supplierPOs:(allCRM.supplierPOs||[]).map(s=>s.id===spoId?{...s,projectId:selectedProject.id}:s)};
+    await kvSet("crm",updated); setAllCRM(updated);
+  };
+  const doUnlinkSPO = async (spoId:number) => {
+    const updated = {...allCRM, supplierPOs:(allCRM.supplierPOs||[]).map(s=>{if(s.id!==spoId)return s;const copy={...s};delete copy.projectId;return copy;})};
+    await kvSet("crm",updated); setAllCRM(updated);
+  };
 
   // Filtered projects
   const filtered = projects.filter(p => {
@@ -223,6 +235,7 @@ export default function Projects() {
   type DocWithSource = CRMDoc & {source:string; client:string};
   const linkedRFQs: CRMRFQRecord[] = selectedProject ? (allCRM.pendingRFQs||[]).filter(r=>r.projectId===selectedProject.id) : [];
   const linkedPOs: CRMPORecord[] = selectedProject ? (allCRM.pendingPOs||[]).filter(p=>p.projectId===selectedProject.id) : [];
+  const linkedSPOs: CRMSPORecord[] = selectedProject ? (allCRM.supplierPOs||[]).filter(s=>s.projectId===selectedProject.id) : [];
   const linkedSourcing: SourcingSession[] = selectedProject ? allSourcing.filter(s=>s.projectId===selectedProject.id) : [];
   const allDocs: DocWithSource[] = [
     ...linkedRFQs.flatMap(r=>(r.documents||[]).map(d=>({...d,source:`RFQ ${r.rfqNumber||r.id}`,client:r.client}))),
@@ -586,6 +599,36 @@ export default function Projects() {
                   </table>
                 </div>
               </div>
+
+              <div style={{...S.card,marginTop:12}}>
+                <div style={{padding:"12px 16px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Supplier POs</div>
+                  <button onClick={()=>setShowLinkSPO(true)} style={S.addBtn}>Link Supplier PO</button>
+                </div>
+                <div style={{overflowX:"auto"}}>
+                  <table style={{width:"100%",borderCollapse:"collapse"}}>
+                    <thead><tr style={{background:"#fafbfc"}}>
+                      {["PO #","Supplier","Status","Items","Total","Expected Delivery",""].map(h=>(
+                        <th key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"8px 13px",textAlign:"left",borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</th>
+                      ))}
+                    </tr></thead>
+                    <tbody>
+                      {linkedSPOs.length===0&&<tr><td colSpan={7} style={{textAlign:"center",padding:20,color:"#b0bec8",fontSize:12}}>No linked Supplier POs. Click "Link Supplier PO" to connect a record.</td></tr>}
+                      {linkedSPOs.map((s,i)=>(
+                        <tr key={s.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#185FA5",fontFamily:"'DM Mono',monospace",fontWeight:600}}>{s.poNumber||`SPO-${s.id}`}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#4a6a8a"}}>{s.supplierName}</td>
+                          <td style={{padding:"9px 13px"}}><span style={S.pill("#EBF3FC","#185FA5")}>{s.status}</span></td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#4a6a8a"}}>{(s.items||[]).length} item{(s.items||[]).length!==1?"s":""}</td>
+                          <td style={{padding:"9px 13px",fontSize:12,color:"#3B6D11",fontFamily:"'DM Mono',monospace"}}>{s.totalAmount>0?fmt(s.totalAmount):"--"}</td>
+                          <td style={{padding:"9px 13px",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{s.expectedDelivery||"--"}</td>
+                          <td style={{padding:"9px 13px"}}><button onClick={()=>doUnlinkSPO(s.id)} style={{fontSize:11,color:"#A32D2D",background:"none",border:"none",cursor:"pointer"}}>Unlink</button></td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
             </>}
 
             {/* SOURCING TAB */}
@@ -706,6 +749,34 @@ export default function Projects() {
                   );
                 })}
                 <button onClick={()=>setShowLinkPO(false)} style={{...S.addBtn,marginTop:14,width:"100%",display:"block",textAlign:"center"}}>Done</button>
+              </div>
+            </>}
+
+            {/* LINK SPO MODAL */}
+            {showLinkSPO&&<>
+              <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.35)",zIndex:200}} onClick={()=>setShowLinkSPO(false)}/>
+              <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:13,padding:20,zIndex:201,width:500,maxHeight:"70vh",overflow:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
+                <div style={{fontSize:14,fontWeight:600,color:"#1a2332",marginBottom:4}}>Link Supplier PO</div>
+                <div style={{fontSize:12,color:"#8a9ab0",marginBottom:14}}>Select a Supplier PO to link to this project</div>
+                {(allCRM.supplierPOs||[]).filter(s=>!s.archived).length===0&&<div style={{color:"#b0bec8",fontSize:12,textAlign:"center",padding:"16px 0"}}>No Supplier PO records in CRM.</div>}
+                {(allCRM.supplierPOs||[]).filter(s=>!s.archived).map(s=>{
+                  const isLinkedHere = s.projectId===selectedProject!.id;
+                  const isLinkedElsewhere = !!s.projectId && s.projectId!==selectedProject!.id;
+                  return(
+                    <div key={s.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                      <div>
+                        <div style={{fontSize:12,fontWeight:600,color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{s.poNumber||`SPO-${s.id}`}</div>
+                        <div style={{fontSize:12,color:"#4a6a8a"}}>{s.supplierName}</div>
+                        {isLinkedElsewhere&&<div style={{fontSize:10,color:"#854F0B",marginTop:1}}>Linked to another project</div>}
+                      </div>
+                      {isLinkedHere
+                        ? <span style={{fontSize:11,color:"#3B6D11",fontWeight:600}}>Linked</span>
+                        : <button onClick={()=>doLinkSPO(s.id)} disabled={isLinkedElsewhere} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #185FA5",background:isLinkedElsewhere?"#f0f2f5":"#EBF3FC",color:isLinkedElsewhere?"#b0bec8":"#185FA5",cursor:isLinkedElsewhere?"not-allowed":"pointer"}}>Link</button>
+                      }
+                    </div>
+                  );
+                })}
+                <button onClick={()=>setShowLinkSPO(false)} style={{...S.addBtn,marginTop:14,width:"100%",display:"block",textAlign:"center"}}>Done</button>
               </div>
             </>}
 

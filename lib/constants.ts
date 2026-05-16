@@ -283,3 +283,20 @@ export interface PendingPO {
   projectId?: string;
   docNumber?: string;
 }
+
+export interface SupplierPO {
+  id: number;
+  poNumber: string;
+  supplierId: string;
+  supplierName: string;
+  projectId?: string;
+  clientPoId?: number;
+  items: LineItem[];
+  totalAmount: number;
+  dateIssued: string;
+  expectedDelivery: string;
+  status: "Draft"|"Sent"|"Acknowledged"|"Partially Delivered"|"Delivered"|"Cancelled";
+  paymentTerms: string;
+  notes: string;
+  archived?: boolean;
+}

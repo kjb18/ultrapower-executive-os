@@ -12,7 +12,7 @@ const CORS = {
   "Access-Control-Allow-Headers": "Content-Type",
 };
 
-const VALID_TYPES = ["RFQ", "PO", "INV", "DR", "QUOT"];
+const VALID_TYPES = ["RFQ", "PO", "INV", "DR", "QUOT", "SPO"];
 
 export async function OPTIONS() {
   return NextResponse.json({}, { headers: CORS });

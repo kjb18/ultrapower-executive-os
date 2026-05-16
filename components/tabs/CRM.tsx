@@ -1,7 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
-import type { ProductItem, Supplier, LineItem } from "@/lib/constants";
+import type { ProductItem, Supplier, LineItem, SupplierPO } from "@/lib/constants";
 
 const STAGES = ["Prospecting","Qualified","Proposal","Follow-Up","Negotiation","Closed-Won","Closed-Lost"];
 const LABELS = ["Unlabeled","To Reactivate","Key Account","Refer to Alex","Dead Lead","Watch List","Needs Follow-Up"];
@@ -35,6 +35,12 @@ const RFQ_STATUS_C: Record<string,{bg:string;fg:string}> = {
   "Followed Up":{bg:"#FFF8EC",fg:"#854F0B"},"Awarded":{bg:"#f0faf5",fg:"#3B6D11"},
   "Lost":{bg:"#FEF0F0",fg:"#A32D2D"},"Cancelled":{bg:"#f0f2f5",fg:"#8a9ab0"},
 };
+const SPO_STATUS_C: Record<string,{bg:string;fg:string}> = {
+  "Draft":{bg:"#f0f2f5",fg:"#8a9ab0"},"Sent":{bg:"#EBF3FC",fg:"#185FA5"},
+  "Acknowledged":{bg:"#F4F3FE",fg:"#534AB7"},"Partially Delivered":{bg:"#FFF8EC",fg:"#854F0B"},
+  "Delivered":{bg:"#f0faf5",fg:"#3B6D11"},"Cancelled":{bg:"#FEF0F0",fg:"#A32D2D"},
+};
+const SPO_STATUSES = ["Draft","Sent","Acknowledged","Partially Delivered","Delivered","Cancelled"] as const;
 
 const PRODUCT_CATEGORIES = ["LED Lighting","Mechanical","Electrical","Instrumentation","Safety","Consumables","Other"];
 const PAYMENT_TERMS_OPTIONS = ["30 Days","60 Days","COD","Upon Delivery","Consignment"];
@@ -45,7 +51,7 @@ interface CRMDocument { id:string;type:string;number:string;date:string;amount:s
 interface PendingPO { id:number;poNumber:string;client:string;items:string;value:string;dateReceived:string;expectedDelivery:string;supplierStatus:string;status:string;notes:string;archived?:boolean;documents?:CRMDocument[];lineItems?:LineItem[];contactPersonId?:number;contactPersonName?:string;projectId?:string;docNumber?:string; }
 interface PendingRFQ { id:number;rfqNumber:string;client:string;subject:string;dateSubmitted:string;deadline:string;status:string;notes:string;archived?:boolean;documents?:CRMDocument[];lineItems?:LineItem[];contactPersonId?:number;contactPersonName?:string;projectId?:string;docNumber?:string; }
 interface OldContact { _id: string; _label: string; _archived: boolean; [key:string]: string|boolean; }
-interface CRMData { prospects:Prospect[];contacts:Contact[];pendingPOs:PendingPO[];pendingRFQs:PendingRFQ[];nid:number; }
+interface CRMData { prospects:Prospect[];contacts:Contact[];pendingPOs:PendingPO[];pendingRFQs:PendingRFQ[];supplierPOs?:SupplierPO[];nid:number; }
 
 const Pill=({t,c}:{t:string;c:{bg:string;fg:string}})=><span style={{fontSize:11,padding:"2px 9px",borderRadius:20,background:c.bg,color:c.fg,fontWeight:600,fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap"}}>{t}</span>;
 
@@ -68,10 +74,15 @@ function parseCSV(text: string): Record<string,string>[] {
 }
 
 export default function CRM() {
-  const [tab,setTab]=useState<"pipeline"|"contacts"|"old"|"pos"|"rfqs"|"products"|"suppliers">("pipeline");
-  const [data,setDataRaw]=useState<CRMData>({prospects:[],contacts:[],pendingPOs:[],pendingRFQs:[],nid:1});
+  const [tab,setTab]=useState<"pipeline"|"contacts"|"old"|"pos"|"rfqs"|"spos"|"products"|"suppliers">("pipeline");
+  const [data,setDataRaw]=useState<CRMData>({prospects:[],contacts:[],pendingPOs:[],pendingRFQs:[],supplierPOs:[],nid:1});
   const [showArchivedPOs, setShowArchivedPOs]=useState(false);
   const [showArchivedRFQs, setShowArchivedRFQs]=useState(false);
+  const [showArchivedSPOs, setShowArchivedSPOs]=useState(false);
+  const [slideSPOId, setSlideSPOId]=useState<number|null>(null);
+  const [spoSlideTab, setSpoSlideTab]=useState<"details"|"items">("details");
+  const [spoQ, setSpoQ]=useState("");
+  const [spoForm, setSpoForm]=useState<{poNumber:string;supplierId:string;supplierName:string;projectId:string;clientPoId:string;dateIssued:string;expectedDelivery:string;paymentTerms:string;notes:string;}|null>(null);
   const [oldContacts,setOldContactsRaw]=useState<OldContact[]>([]);
   const [oldQ,setOldQ]=useState("");
   const [oldPg,setOldPg]=useState(1);
@@ -101,7 +112,7 @@ export default function CRM() {
       fetch("/api/catalog?type=suppliers").then(r=>r.json()).catch(()=>({data:[]})),
       fetch("/api/projects").then(r=>r.json()).catch(()=>({projects:[]})),
     ]);
-    if(d) setDataRaw({...d,pendingPOs:d.pendingPOs||[],pendingRFQs:d.pendingRFQs||[]});
+    if(d) setDataRaw({...d,pendingPOs:d.pendingPOs||[],pendingRFQs:d.pendingRFQs||[],supplierPOs:d.supplierPOs||[]});
     if(oc) setOldContactsRaw(oc);
     if(prodRes?.data) setProducts(prodRes.data as ProductItem[]);
     if(suppRes?.data) setSuppliers(suppRes.data as Supplier[]);
@@ -115,6 +126,7 @@ export default function CRM() {
 
   const slideRFQ = slideOver?.type==="rfq" ? (data.pendingRFQs||[]).find(r=>r.id===slideOver.id)||null : null;
   const slidePO = slideOver?.type==="po" ? (data.pendingPOs||[]).find(p=>p.id===slideOver.id)||null : null;
+  const slideSPO = slideSPOId !== null ? (data.supplierPOs||[]).find(s=>s.id===slideSPOId)||null : null;
 
   const setData=useCallback((p:Partial<CRMData>)=>{
     setDataRaw(prev=>{const next={...prev,...p};kvSet("crm",next);return next;});
@@ -147,6 +159,21 @@ export default function CRM() {
   const updRFQ=(id:number,p:Partial<PendingRFQ>)=>setData({pendingRFQs:(data.pendingRFQs||[]).map(x=>x.id===id?{...x,...p}:x)});
   const delRFQ=(id:number)=>setData({pendingRFQs:(data.pendingRFQs||[]).filter(x=>x.id!==id)});
   const archiveRFQ=(id:number)=>setData({pendingRFQs:(data.pendingRFQs||[]).map(x=>x.id===id?{...x,archived:!x.archived}:x)});
+
+  // Supplier POs
+  const addSPO=()=>{
+    if(!spoForm||!spoForm.supplierId)return;
+    const id=data.nid;
+    const spo:SupplierPO={id,poNumber:spoForm.poNumber,supplierId:spoForm.supplierId,supplierName:spoForm.supplierName,
+      projectId:spoForm.projectId||undefined,clientPoId:spoForm.clientPoId?parseInt(spoForm.clientPoId):undefined,
+      items:[],totalAmount:0,dateIssued:spoForm.dateIssued,expectedDelivery:spoForm.expectedDelivery,
+      status:"Draft",paymentTerms:spoForm.paymentTerms,notes:spoForm.notes,archived:false};
+    setData({supplierPOs:[...(data.supplierPOs||[]),spo],nid:id+1});
+    setSpoForm(null);
+  };
+  const updSPO=(id:number,p:Partial<SupplierPO>)=>setData({supplierPOs:(data.supplierPOs||[]).map(x=>x.id===id?{...x,...p}:x)});
+  const delSPO=(id:number)=>{if(confirm("Delete this Supplier PO?"))setData({supplierPOs:(data.supplierPOs||[]).filter(x=>x.id!==id)});};
+  const archiveSPO=(id:number)=>setData({supplierPOs:(data.supplierPOs||[]).map(x=>x.id===id?{...x,archived:!x.archived}:x)});
 
   // Catalog
   const genId=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,5);
@@ -228,6 +255,7 @@ export default function CRM() {
 
   const pos=data.pendingPOs||[];
   const rfqs=data.pendingRFQs||[];
+  const spos=data.supplierPOs||[];
 
   if(!loaded)return<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#b0bec8",fontSize:13,fontFamily:"'DM Mono',monospace"}}>Loading CRM...</div>;
 
@@ -239,9 +267,9 @@ export default function CRM() {
           <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Industrial Sales Intelligence</div>
         </div>
         <div style={{display:"flex",overflowX:"auto"}}>
-          {(["pipeline","contacts","old","pos","rfqs","products","suppliers"] as const).map(t=>(
+          {(["pipeline","contacts","old","pos","rfqs","spos","products","suppliers"] as const).map(t=>(
             <button key={t} style={S.tabBtn(tab===t)} onClick={()=>setTab(t)}>
-              {t==="pipeline"?"Pipeline":t==="contacts"?"New Contacts":t==="old"?"Old Contacts":t==="pos"?"Pending POs"+(pos.length>0?` (${pos.length})`:""):t==="rfqs"?"Pending RFQs"+(rfqs.length>0?` (${rfqs.length})`:""):t==="products"?"Products"+(products.length>0?` (${products.length})`:""):"Suppliers"+(suppliers.length>0?` (${suppliers.length})`:"")}
+              {t==="pipeline"?"Pipeline":t==="contacts"?"New Contacts":t==="old"?"Old Contacts":t==="pos"?"Pending POs"+(pos.length>0?` (${pos.length})`:""):t==="rfqs"?"Pending RFQs"+(rfqs.length>0?` (${rfqs.length})`:""):t==="spos"?"Supplier POs"+(spos.filter(s=>!s.archived).length>0?` (${spos.filter(s=>!s.archived).length})`:""):t==="products"?"Products"+(products.length>0?` (${products.length})`:""):"Suppliers"+(suppliers.length>0?` (${suppliers.length})`:"")}
             </button>
           ))}
         </div>
@@ -551,6 +579,125 @@ export default function CRM() {
           </div>
         </>}
 
+        {/* SUPPLIER POs */}
+        {tab==="spos"&&(()=>{
+          const filteredSPOs=(data.supplierPOs||[]).filter(s=>{
+            if(showArchivedSPOs?!s.archived:s.archived)return false;
+            if(!spoQ)return true;
+            const q=spoQ.toLowerCase();
+            return s.poNumber.toLowerCase().includes(q)||s.supplierName.toLowerCase().includes(q);
+          });
+          return(<>
+            <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14,flexWrap:"wrap",gap:10}}>
+              <div>
+                <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>Supplier Purchase Orders</div>
+                <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>POs issued to suppliers for project fulfillment</div>
+              </div>
+              <div style={{display:"flex",gap:8,alignItems:"center",flexWrap:"wrap"}}>
+                <input style={{...S.inp,width:220,flex:"none"}} placeholder="Search PO number or supplier..." value={spoQ} onChange={e=>setSpoQ(e.target.value)}/>
+                <button onClick={()=>setShowArchivedSPOs(s=>!s)} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:`0.5px solid ${showArchivedSPOs?"#854F0B":"#e2e6ea"}`,background:showArchivedSPOs?"#FFF8EC":"#f8f9fb",color:showArchivedSPOs?"#854F0B":"#4a6a8a",cursor:"pointer"}}>
+                  {showArchivedSPOs?"Active":"Archived"} ({spos.filter(s=>showArchivedSPOs?!s.archived:!!s.archived).length})
+                </button>
+                <button onClick={()=>setSpoForm({poNumber:"",supplierId:"",supplierName:"",projectId:"",clientPoId:"",dateIssued:"",expectedDelivery:"",paymentTerms:"30 Days",notes:""})} style={S.addBtn}>+ Add Supplier PO</button>
+              </div>
+            </div>
+
+            {spoForm!==null&&(
+              <div style={{...S.panel,padding:18,marginBottom:14}}>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",marginBottom:14,fontFamily:"'DM Mono',monospace"}}>New Supplier PO</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:14}}>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>PO Number</div>
+                    <div style={{display:"flex",gap:6}}>
+                      <input style={{...S.inp,flex:1,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={spoForm.poNumber} placeholder="SPO-UP2026-001" onChange={e=>setSpoForm(f=>f?{...f,poNumber:e.target.value}:f)}/>
+                      <button disabled={!!spoForm.poNumber} onClick={async()=>{const r=await fetch("/api/docnum?type=SPO").then(x=>x.json());if(r.docNumber)setSpoForm(f=>f?{...f,poNumber:r.docNumber}:f);}}
+                        style={{fontSize:11,padding:"0 10px",borderRadius:8,border:"0.5px solid #185FA5",background:spoForm.poNumber?"#f0f2f5":"#EBF3FC",color:spoForm.poNumber?"#b0bec8":"#185FA5",cursor:spoForm.poNumber?"not-allowed":"pointer",whiteSpace:"nowrap" as const,fontWeight:600}}>Generate</button>
+                    </div>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Supplier</div>
+                    <select style={S.inp} value={spoForm.supplierId} onChange={e=>{const s=suppliers.find(x=>x.id===e.target.value);setSpoForm(f=>f?{...f,supplierId:e.target.value,supplierName:s?.name||""}:f);}}>
+                      <option value="">-- Select supplier --</option>
+                      {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Project</div>
+                    <select style={S.inp} value={spoForm.projectId} onChange={e=>setSpoForm(f=>f?{...f,projectId:e.target.value,clientPoId:""}:f)}>
+                      <option value="">-- No project --</option>
+                      {projects.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Client PO</div>
+                    <select style={S.inp} value={spoForm.clientPoId} onChange={e=>setSpoForm(f=>f?{...f,clientPoId:e.target.value}:f)}>
+                      <option value="">-- No client PO --</option>
+                      {(data.pendingPOs||[]).filter(p=>!spoForm.projectId||p.projectId===spoForm.projectId).map(p=><option key={p.id} value={String(p.id)}>{p.poNumber||`PO-${p.id}`} -- {p.client}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Date Issued</div>
+                    <input style={S.inp} type="date" value={spoForm.dateIssued} onChange={e=>setSpoForm(f=>f?{...f,dateIssued:e.target.value}:f)}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Expected Delivery</div>
+                    <input style={S.inp} type="date" value={spoForm.expectedDelivery} onChange={e=>setSpoForm(f=>f?{...f,expectedDelivery:e.target.value}:f)}/>
+                  </div>
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Payment Terms</div>
+                    <select style={S.inp} value={spoForm.paymentTerms} onChange={e=>setSpoForm(f=>f?{...f,paymentTerms:e.target.value}:f)}>
+                      {PAYMENT_TERMS_OPTIONS.map(o=><option key={o}>{o}</option>)}
+                    </select>
+                  </div>
+                  <div style={{gridColumn:"1/-1"}}>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Notes</div>
+                    <input style={S.inp} placeholder="Optional" value={spoForm.notes} onChange={e=>setSpoForm(f=>f?{...f,notes:e.target.value}:f)}/>
+                  </div>
+                </div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={addSPO} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"none",background:"#1a2332",color:"#fff",cursor:"pointer",fontWeight:600}}>Save Supplier PO</button>
+                  <button onClick={()=>setSpoForm(null)} style={{fontSize:13,padding:"8px 16px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Cancel</button>
+                </div>
+              </div>
+            )}
+
+            <div style={S.panel}>
+              <div style={{overflowX:"auto"}}>
+                <table style={{width:"100%",borderCollapse:"collapse"}}>
+                  <thead><tr>{["#","PO Number","Supplier","Project","Client PO","Total","Date Issued","Expected Delivery","Status",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                  <tbody>
+                    {filteredSPOs.length===0&&<tr><td colSpan={10} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>
+                      {spos.filter(s=>!s.archived).length===0?"No Supplier POs yet. Click + Add Supplier PO above.":"No records match your search."}
+                    </td></tr>}
+                    {filteredSPOs.map((s,i)=>{
+                      const linkedPO=s.clientPoId?(data.pendingPOs||[]).find(p=>p.id===s.clientPoId):null;
+                      const linkedProj=s.projectId?projects.find(p=>p.id===s.projectId):null;
+                      return(
+                        <tr key={s.id} style={{background:s.archived?"#fafafa":i%2===0?"#fff":"#fafbfc",opacity:s.archived?0.75:1}}>
+                          <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
+                          <td style={{...S.td,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5",whiteSpace:"nowrap" as const}}>{s.poNumber||"--"}</td>
+                          <td style={{...S.td,fontWeight:500}}>{s.supplierName||"--"}</td>
+                          <td style={{...S.td,fontSize:12,color:"#8a9ab0"}}>{linkedProj?.name||"--"}</td>
+                          <td style={{...S.td,fontSize:12,color:"#4a6a8a",fontFamily:"'DM Mono',monospace"}}>{linkedPO?(linkedPO.poNumber||`PO-${linkedPO.id}`):"--"}</td>
+                          <td style={{...S.td,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#3B6D11"}}>{s.totalAmount>0?`₱${s.totalAmount.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}`:"--"}</td>
+                          <td style={{...S.td,fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap" as const}}>{s.dateIssued||"--"}</td>
+                          <td style={{...S.td,fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap" as const}}>{s.expectedDelivery||"--"}</td>
+                          <td style={S.td}><Pill t={s.status} c={SPO_STATUS_C[s.status]||{bg:"#f0f2f5",fg:"#8a9ab0"}}/></td>
+                          <td style={{...S.td,whiteSpace:"nowrap" as const}}>
+                            <button onClick={()=>{setSlideSPOId(s.id);setSpoSlideTab("details");setItemForm(null);}} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginRight:4}}>Open</button>
+                            <button onClick={()=>archiveSPO(s.id)} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",marginRight:4}}>{s.archived?"Restore":"Archive"}</button>
+                            <button onClick={()=>delSPO(s.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+                          </td>
+                        </tr>
+                      );
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+          </>);
+        })()}
+
         {/* PRODUCTS */}
         {tab==="products"&&(()=>{
           const filteredProds=products.filter(p=>{
@@ -747,6 +894,181 @@ export default function CRM() {
         })()}
 
       </div>
+
+      {/* SPO SLIDE-OVER */}
+      {slideSPO&&(()=>{
+        const closeSPOSlide=()=>{setSlideSPOId(null);setItemForm(null);};
+        const lbl2={fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase" as const,color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"};
+        const inp2={fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"} as React.CSSProperties;
+        const fmtPHP2=(v:number)=>`₱${v.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+        const spoItems=slideSPO.items||[];
+        const spoSubtotal=spoItems.reduce((s,i)=>s+i.total,0);
+
+        const addLineItemToSPO=()=>{
+          if(!itemForm||!itemForm.description.trim())return;
+          const newLine:LineItem={id:genId(),description:itemForm.description,quantity:itemForm.quantity,unit:itemForm.unit,unitPrice:itemForm.unitPrice,total:Math.round(itemForm.quantity*itemForm.unitPrice*100)/100};
+          const updated=[...spoItems,newLine];
+          updSPO(slideSPO.id,{items:updated,totalAmount:Math.round(updated.reduce((s,i)=>s+i.total,0)*100)/100});
+          setItemForm(null);
+        };
+        const deleteLineItemFromSPO=(itemId:string)=>{
+          const updated=spoItems.filter(i=>i.id!==itemId);
+          updSPO(slideSPO.id,{items:updated,totalAmount:Math.round(updated.reduce((s,i)=>s+i.total,0)*100)/100});
+        };
+
+        return(
+          <div style={{position:"fixed",inset:0,zIndex:50,display:"flex",justifyContent:"flex-end"}}>
+            <div style={{position:"absolute",inset:0,background:"rgba(0,0,0,0.3)"}} onClick={closeSPOSlide}/>
+            <div style={{position:"relative",width:500,background:"#fff",height:"100%",overflow:"auto",boxShadow:"-4px 0 24px rgba(0,0,0,0.12)",display:"flex",flexDirection:"column"}}>
+              <div style={{padding:"16px 18px",borderBottom:"0.5px solid #e2e6ea",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",position:"sticky",top:0,zIndex:2}}>
+                <div>
+                  <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>{slideSPO.poNumber||`SPO-${slideSPO.id}`}</div>
+                  <div style={{fontSize:12,color:"#8a9ab0",marginTop:1}}>{slideSPO.supplierName||"No supplier"}</div>
+                </div>
+                <button onClick={closeSPOSlide} style={{fontSize:18,color:"#b0bec8",background:"none",border:"none",cursor:"pointer",padding:"4px 8px"}}>✕</button>
+              </div>
+              <div style={{display:"flex",borderBottom:"0.5px solid #e2e6ea"}}>
+                {(["details","items"] as const).map(t=>(
+                  <button key={t} onClick={()=>{setSpoSlideTab(t);setItemForm(null);}}
+                    style={{padding:"10px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,color:spoSlideTab===t?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${spoSlideTab===t?"#185FA5":"transparent"}`,fontWeight:spoSlideTab===t?600:400,whiteSpace:"nowrap" as const}}>
+                    {t==="details"?"Details":`Items (${spoItems.length})`}
+                  </button>
+                ))}
+              </div>
+              <div style={{flex:1,overflow:"auto",padding:18}}>
+
+                {spoSlideTab==="details"&&(
+                  <div style={{display:"flex",flexDirection:"column",gap:12}}>
+                    <div>
+                      <div style={lbl2}>PO Number</div>
+                      <div style={{display:"flex",gap:6}}>
+                        <input style={{...inp2,flex:1,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={slideSPO.poNumber} placeholder="SPO-UP2026-001" onChange={e=>updSPO(slideSPO.id,{poNumber:e.target.value})}/>
+                        <button disabled={!!slideSPO.poNumber} onClick={async()=>{const r=await fetch("/api/docnum?type=SPO").then(x=>x.json());if(r.docNumber)updSPO(slideSPO.id,{poNumber:r.docNumber});}}
+                          style={{fontSize:12,padding:"0 12px",borderRadius:8,border:"0.5px solid #185FA5",background:slideSPO.poNumber?"#f0f2f5":"#EBF3FC",color:slideSPO.poNumber?"#b0bec8":"#185FA5",cursor:slideSPO.poNumber?"not-allowed":"pointer",whiteSpace:"nowrap" as const,fontWeight:600}}>Generate</button>
+                      </div>
+                    </div>
+                    <div>
+                      <div style={lbl2}>Supplier</div>
+                      <select style={inp2} value={slideSPO.supplierId} onChange={e=>{const s=suppliers.find(x=>x.id===e.target.value);updSPO(slideSPO.id,{supplierId:e.target.value,supplierName:s?.name||""});}}>
+                        <option value="">-- Select supplier --</option>
+                        {suppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={lbl2}>Linked Project</div>
+                      <div style={{display:"flex",gap:6}}>
+                        <select style={{...inp2,flex:1}} value={slideSPO.projectId||""} onChange={e=>updSPO(slideSPO.id,{projectId:e.target.value||undefined,clientPoId:undefined})}>
+                          <option value="">-- No project --</option>
+                          {projects.map(p=><option key={p.id} value={p.id}>{p.name} ({p.stage})</option>)}
+                        </select>
+                        {slideSPO.projectId&&<button onClick={()=>updSPO(slideSPO.id,{projectId:undefined,clientPoId:undefined})} style={{fontSize:13,padding:"0 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#8a9ab0",cursor:"pointer"}}>x</button>}
+                      </div>
+                    </div>
+                    <div>
+                      <div style={lbl2}>Client PO</div>
+                      <select style={inp2} value={slideSPO.clientPoId||""} onChange={e=>updSPO(slideSPO.id,{clientPoId:e.target.value?parseInt(e.target.value):undefined})}>
+                        <option value="">-- No client PO --</option>
+                        {(data.pendingPOs||[]).filter(p=>!slideSPO.projectId||p.projectId===slideSPO.projectId).map(p=><option key={p.id} value={p.id}>{p.poNumber||`PO-${p.id}`} -- {p.client}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={lbl2}>Date Issued</div>
+                      <input style={inp2} type="date" value={slideSPO.dateIssued} onChange={e=>updSPO(slideSPO.id,{dateIssued:e.target.value})}/>
+                    </div>
+                    <div>
+                      <div style={lbl2}>Expected Delivery</div>
+                      <input style={inp2} type="date" value={slideSPO.expectedDelivery} onChange={e=>updSPO(slideSPO.id,{expectedDelivery:e.target.value})}/>
+                    </div>
+                    <div>
+                      <div style={lbl2}>Payment Terms</div>
+                      <select style={inp2} value={slideSPO.paymentTerms} onChange={e=>updSPO(slideSPO.id,{paymentTerms:e.target.value})}>
+                        {PAYMENT_TERMS_OPTIONS.map(o=><option key={o}>{o}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <div style={lbl2}>Notes</div>
+                      <textarea style={{...inp2,minHeight:80,resize:"vertical"} as React.CSSProperties} value={slideSPO.notes} placeholder="Additional notes..." onChange={e=>updSPO(slideSPO.id,{notes:e.target.value})}/>
+                    </div>
+                    <div>
+                      <div style={lbl2}>Status</div>
+                      <select style={{...inp2,border:`0.5px solid ${SPO_STATUS_C[slideSPO.status]?.fg||"#e2e6ea"}44`,background:SPO_STATUS_C[slideSPO.status]?.bg||"#f8f9fb",color:SPO_STATUS_C[slideSPO.status]?.fg||"#3a4a5a",fontWeight:600}} value={slideSPO.status} onChange={e=>updSPO(slideSPO.id,{status:e.target.value as SupplierPO["status"]})}>
+                        {SPO_STATUSES.map(s=><option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                )}
+
+                {spoSlideTab==="items"&&(
+                  <div>
+                    <div style={{display:"flex",justifyContent:"flex-end",marginBottom:12}}>
+                      <button onClick={()=>setItemForm({description:"",quantity:1,unit:"pcs",unitPrice:0,productSearch:""})} style={S.addBtn}>+ Add Item</button>
+                    </div>
+                    {itemForm&&(
+                      <div style={{...S.panel,padding:14,marginBottom:12}}>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:10}}>
+                          <div style={{gridColumn:"1/-1"}}>
+                            <div style={lbl2}>Search Products</div>
+                            <select style={S.inp} value={itemForm.productSearch} onChange={e=>{
+                              const prod=products.find(p=>p.id===e.target.value);
+                              if(prod)setItemForm(f=>f?{...f,productSearch:e.target.value,description:prod.description,unit:prod.unit,unitPrice:prod.standardPrice}:f);
+                              else setItemForm(f=>f?{...f,productSearch:e.target.value}:f);
+                            }}>
+                              <option value="">-- Select product to pre-fill --</option>
+                              {products.map(p=><option key={p.id} value={p.id}>{p.code} -- {p.description}</option>)}
+                            </select>
+                          </div>
+                          <div style={{gridColumn:"1/-1"}}>
+                            <div style={lbl2}>Description</div>
+                            <input style={S.inp} value={itemForm.description} placeholder="Item description" onChange={e=>setItemForm(f=>f?{...f,description:e.target.value}:f)}/>
+                          </div>
+                          <div><div style={lbl2}>Qty</div><input style={S.inp} type="number" min="0" value={itemForm.quantity} onChange={e=>setItemForm(f=>f?{...f,quantity:parseFloat(e.target.value)||0}:f)}/></div>
+                          <div><div style={lbl2}>Unit</div><input style={S.inp} value={itemForm.unit} placeholder="pcs" onChange={e=>setItemForm(f=>f?{...f,unit:e.target.value}:f)}/></div>
+                          <div><div style={lbl2}>Unit Price (PHP)</div><input style={S.inp} type="number" min="0" value={itemForm.unitPrice} onChange={e=>setItemForm(f=>f?{...f,unitPrice:parseFloat(e.target.value)||0}:f)}/></div>
+                          <div><div style={lbl2}>Total</div><input style={{...S.inp,background:"#f0f2f5",color:"#8a9ab0"}} readOnly value={fmtPHP2(Math.round(itemForm.quantity*itemForm.unitPrice*100)/100)}/></div>
+                        </div>
+                        <div style={{display:"flex",gap:8}}>
+                          <button onClick={addLineItemToSPO} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"none",background:"#1a2332",color:"#fff",cursor:"pointer",fontWeight:600}}>Add</button>
+                          <button onClick={()=>setItemForm(null)} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Cancel</button>
+                        </div>
+                      </div>
+                    )}
+                    <div style={S.panel}>
+                      <div style={{overflowX:"auto"}}>
+                        <table style={{width:"100%",borderCollapse:"collapse"}}>
+                          <thead><tr>{["#","Description","Qty","Unit","Unit Price","Total",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
+                          <tbody>
+                            {spoItems.length===0&&<tr><td colSpan={7} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"24px"}}>No items yet. Click + Add Item above.</td></tr>}
+                            {spoItems.map((item,i)=>(
+                              <tr key={item.id} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                                <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
+                                <td style={{...S.td,fontWeight:500}}>{item.description}</td>
+                                <td style={{...S.td,fontFamily:"'DM Mono',monospace",textAlign:"right" as const}}>{item.quantity}</td>
+                                <td style={{...S.td,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{item.unit}</td>
+                                <td style={{...S.td,fontFamily:"'DM Mono',monospace",textAlign:"right" as const}}>{fmtPHP2(item.unitPrice)}</td>
+                                <td style={{...S.td,fontFamily:"'DM Mono',monospace",fontWeight:600,textAlign:"right" as const}}>{fmtPHP2(item.total)}</td>
+                                <td style={S.td}><button onClick={()=>deleteLineItemFromSPO(item.id)} style={{fontSize:12,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button></td>
+                              </tr>
+                            ))}
+                          </tbody>
+                        </table>
+                      </div>
+                      {spoItems.length>0&&(
+                        <div style={{padding:"10px 16px",borderTop:"0.5px solid #f0f2f5",display:"flex",justifyContent:"flex-end"}}>
+                          <div style={{display:"flex",gap:32}}>
+                            <span style={{fontSize:13,fontWeight:600,color:"#1a2332"}}>Total</span>
+                            <span style={{fontSize:14,fontFamily:"'DM Mono',monospace",fontWeight:700,color:"#185FA5"}}>{fmtPHP2(spoSubtotal)}</span>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </div>
+                )}
+
+              </div>
+            </div>
+          </div>
+        );
+      })()}
 
       {/* SLIDE-OVER PANEL */}
       {slideOver&&(slideRFQ||slidePO)&&(()=>{
