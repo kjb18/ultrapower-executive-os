@@ -89,6 +89,9 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const [pomoSessions, setPomoSessions] = useState(0);
   const [pomoMIT, setPomoMIT] = useState<number|null>(null);
   const pomoRef = useRef<ReturnType<typeof setInterval>|null>(null);
+  const osTbsRef = useRef<TimeBlock[]>([]);
+  const pomoActiveRef = useRef(false);
+  const touchMITRef = useRef<{mitId:number;mitText:string}|null>(null);
 
   // MIT drag
   const [dragIdx, setDragIdx] = useState<number|null>(null);
@@ -116,6 +119,8 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const [showBrewForm, setShowBrewForm] = useState(false);
   const [newCH, setNewCH] = useState({company:"",sector:"",estDeal:"",priority:"Medium" as CrosshairsTarget["priority"],lastAction:"",nextMove:""});
   const [showCHForm, setShowCHForm] = useState(false);
+  const [activeBlockId, setActiveBlockId] = useState<number|null>(null);
+  const [tbDragOverId, setTbDragOverId] = useState<number|null>(null);
 
   useEffect(() => {
     (async () => {
@@ -193,6 +198,8 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const curBlock = os.tbs.reduce((c,tb)=>tb.time<=nowHH?tb:c, null as TimeBlock|null);
   const dayStr = now.toLocaleDateString("en-PH",{weekday:"short",year:"numeric",month:"short",day:"numeric"}).toUpperCase();
   const timeStr = now.toLocaleTimeString("en-PH",{hour:"2-digit",minute:"2-digit"});
+  osTbsRef.current = os.tbs;
+  pomoActiveRef.current = pomoActive;
 
   // ClickUp MIT sync state
   const [cuEnabled, setCuEnabled] = useState(false);
@@ -275,7 +282,11 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   };
 
   // MIT drag handlers
-  const onDragStart = (idx:number) => setDragIdx(idx);
+  const onDragStart = (e: React.DragEvent, idx: number, mit: MIT) => {
+    setDragIdx(idx);
+    e.dataTransfer.setData("mitId", String(mit.id));
+    e.dataTransfer.setData("mitText", mit.text);
+  };
   const onDragOver = (e:React.DragEvent, idx:number) => { e.preventDefault(); setDragOverIdx(idx); };
   const onDrop = (idx:number) => {
     if (dragIdx===null||dragIdx===idx) { setDragIdx(null); setDragOverIdx(null); return; }
@@ -285,6 +296,52 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
     setOS({mits:reordered});
     setDragIdx(null); setDragOverIdx(null);
   };
+
+  // Time block MIT drop handlers
+  const onTBDragOver = (e: React.DragEvent, tbId: number) => { e.preventDefault(); setTbDragOverId(tbId); };
+  const onTBDrop = (e: React.DragEvent, tbId: number) => {
+    e.preventDefault();
+    const mitId = Number(e.dataTransfer.getData("mitId"));
+    if (!mitId) { setTbDragOverId(null); return; }
+    setOS({ tbs: os.tbs.map(x => x.id === tbId ? {...x, mitId} : x) });
+    setTbDragOverId(null);
+    setActiveBlockId(tbId);
+    if (pomoActive) setPomoMIT(mitId);
+  };
+
+  // Touch drag for MIT to Time Block
+  useEffect(() => {
+    let ghost: HTMLDivElement | null = null;
+    const onMove = (e: PointerEvent) => {
+      if (!touchMITRef.current) return;
+      if (!ghost) {
+        ghost = document.createElement("div");
+        ghost.style.cssText = "position:fixed;z-index:1000;pointer-events:none;background:#EBF3FC;border:1.5px solid #185FA5;border-radius:8px;padding:6px 10px;font-size:12px;color:#185FA5;font-weight:600;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:Plus Jakarta Sans,sans-serif;";
+        document.body.appendChild(ghost);
+      }
+      const t = touchMITRef.current.mitText;
+      ghost.textContent = t.length > 30 ? t.slice(0,30)+"..." : t;
+      ghost.style.left = (e.clientX + 12) + "px";
+      ghost.style.top = (e.clientY - 20) + "px";
+    };
+    const onUp = (e: PointerEvent) => {
+      if (ghost) { document.body.removeChild(ghost); ghost = null; }
+      if (!touchMITRef.current) return;
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const tbEl = el?.closest("[data-tbid]") as HTMLElement | null;
+      if (tbEl) {
+        const tbId = Number(tbEl.dataset.tbid);
+        const mitId = touchMITRef.current.mitId;
+        setOS({ tbs: osTbsRef.current.map(x => x.id === tbId ? {...x, mitId} : x) });
+        setActiveBlockId(tbId);
+        if (pomoActiveRef.current) setPomoMIT(mitId);
+      }
+      touchMITRef.current = null;
+    };
+    document.addEventListener("pointermove", onMove);
+    document.addEventListener("pointerup", onUp);
+    return () => { document.removeEventListener("pointermove", onMove); document.removeEventListener("pointerup", onUp); };
+  }, []);
 
   const callAPI = async (system:string,user:string) => { const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system,user,max_tokens:400})}); const d=await res.json(); return d?.text||null; };
   const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.objective}: ${o.current}/${o.target} ${o.unit}`).join(", ")}. Vitals: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
@@ -374,9 +431,10 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
         </div>
       </div>
 
-      <div style={{padding:"14px 16px",display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+      <div style={{padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
 
-        {/* ── ROW 1: MITs, Pomodoro, Operations, OKR ── */}
+        {/* ── ROW 1: MITs, Pomodoro+TimeBlocks, Operations, OKR ── */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
 
         {/* MITs */}
         <div style={P}>
@@ -391,7 +449,8 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
           {!isCollapsed("mits")&&<>
             {os.mits.map((m,i)=>(
               <div key={m.id}
-                draggable onDragStart={()=>onDragStart(i)} onDragOver={e=>onDragOver(e,i)} onDrop={()=>onDrop(i)} onDragEnd={()=>{setDragIdx(null);setDragOverIdx(null);}}
+                draggable onDragStart={e=>onDragStart(e,i,m)} onDragOver={e=>onDragOver(e,i)} onDrop={()=>onDrop(i)} onDragEnd={()=>{setDragIdx(null);setDragOverIdx(null);}}
+                onPointerDown={e=>{if(e.pointerType!=="mouse")touchMITRef.current={mitId:m.id,mitText:m.text};}}
                 className={`${dragIdx===i?"mit-dragging":""} ${dragOverIdx===i&&dragIdx!==i?"mit-dragover":""}`}
                 style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 0",borderBottom:i===os.mits.length-1?"none":"0.5px solid #f0f2f5"}}>
                 <span className="mit-drag">⠿</span>
@@ -503,6 +562,57 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             </button>
             <button style={{...ABTN,fontSize:12,padding:"6px 12px",background:"#f8f9fb",color:"#6a8aaa",borderColor:"#e2e6ea"}}
               onClick={()=>{setPomoActive(false);setPomoMode("work");setPomoSecs(pomoModeKey==="deepwork"?deepWorkMins*60:pomoModeConfig.workMins*60);}}>↺</button>
+          </div>
+
+          {/* Time Blocks section */}
+          <div style={{width:"100%",marginTop:12,borderTop:"0.5px solid #e2e6ea",paddingTop:10}}>
+            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
+              <div style={{flex:1,fontSize:10,fontWeight:600,letterSpacing:"0.12em",textTransform:"uppercase",color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Time Blocks</div>
+              {curBlock&&<span style={{fontSize:9,background:"#EBF3FC",color:"#185FA5",padding:"2px 7px",borderRadius:20,fontFamily:"'DM Mono',monospace",flexShrink:0}}>NOW: {curBlock.label}</span>}
+              <button style={{...SBTN,fontSize:10,flexShrink:0}} onClick={()=>{const id=os.nid||100;setOS({tbs:[...os.tbs,{id,time:"09:00",label:"New Block",sub:"",type:"Deep Work"}],nid:id+1});}}>+</button>
+            </div>
+            <div style={{maxHeight:240,overflowY:"auto"}}>
+              {os.tbs.map(tb=>(
+                <div key={tb.id}
+                  data-tbid={tb.id}
+                  onDragOver={e=>onTBDragOver(e,tb.id)}
+                  onDrop={e=>onTBDrop(e,tb.id)}
+                  onDragLeave={()=>setTbDragOverId(null)}
+                  onClick={()=>{setActiveBlockId(tb.id);setPomoMIT(tb.mitId||null);}}
+                  style={{display:"flex",alignItems:"flex-start",gap:7,padding:"5px 8px",borderRadius:7,marginBottom:3,cursor:"pointer",background:activeBlockId===tb.id?"#EBF3FC":tbDragOverId===tb.id?"#f0f7ff":"#f8f9fb",border:`0.5px solid ${activeBlockId===tb.id?"#185FA5":tbDragOverId===tb.id?"#c5ddf5":"#e2e6ea"}`,transition:"background 0.12s"}}>
+                  {editTB===tb.id?(
+                    <div style={{display:"flex",gap:4,flex:1,flexWrap:"wrap"}}>
+                      <input style={{...INP,width:52,border:"1px solid #185FA5",fontSize:11}} defaultValue={tb.time} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,time:e.target.value}:x)})} placeholder="08:00"/>
+                      <input style={{...INP,flex:1,border:"1px solid #185FA5",fontSize:11}} defaultValue={tb.label} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,label:e.target.value}:x)})} placeholder="Label"/>
+                      <input style={{...INP,flex:2,border:"1px solid #185FA5",fontSize:11}} defaultValue={tb.sub} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,sub:e.target.value}:x)})} placeholder="Description"/>
+                      <button onClick={e=>{e.stopPropagation();setEditTB(null);}} style={{fontSize:10,padding:"3px 7px",borderRadius:6,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer"}}>Done</button>
+                      <button onClick={e=>{e.stopPropagation();setOS({tbs:os.tbs.filter(x=>x.id!==tb.id)});setEditTB(null);}} style={{fontSize:10,padding:"3px 5px",borderRadius:6,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>✕</button>
+                    </div>
+                  ):(
+                    <>
+                      <div style={{width:3,minHeight:22,borderRadius:2,flexShrink:0,background:TB_COLORS[tb.type]||"#b0bec8",alignSelf:"stretch"}}/>
+                      <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",width:30,flexShrink:0,paddingTop:2}}>{tb.time}</div>
+                      <div style={{flex:1,minWidth:0}}>
+                        <div style={{fontSize:12,color:activeBlockId===tb.id?"#185FA5":"#3a4a5a",fontWeight:500,lineHeight:1.3}}>
+                          {tb.label}
+                          {curBlock?.id===tb.id&&<span style={{fontSize:9,padding:"1px 4px",borderRadius:3,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace",marginLeft:4}}>NOW</span>}
+                        </div>
+                        {tb.sub&&<div style={{fontSize:10,color:"#b0bec8",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{tb.sub}</div>}
+                        {tb.mitId&&(()=>{
+                          const lm=os.mits.find(x=>x.id===tb.mitId);
+                          return lm?(<div style={{fontSize:10,color:lm.done?"#3B6D11":"#185FA5",marginTop:2,display:"flex",alignItems:"center",gap:3}}>
+                            {lm.done&&<span>✓</span>}
+                            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{lm.text.slice(0,26)}{lm.text.length>26?"...":""}</span>
+                            <span onClick={e=>{e.stopPropagation();setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,mitId:undefined}:x)});}} style={{cursor:"pointer",color:"#b0bec8",fontSize:11,flexShrink:0}}>×</span>
+                          </div>):null;
+                        })()}
+                      </div>
+                      <button onClick={e=>{e.stopPropagation();setEditTB(tb.id);}} style={{fontSize:10,color:"#c0c8d0",background:"none",border:"none",cursor:"pointer",padding:"0 2px",flexShrink:0}}>✎</button>
+                    </>
+                  )}
+                </div>
+              ))}
+            </div>
           </div>
         </div>
 
@@ -654,40 +764,49 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
           })}
         </div>
 
-        {/* ── ROW 2: Time Blocks, Crosshairs, Brewing ── */}
+        </div>{/* end Row 1 */}
 
-        {/* Time Blocks */}
+        {/* ── ROW 2: Vitals, Brewing, Crosshairs ── */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
+
+        {/* Vitals */}
         <div style={P}>
           <div style={PL}>
-            <span>Time Blocks</span>
-            <div style={{display:"flex",alignItems:"center",gap:5}}>
-              {curBlock&&!isCollapsed("tbs")&&<span style={{fontSize:9,background:"#EBF3FC",color:"#185FA5",padding:"2px 7px",borderRadius:20,fontFamily:"'DM Mono',monospace"}}>NOW: {curBlock.label}</span>}
-              <button style={SBTN} onClick={()=>{const id=os.nid||100;setOS({tbs:[...os.tbs,{id,time:"09:00",label:"New Block",sub:"",type:"Deep Work"}],nid:id+1});}}>+</button>
-              <button style={SBTN} onClick={()=>toggleCollapse("tbs")}>{isCollapsed("tbs")?"▼":"▲"}</button>
-            </div>
+            <span>Vitals</span>
+            <button onClick={()=>{const id=os.nid||100;setOS({kpis:[...os.kpis,{id,label:"New Vital",value:"--",delta:"0%",up:null}],nid:id+1});setEditKPI(id);}} style={SBTN}>+ Add</button>
           </div>
-          {!isCollapsed("tbs")&&os.tbs.map(tb=>(
-            <div key={tb.id} className="tb-r" onDoubleClick={()=>setEditTB(tb.id)}>
-              {editTB===tb.id?(
-                <div style={{display:"flex",gap:5,flex:1,flexWrap:"wrap"}}>
-                  <input style={{...INP,width:60,border:"1px solid #185FA5",fontSize:12}} defaultValue={tb.time} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,time:e.target.value}:x)})} placeholder="08:00"/>
-                  <input style={{...INP,flex:1,border:"1px solid #185FA5",fontSize:12}} defaultValue={tb.label} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,label:e.target.value}:x)})} placeholder="Label"/>
-                  <input style={{...INP,flex:2,border:"1px solid #185FA5",fontSize:12}} defaultValue={tb.sub} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,sub:e.target.value}:x)})} placeholder="Description"/>
-                  <button onClick={()=>setEditTB(null)} style={{fontSize:11,padding:"4px 8px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer"}}>Done</button>
-                  <button onClick={()=>{setOS({tbs:os.tbs.filter(x=>x.id!==tb.id)});setEditTB(null);}} style={{fontSize:11,padding:"4px 6px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>✕</button>
-                </div>
-              ):(
-                <>
-                  <div style={{width:3,height:30,borderRadius:2,flexShrink:0,background:TB_COLORS[tb.type]||"#b0bec8"}}/>
-                  <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",width:35,flexShrink:0}}>{tb.time}</div>
-                  <div>
-                    <div style={{fontSize:12,color:"#3a4a5a",fontWeight:500}}>{tb.label}{curBlock?.id===tb.id&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace",marginLeft:4}}>NOW</span>}</div>
-                    <div style={{fontSize:10,color:"#b0bec8",marginTop:1}}>{tb.sub}</div>
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
+            {os.kpis.map(k=>(
+              <div key={k.id} className="kpi-c" onDoubleClick={()=>setEditKPI(k.id)}>
+                {editKPI===k.id?(
+                  <div style={{display:"flex",flexDirection:"column",gap:5}}>
+                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:12}} defaultValue={k.label} placeholder="Label" onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,label:e.target.value}:x)})} autoFocus/>
+                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:12}} defaultValue={k.value} placeholder="Value" onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,value:e.target.value}:x)})}/>
+                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:12}} defaultValue={k.delta} placeholder="Delta" onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,delta:e.target.value}:x)})}/>
+                    <div style={{display:"flex",gap:4}}>
+                      {([["▲",true,"#3B6D11","#f0faf5"],["→",null,"#8a9ab0","#f8f9fb"],["▼",false,"#A32D2D","#FEF0F0"]] as [string,boolean|null,string,string][]).map(([icon,val,fg,bg])=>(
+                        <button key={icon} onClick={()=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,up:val}:x)})}
+                          style={{flex:1,padding:"4px 0",borderRadius:6,border:`1.5px solid ${k.up===val?fg:"#e2e6ea"}`,background:k.up===val?bg:"#fff",color:k.up===val?fg:"#b0bec8",cursor:"pointer",fontSize:12,fontWeight:600}}>
+                          {icon}
+                        </button>
+                      ))}
+                    </div>
+                    <div style={{display:"flex",gap:4}}>
+                      <button onClick={()=>setEditKPI(null)} style={{flex:1,padding:"5px",borderRadius:6,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>Done</button>
+                      <button onClick={()=>{setOS({kpis:os.kpis.filter(x=>x.id!==k.id)});setEditKPI(null);}} style={{padding:"5px 8px",borderRadius:6,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:12}}>Delete</button>
+                    </div>
                   </div>
-                </>
-              )}
-            </div>
-          ))}
+                ):(
+                  <>
+                    <div style={{fontSize:18,fontWeight:600,color:k.up===true?"#3B6D11":k.up===false?"#A32D2D":"#1a2332",fontFamily:"'DM Mono',monospace"}}>{k.value}</div>
+                    <div style={{fontSize:10,color:"#b0bec8",letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:"'DM Mono',monospace",marginTop:2}}>{k.label}</div>
+                    <div style={{fontSize:10,fontFamily:"'DM Mono',monospace",marginTop:3,color:k.up===true?"#3B6D11":k.up===false?"#A32D2D":"#8a9ab0"}}>{k.up===true?"▲ ":k.up===false?"▼ ":"→ "}{k.delta}</div>
+                  </>
+                )}
+              </div>
+            ))}
+          </div>
+          <div style={{fontSize:10,color:"#b0bec8",marginTop:6,textAlign:"right"}}>double-tap to edit</div>
         </div>
 
         {/* Crosshairs */}
@@ -803,53 +922,13 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
           ))}
         </div>
 
-        {/* Row 2 filler -- empty cell if only 3 panels */}
-        <div style={{display:"none"}}/>
+        </div>{/* end Row 2 */}
 
-        {/* ── ROW 3: Vitals, Calendar, AI Insight ── */}
-
-        {/* Vitals */}
-        <div style={P}>
-          <div style={PL}>
-            <span>Vitals</span>
-            <button onClick={()=>{const id=os.nid||100;setOS({kpis:[...os.kpis,{id,label:"New Vital",value:"—",delta:"0%",up:null}],nid:id+1});setEditKPI(id);}} style={SBTN}>+ Add</button>
-          </div>
-          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-            {os.kpis.map(k=>(
-              <div key={k.id} className="kpi-c" onDoubleClick={()=>setEditKPI(k.id)}>
-                {editKPI===k.id?(
-                  <div style={{display:"flex",flexDirection:"column",gap:5}}>
-                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:12}} defaultValue={k.label} placeholder="Label" onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,label:e.target.value}:x)})} autoFocus/>
-                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:12}} defaultValue={k.value} placeholder="Value" onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,value:e.target.value}:x)})}/>
-                    <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:12}} defaultValue={k.delta} placeholder="Delta" onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,delta:e.target.value}:x)})}/>
-                    <div style={{display:"flex",gap:4}}>
-                      {([["▲",true,"#3B6D11","#f0faf5"],["→",null,"#8a9ab0","#f8f9fb"],["▼",false,"#A32D2D","#FEF0F0"]] as [string,boolean|null,string,string][]).map(([icon,val,fg,bg])=>(
-                        <button key={icon} onClick={()=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,up:val}:x)})}
-                          style={{flex:1,padding:"4px 0",borderRadius:6,border:`1.5px solid ${k.up===val?fg:"#e2e6ea"}`,background:k.up===val?bg:"#fff",color:k.up===val?fg:"#b0bec8",cursor:"pointer",fontSize:12,fontWeight:600}}>
-                          {icon}
-                        </button>
-                      ))}
-                    </div>
-                    <div style={{display:"flex",gap:4}}>
-                      <button onClick={()=>setEditKPI(null)} style={{flex:1,padding:"5px",borderRadius:6,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>Done</button>
-                      <button onClick={()=>{setOS({kpis:os.kpis.filter(x=>x.id!==k.id)});setEditKPI(null);}} style={{padding:"5px 8px",borderRadius:6,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:12}}>Delete</button>
-                    </div>
-                  </div>
-                ):(
-                  <>
-                    <div style={{fontSize:18,fontWeight:600,color:k.up===true?"#3B6D11":k.up===false?"#A32D2D":"#1a2332",fontFamily:"'DM Mono',monospace"}}>{k.value}</div>
-                    <div style={{fontSize:10,color:"#b0bec8",letterSpacing:"0.08em",textTransform:"uppercase",fontFamily:"'DM Mono',monospace",marginTop:2}}>{k.label}</div>
-                    <div style={{fontSize:10,fontFamily:"'DM Mono',monospace",marginTop:3,color:k.up===true?"#3B6D11":k.up===false?"#A32D2D":"#8a9ab0"}}>{k.up===true?"▲ ":k.up===false?"▼ ":"→ "}{k.delta}</div>
-                  </>
-                )}
-              </div>
-            ))}
-          </div>
-          <div style={{fontSize:10,color:"#b0bec8",marginTop:6,textAlign:"right"}}>double-tap to edit</div>
-        </div>
+        {/* ── ROW 3: Calendar, AI Insight ── */}
+        <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:12}}>
 
         {/* Calendar */}
-        <div style={{gridColumn:"span 2"}}>
+        <div>
           <Calendar timeBlocks={os.tbs}/>
         </div>
 
@@ -862,6 +941,8 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
           </button>
           {insight&&<div style={{marginTop:10,padding:"12px 14px",borderRadius:9,background:"#f8f9fb",border:"0.5px solid #e2e6ea",fontSize:13,color:"#1a2332",lineHeight:1.75,borderLeft:"3px solid #185FA5"}}>{insight}</div>}
         </div>
+
+        </div>{/* end Row 3 */}
 
       </div>
 

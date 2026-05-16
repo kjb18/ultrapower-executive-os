@@ -98,7 +98,7 @@ export interface MIT { id: number; text: string; done: boolean; doneAt?: number;
 export interface MITArchiveEntry { text: string; doneAt: number; dayKey: string; }
 export interface OKR { id: number; objective: string; keyResult: string; current: number; target: number; unit: string; }
 export interface KPI { id: number; label: string; value: string; delta: string; up: boolean | null; } // displayed as "Vitals" in UI
-export interface TimeBlock { id: number; time: string; label: string; sub: string; type: string; }
+export interface TimeBlock { id: number; time: string; label: string; sub: string; type: string; mitId?: number; }
 export interface BrainItem { id: number; type: BrainType; text: string; }
 export interface MFPDay {
   mood: string | null; moodTime: string | null;
