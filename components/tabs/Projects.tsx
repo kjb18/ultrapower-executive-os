@@ -55,7 +55,7 @@ function daysSince(dateStr:string) { return Math.floor((Date.now()-new Date(date
 const Spinner = () => <span style={{width:14,height:14,border:"2px solid #e2e6ea",borderTopColor:"#185FA5",borderRadius:"50%",animation:"spin 0.7s linear infinite",display:"inline-block"}}/>;
 
 export default function Projects() {
-  const [view, setView] = useState<"list"|"detail"|"expenses">("list");
+  const [view, setView] = useState<"list"|"detail"|"expenses"|"reports">("list");
   const [projects, setProjects] = useState<Project[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project|null>(null);
@@ -66,6 +66,11 @@ export default function Projects() {
   const [filterStage, setFilterStage] = useState("All");
   const [filterClient, setFilterClient] = useState("");
   const [expenseTab, setExpenseTab] = useState<"project"|"opex">("project");
+
+  // Reports state
+  const _phNow = new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
+  const [rptMonth, setRptMonth] = useState(_phNow.getMonth()+1);
+  const [rptYear, setRptYear] = useState(_phNow.getFullYear());
 
   // Assets tab system
   const [assetTab, setAssetTab] = useState<"overview"|"rfqspos"|"sourcing"|"documents">("overview");
@@ -255,9 +260,9 @@ export default function Projects() {
           <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Pipeline · Finance · Operations</div>
         </div>
         <div style={{display:"flex"}}>
-          {(["list","expenses"] as const).map(v=>(
+          {(["list","expenses","reports"] as const).map(v=>(
             <button key={v} style={S.tabBtn(view===v)} onClick={()=>setView(v)}>
-              {v==="list"?"Projects":"Expenses"}
+              {v==="list"?"Projects":v==="expenses"?"Expenses":"Reports"}
             </button>
           ))}
         </div>
@@ -879,6 +884,234 @@ export default function Projects() {
               </div>
             </div>
           </>}
+
+          {/* REPORTS VIEW */}
+          {view==="reports"&&(()=>{
+            const MONTH_NAMES = ["January","February","March","April","May","June","July","August","September","October","November","December"];
+            const YEARS = [2024,2025,2026,2027];
+            const rptKey = `${rptYear}-${String(rptMonth).padStart(2,"0")}`;
+            const rptLabel = `${MONTH_NAMES[rptMonth-1]} ${rptYear}`;
+
+            // VAT Summary computations
+            const monthProjects = projects.filter(p=>p.invoiceDate?.startsWith(rptKey));
+            const vatableProjects = monthProjects.filter(p=>p.vatType==="VAT Inclusive");
+            const zeroRatedProjects = monthProjects.filter(p=>p.vatType==="Zero Rated");
+            const exemptProjects = monthProjects.filter(p=>p.vatType==="Exempt");
+            const vatableSales = vatableProjects.reduce((s,p)=>s+(p.invoiceAmount||0),0);
+            const zeroRatedSales = zeroRatedProjects.reduce((s,p)=>s+(p.invoiceAmount||0),0);
+            const exemptSales = exemptProjects.reduce((s,p)=>s+(p.invoiceAmount||0),0);
+            const totalSales = vatableSales+zeroRatedSales+exemptSales;
+            const outputVAT = vatableSales*0.12;
+            const netVatableSales = vatableSales/1.12;
+
+            const vatExpenses = expenses.filter(e=>e.date?.startsWith(rptKey)&&e.vatApplicable);
+            const totalVatablePurchases = vatExpenses.reduce((s,e)=>s+e.amount,0);
+            const inputVAT = vatExpenses.reduce((s,e)=>s+e.vatAmount,0);
+            const netVatablePurchases = vatExpenses.reduce((s,e)=>s+(e.amount-e.vatAmount),0);
+            const vatPayable = outputVAT-inputVAT;
+
+            // P&L computations
+            const cogsExpenses = expenses.filter(e=>e.date?.startsWith(rptKey)&&e.type==="COGS");
+            const opexExpenses = expenses.filter(e=>e.date?.startsWith(rptKey)&&e.type==="OpEx");
+            const totalRevenue = totalSales;
+            const totalCOGS = cogsExpenses.reduce((s,e)=>s+e.amount,0);
+            const totalOpEx = opexExpenses.reduce((s,e)=>s+e.amount,0);
+            const grossProfit = totalRevenue-totalCOGS;
+            const netProfit = grossProfit-totalOpEx;
+            const grossMarginPct = totalRevenue>0 ? Math.round((grossProfit/totalRevenue)*1000)/10 : 0;
+            const netMarginPct = totalRevenue>0 ? Math.round((netProfit/totalRevenue)*1000)/10 : 0;
+
+            // Group COGS by project
+            const cogsByProject: Record<string,number> = {};
+            cogsExpenses.forEach(e=>{ const k=e.projectName||"Unassigned"; cogsByProject[k]=(cogsByProject[k]||0)+e.amount; });
+            // Group OpEx by category
+            const opexByCategory: Record<string,number> = {};
+            opexExpenses.forEach(e=>{ const k=e.category||"Uncategorized"; opexByCategory[k]=(opexByCategory[k]||0)+e.amount; });
+
+            const hasData = monthProjects.length>0||vatExpenses.length>0||cogsExpenses.length>0||opexExpenses.length>0;
+
+            const exportVATCSV = () => {
+              const rows: string[][] = [
+                ["Category","Description","Amount","VAT Amount"],
+                ["Sales","VATable Sales (12%)",vatableSales.toFixed(2),""],
+                ["Sales","Zero Rated Sales",zeroRatedSales.toFixed(2),""],
+                ["Sales","VAT Exempt Sales",exemptSales.toFixed(2),""],
+                ["Sales","Total Sales",totalSales.toFixed(2),""],
+                ["Sales","Output VAT (12%)",outputVAT.toFixed(2),""],
+                ["Sales","Net VATable Sales",netVatableSales.toFixed(2),""],
+                ["Purchases","Total VATable Purchases",totalVatablePurchases.toFixed(2),""],
+                ["Purchases","Input VAT (12%)",inputVAT.toFixed(2),""],
+                ["Purchases","Net VATable Purchases",netVatablePurchases.toFixed(2),""],
+                ["VAT","Output VAT",outputVAT.toFixed(2),""],
+                ["VAT","Less Input VAT",inputVAT.toFixed(2),""],
+                ["VAT","VAT Payable / (Creditable)",vatPayable.toFixed(2),""],
+              ];
+              const csv = rows.map(r=>r.map(c=>`"${c}"`).join(",")).join("\n");
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+              a.download = `UltraPower_VAT_${rptKey}.csv`;
+              a.click();
+            };
+
+            const exportPLCSV = () => {
+              const rows: string[][] = [["Section","Description","Client / Category","Amount"]];
+              monthProjects.forEach(p=>rows.push(["Revenue",p.name,p.client,String(p.invoiceAmount||0)]));
+              rows.push(["Revenue","Total Revenue","",totalRevenue.toFixed(2)]);
+              cogsExpenses.forEach(e=>rows.push(["COGS",e.description||e.category,e.projectName||"",e.amount.toFixed(2)]));
+              rows.push(["COGS","Total COGS","",totalCOGS.toFixed(2)]);
+              opexExpenses.forEach(e=>rows.push(["OpEx",e.description||e.category,e.category||"",e.amount.toFixed(2)]));
+              rows.push(["OpEx","Total OpEx","",totalOpEx.toFixed(2)]);
+              rows.push(["Summary","Gross Revenue","",totalRevenue.toFixed(2)]);
+              rows.push(["Summary","Less Total COGS","",totalCOGS.toFixed(2)]);
+              rows.push(["Summary","Gross Profit","",grossProfit.toFixed(2)]);
+              rows.push(["Summary","Less Total OpEx","",totalOpEx.toFixed(2)]);
+              rows.push(["Summary","Net Operating Profit","",netProfit.toFixed(2)]);
+              rows.push(["Summary","Gross Margin %","",`${grossMarginPct}%`]);
+              rows.push(["Summary","Net Margin %","",`${netMarginPct}%`]);
+              const csv = rows.map(r=>r.map(c=>`"${c}"`).join(",")).join("\n");
+              const a = document.createElement("a");
+              a.href = URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+              a.download = `UltraPower_PL_${rptKey}.csv`;
+              a.click();
+            };
+
+            const mRow = (label:string,value:string,opts?:{bold?:boolean;color?:string;indent?:boolean}) => (
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                <span style={{fontSize:13,color:opts?.color||(opts?.bold?"#1a2332":"#4a6a8a"),fontWeight:opts?.bold?600:400,paddingLeft:opts?.indent?16:0}}>{label}</span>
+                <span style={{fontSize:13,fontFamily:"'DM Mono',monospace",color:opts?.color||"#1a2332",fontWeight:opts?.bold?600:400}}>{value}</span>
+              </div>
+            );
+
+            const sectionHdr = (label:string) => (
+              <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.12em",textTransform:"uppercase" as const,color:"#b0bec8",fontFamily:"'DM Mono',monospace",padding:"12px 0 6px",borderBottom:"2px solid #e2e6ea",marginBottom:2}}>{label}</div>
+            );
+
+            return (
+              <div>
+                {/* Month/Year selector */}
+                <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:16,flexWrap:"wrap" as const}}>
+                  <select style={{...S.inp,width:130}} value={rptMonth} onChange={e=>setRptMonth(Number(e.target.value))}>
+                    {MONTH_NAMES.map((m,i)=><option key={i+1} value={i+1}>{m}</option>)}
+                  </select>
+                  <select style={{...S.inp,width:90}} value={rptYear} onChange={e=>setRptYear(Number(e.target.value))}>
+                    {YEARS.map(y=><option key={y}>{y}</option>)}
+                  </select>
+                  <div style={{marginLeft:"auto",display:"flex",gap:8}}>
+                    <button onClick={exportVATCSV} style={{...S.addBtn,background:"#f0faf5",color:"#3B6D11",borderColor:"#3B6D11"}}>↓ VAT CSV</button>
+                    <button onClick={exportPLCSV} style={{...S.addBtn,background:"#EBF3FC",color:"#185FA5",borderColor:"#185FA5"}}>↓ P&amp;L CSV</button>
+                  </div>
+                </div>
+
+                {!hasData?(
+                  <div style={{...S.card,padding:32,textAlign:"center",color:"#b0bec8",fontSize:13}}>
+                    No financial data for {rptLabel}. Projects must have an invoice date set and expenses must have a date in this month to appear in reports.
+                  </div>
+                ):(
+                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:14,alignItems:"start"}}>
+
+                    {/* VAT Summary Report */}
+                    <div style={{...S.card,padding:18}}>
+                      <div style={{fontSize:14,fontWeight:600,color:"#1a2332",fontFamily:"'DM Mono',monospace",marginBottom:14}}>VAT Summary Report -- {rptLabel}</div>
+
+                      {sectionHdr("Sales")}
+                      {mRow("VATable Sales (12%)",fmt(vatableSales))}
+                      {mRow("Zero Rated Sales",fmt(zeroRatedSales))}
+                      {mRow("VAT Exempt Sales",fmt(exemptSales))}
+                      {mRow("Total Sales",fmt(totalSales),{bold:true})}
+                      {mRow("Output VAT (12%)",fmt(outputVAT),{indent:true,color:"#534AB7"})}
+                      {mRow("Net VATable Sales",fmt(netVatableSales),{indent:true,color:"#185FA5"})}
+
+                      {sectionHdr("Purchases")}
+                      {mRow("Total VATable Purchases",fmt(totalVatablePurchases))}
+                      {mRow("Input VAT (12%)",fmt(inputVAT),{indent:true,color:"#854F0B"})}
+                      {mRow("Net VATable Purchases",fmt(netVatablePurchases),{indent:true,color:"#185FA5"})}
+
+                      {sectionHdr("VAT Payable")}
+                      {mRow("Output VAT",fmt(outputVAT))}
+                      {mRow("Less Input VAT",fmt(inputVAT))}
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderTop:"2px solid #1a2332",marginTop:4}}>
+                        <span style={{fontSize:14,fontWeight:600,color:"#1a2332"}}>VAT Payable / (Creditable)</span>
+                        <span style={{fontSize:15,fontWeight:700,fontFamily:"'DM Mono',monospace",color:vatPayable>=0?"#A32D2D":"#3B6D11"}}>
+                          {vatPayable>=0?fmt(vatPayable):`(${fmt(Math.abs(vatPayable))})`}
+                        </span>
+                      </div>
+                      {vatPayable<0&&<div style={{fontSize:11,color:"#3B6D11",fontFamily:"'DM Mono',monospace",textAlign:"right",marginTop:2}}>Creditable excess input VAT</div>}
+
+                      <div style={{marginTop:14,padding:"10px 12px",borderRadius:8,background:"#f8f9fb",border:"0.5px solid #e2e6ea",fontSize:11,color:"#8a9ab0",lineHeight:1.5}}>
+                        For reference only. Consult your accountant for official BIR filing.
+                      </div>
+                    </div>
+
+                    {/* Monthly P&L Summary */}
+                    <div style={{...S.card,padding:18}}>
+                      <div style={{fontSize:14,fontWeight:600,color:"#1a2332",fontFamily:"'DM Mono',monospace",marginBottom:14}}>Monthly P&amp;L -- {rptLabel}</div>
+
+                      {sectionHdr("Revenue")}
+                      {monthProjects.length===0
+                        ? <div style={{fontSize:12,color:"#b0bec8",padding:"8px 0"}}>No invoiced projects this month.</div>
+                        : monthProjects.map(p=>(
+                          <div key={p.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                            <div>
+                              <div style={{fontSize:12,color:"#1a2332",fontWeight:500}}>{p.name}</div>
+                              <div style={{fontSize:10,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{p.client} · {p.vatType}</div>
+                            </div>
+                            <span style={{fontSize:13,fontFamily:"'DM Mono',monospace",color:"#3B6D11"}}>{fmt(p.invoiceAmount)}</span>
+                          </div>
+                        ))
+                      }
+                      {monthProjects.length>0&&mRow("Total Revenue",fmt(totalRevenue),{bold:true,color:"#3B6D11"})}
+
+                      {sectionHdr("Cost of Goods Sold")}
+                      {Object.keys(cogsByProject).length===0
+                        ? <div style={{fontSize:12,color:"#b0bec8",padding:"8px 0"}}>No COGS expenses this month.</div>
+                        : Object.entries(cogsByProject).map(([k,v])=>(
+                          <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                            <span style={{fontSize:12,color:"#4a6a8a"}}>{k}</span>
+                            <span style={{fontSize:13,fontFamily:"'DM Mono',monospace",color:"#A32D2D"}}>{fmt(v)}</span>
+                          </div>
+                        ))
+                      }
+                      {Object.keys(cogsByProject).length>0&&mRow("Total COGS",fmt(totalCOGS),{bold:true,color:"#A32D2D"})}
+
+                      {sectionHdr("Operating Expenses")}
+                      {Object.keys(opexByCategory).length===0
+                        ? <div style={{fontSize:12,color:"#b0bec8",padding:"8px 0"}}>No OpEx this month.</div>
+                        : Object.entries(opexByCategory).map(([k,v])=>(
+                          <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"6px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                            <span style={{fontSize:12,color:"#4a6a8a"}}>{k}</span>
+                            <span style={{fontSize:13,fontFamily:"'DM Mono',monospace",color:"#854F0B"}}>{fmt(v)}</span>
+                          </div>
+                        ))
+                      }
+                      {Object.keys(opexByCategory).length>0&&mRow("Total OpEx",fmt(totalOpEx),{bold:true,color:"#854F0B"})}
+
+                      {sectionHdr("Summary")}
+                      {mRow("Gross Revenue",fmt(totalRevenue))}
+                      {mRow("Less Total COGS",`(${fmt(totalCOGS)})`,{color:"#A32D2D"})}
+                      <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                        <span style={{fontSize:13,fontWeight:600,color:"#1a2332"}}>Gross Profit</span>
+                        <span style={{fontSize:13,fontWeight:600,fontFamily:"'DM Mono',monospace",color:grossProfit>=0?"#3B6D11":"#A32D2D"}}>{fmt(grossProfit)}</span>
+                      </div>
+                      {mRow("Less Total OpEx",`(${fmt(totalOpEx)})`,{color:"#854F0B"})}
+                      <div style={{display:"flex",justifyContent:"space-between",padding:"10px 0",borderTop:"2px solid #1a2332",marginTop:4}}>
+                        <span style={{fontSize:14,fontWeight:600,color:"#1a2332"}}>Net Operating Profit</span>
+                        <span style={{fontSize:15,fontWeight:700,fontFamily:"'DM Mono',monospace",color:netProfit>=0?"#3B6D11":"#A32D2D"}}>{fmt(netProfit)}</span>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",padding:"5px 0"}}>
+                        <span style={{fontSize:12,color:"#8a9ab0"}}>Gross Margin</span>
+                        <span style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:grossMarginPct>=0?"#3B6D11":"#A32D2D",fontWeight:600}}>{grossMarginPct}%</span>
+                      </div>
+                      <div style={{display:"flex",justifyContent:"space-between",padding:"5px 0"}}>
+                        <span style={{fontSize:12,color:"#8a9ab0"}}>Net Margin</span>
+                        <span style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:netMarginPct>=0?"#3B6D11":"#A32D2D",fontWeight:600}}>{netMarginPct}%</span>
+                      </div>
+                    </div>
+
+                  </div>
+                )}
+              </div>
+            );
+          })()}
 
         </div>
       </div>
