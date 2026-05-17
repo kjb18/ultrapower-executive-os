@@ -42,10 +42,16 @@ interface Expense {
 }
 
 interface CRMDoc { id:string; type:string; number:string; date:string; amount:string; status:string; html?:string; }
-interface CRMRFQRecord { id:number; rfqNumber:string; client:string; subject:string; dateSubmitted:string; deadline:string; status:string; notes:string; projectId?:string; documents?:CRMDoc[]; archived?:boolean; }
+interface LocalLineItem { id:string; description:string; quantity:number; unit:string; unitPrice:number; total:number; productId?:string; }
+interface CatalogProduct { id:string; code:string; description:string; unit:string; standardPrice:number; category:string; }
+interface CatalogSupplier { id:string; name:string; contactPerson:string; email:string; phone:string; categories:string[]; }
+interface LocalCRMContact { id:number; name:string; company:string; email?:string; phone?:string; role?:string; }
+interface QSSupplier { name:string; type:string; price_range:string; unit:string; stock?:string; lead_time:string; moq:string; certifications?:string; import_notes?:string; notes?:string; url?:string; }
+interface QSResult { name:string; summary:string; local_available:boolean; local_suppliers:QSSupplier[]; international_suppliers:QSSupplier[]; recommendation:string; quotation_hint:string; }
+interface CRMRFQRecord { id:number; rfqNumber:string; client:string; subject:string; dateSubmitted:string; deadline:string; status:string; notes:string; projectId?:string; documents?:CRMDoc[]; archived?:boolean; lineItems?:LocalLineItem[]; contactPersonId?:number; contactPersonName?:string; }
 interface CRMPORecord { id:number; poNumber:string; client:string; items:string; value:string; dateReceived:string; expectedDelivery:string; supplierStatus:string; status:string; notes:string; projectId?:string; documents?:CRMDoc[]; archived?:boolean; }
-interface CRMSPORecord { id:number; poNumber:string; supplierName:string; projectId?:string; totalAmount:number; expectedDelivery:string; status:string; archived?:boolean; items?:Array<{id:string;description:string;quantity:number;unit:string;unitPrice:number;total:number}>; }
-interface CRMStore { pendingRFQs?:CRMRFQRecord[]; pendingPOs?:CRMPORecord[]; supplierPOs?:CRMSPORecord[]; [key:string]:unknown; }
+interface CRMSPORecord { id:number; poNumber:string; supplierId?:string; supplierName:string; projectId?:string; totalAmount:number; expectedDelivery:string; status:string; archived?:boolean; items?:LocalLineItem[]; }
+interface CRMStore { pendingRFQs?:CRMRFQRecord[]; pendingPOs?:CRMPORecord[]; supplierPOs?:CRMSPORecord[]; contacts?:LocalCRMContact[]; [key:string]:unknown; }
 interface SourcingSession { id:string; query?:string; subject?:string; date?:string; projectId?:string; [key:string]:unknown; }
 
 function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2,7)}`; }
@@ -80,6 +86,20 @@ export default function Projects() {
   const [showLinkPO, setShowLinkPO] = useState(false);
   const [showLinkSourcing, setShowLinkSourcing] = useState(false);
   const [showLinkSPO, setShowLinkSPO] = useState(false);
+  const [showNewRFQ, setShowNewRFQ] = useState(false);
+  const [showNewSPO, setShowNewSPO] = useState(false);
+  const [showQuickSource, setShowQuickSource] = useState(false);
+  const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
+  const [catalogSuppliers, setCatalogSuppliers] = useState<CatalogSupplier[]>([]);
+  const [newRFQForm, setNewRFQForm] = useState({subject:"",deadline:"",status:"Pending",notes:"",contactPersonName:"",lineItems:[] as LocalLineItem[]});
+  const [newSPOForm, setNewSPOForm] = useState({supplierName:"",supplierId:"",expectedDelivery:"",status:"Draft",notes:"",items:[] as LocalLineItem[]});
+  const [quickSourceItems, setQuickSourceItems] = useState([{name:"",quantity:"1",specs:""}]);
+  const [quickSourceResults, setQuickSourceResults] = useState<QSResult[]>([]);
+  const [quickSourceLoading, setQuickSourceLoading] = useState(false);
+  const [quickSourceSessionName, setQuickSourceSessionName] = useState("");
+  const [quickSourceSaved, setQuickSourceSaved] = useState(false);
+  const [qsExpandedItem, setQsExpandedItem] = useState<number|null>(null);
+  const [qsWebSearch, setQsWebSearch] = useState(true);
 
   // New project form
   const [np, setNP] = useState({name:"",client:"",stage:"RFQ Submitted" as Stage,vatType:"VAT Inclusive" as VatType,rfqDate:new Date().toISOString().split("T")[0],notes:""});
@@ -92,17 +112,32 @@ export default function Projects() {
   useEffect(() => {
     if (!selectedProject) return;
     setAssetTab("overview");
-    setShowLinkRFQ(false);
-    setShowLinkPO(false);
-    setShowLinkSourcing(false);
-    setShowLinkSPO(false);
-    Promise.all([
-      kvGet<CRMStore>("crm"),
-      kvGet<SourcingSession[]>("sourcing:history"),
-    ]).then(([crm, src]) => {
-      setAllCRM(crm || {});
-      setAllSourcing(src || []);
-    });
+    setShowLinkRFQ(false); setShowLinkPO(false); setShowLinkSourcing(false); setShowLinkSPO(false);
+    setShowNewRFQ(false); setShowNewSPO(false); setShowQuickSource(false);
+    setQuickSourceResults([]); setQuickSourceSaved(false); setQsExpandedItem(null);
+    setQuickSourceItems([{name:"",quantity:"1",specs:""}]);
+    setQuickSourceSessionName(selectedProject.name);
+    setNewRFQForm({subject:"",deadline:"",status:"Pending",notes:"",contactPersonName:"",lineItems:[]});
+    setNewSPOForm({supplierName:"",supplierId:"",expectedDelivery:"",status:"Draft",notes:"",items:[]});
+    const doFetch = async () => {
+      try {
+        const [crm, src] = await Promise.all([
+          kvGet<CRMStore>("crm"),
+          kvGet<SourcingSession[]>("sourcing:history"),
+        ]);
+        setAllCRM(crm || {}); setAllSourcing(src || []);
+      } catch(e) { console.error(e); setAllCRM({}); setAllSourcing([]); }
+      try {
+        const [prodRes, suppRes] = await Promise.all([
+          fetch("/api/catalog?type=products"),
+          fetch("/api/catalog?type=suppliers"),
+        ]);
+        const [prodData, suppData] = await Promise.all([prodRes.json(), suppRes.json()]);
+        setCatalogProducts(prodData.products||[]);
+        setCatalogSuppliers(suppData.suppliers||[]);
+      } catch { /* catalog optional */ }
+    };
+    doFetch();
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
 
@@ -212,6 +247,111 @@ export default function Projects() {
     await kvSet("crm",updated); setAllCRM(updated);
   };
 
+  const generateDocNum = async (type:string):Promise<string> => {
+    try { const r=await fetch(`/api/docnum?type=${type}`);const d=await r.json();return d.docNumber||`${type}-${Date.now()}`; }
+    catch { return `${type}-${Date.now()}`; }
+  };
+
+  const liUpdate = (items:LocalLineItem[],idx:number,field:keyof LocalLineItem,value:string|number):LocalLineItem[] =>
+    items.map((it,i)=>{
+      if(i!==idx) return it;
+      const next={...it,[field]:value} as LocalLineItem;
+      if(field==="quantity"||field==="unitPrice") next.total=Number(next.quantity)*Number(next.unitPrice);
+      return next;
+    });
+
+  const saveNewRFQ = async () => {
+    if(!selectedProject||!newRFQForm.subject.trim()) return;
+    setSaving(true);
+    try {
+      const docNumber=await generateDocNum("RFQ");
+      const crm=await kvGet<CRMStore>("crm")||{};
+      const rfqs=crm.pendingRFQs||[];
+      const newId=rfqs.length>0?Math.max(...rfqs.map(r=>r.id))+1:1;
+      const newRFQ:CRMRFQRecord={
+        id:newId,rfqNumber:docNumber,client:selectedProject.client,subject:newRFQForm.subject,
+        dateSubmitted:new Date().toISOString().split("T")[0],deadline:newRFQForm.deadline,
+        status:newRFQForm.status,notes:newRFQForm.notes,projectId:selectedProject.id,
+        lineItems:newRFQForm.lineItems,
+        contactPersonName:newRFQForm.contactPersonName||undefined,documents:[],archived:false,
+      };
+      const updated:CRMStore={...crm,pendingRFQs:[...rfqs,newRFQ]};
+      await kvSet("crm",updated); setAllCRM(updated);
+      setNewRFQForm({subject:"",deadline:"",status:"Pending",notes:"",contactPersonName:"",lineItems:[]});
+      setShowNewRFQ(false);
+    } catch(e){console.error(e);}
+    setSaving(false);
+  };
+
+  const saveNewSPO = async () => {
+    if(!selectedProject||!newSPOForm.supplierName.trim()) return;
+    setSaving(true);
+    try {
+      const docNumber=await generateDocNum("SPO");
+      const crm=await kvGet<CRMStore>("crm")||{};
+      const spos=crm.supplierPOs||[];
+      const newId=spos.length>0?Math.max(...spos.map(s=>s.id))+1:1;
+      const total=newSPOForm.items.reduce((s,it)=>s+it.total,0);
+      const newSPO:CRMSPORecord={
+        id:newId,poNumber:docNumber,supplierName:newSPOForm.supplierName,
+        supplierId:newSPOForm.supplierId||undefined,projectId:selectedProject.id,
+        totalAmount:total,expectedDelivery:newSPOForm.expectedDelivery,
+        status:newSPOForm.status,items:newSPOForm.items,archived:false,
+      };
+      const updated:CRMStore={...crm,supplierPOs:[...spos,newSPO]};
+      await kvSet("crm",updated); setAllCRM(updated);
+      setNewSPOForm({supplierName:"",supplierId:"",expectedDelivery:"",status:"Draft",notes:"",items:[]});
+      setShowNewSPO(false);
+    } catch(e){console.error(e);}
+    setSaving(false);
+  };
+
+  const runQuickSource = async () => {
+    const validItems=quickSourceItems.filter(i=>i.name.trim());
+    if(!validItems.length) return;
+    setQuickSourceLoading(true); setQuickSourceResults([]); setQuickSourceSaved(false);
+    try {
+      const res=await fetch("/api/sourcing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:validItems.map(i=>({name:i.name,quantity:i.quantity,specs:i.specs})),useWebSearch:qsWebSearch})});
+      const data=await res.json();
+      setQuickSourceResults(data.items||[]);
+      if((data.items||[]).length>0) setQsExpandedItem(0);
+    } catch(e){console.error(e);}
+    setQuickSourceLoading(false);
+  };
+
+  const saveQuickSourceSession = async () => {
+    if(!quickSourceResults.length||!selectedProject) return;
+    try {
+      const history=await kvGet<SourcingSession[]>("sourcing:history")||[];
+      const session:SourcingSession={
+        id:genId(),
+        query:quickSourceSessionName||selectedProject.name,
+        subject:quickSourceSessionName||selectedProject.name,
+        date:new Date().toISOString().split("T")[0],
+        projectId:selectedProject.id,
+        items:quickSourceResults as unknown,
+        searched_at:new Date().toISOString(),
+      };
+      const updated=[session,...history].slice(0,20);
+      await kvSet("sourcing:history",updated); setAllSourcing(updated); setQuickSourceSaved(true);
+    } catch(e){console.error(e);}
+  };
+
+  const exportQuickSourceCSV = () => {
+    if(!quickSourceResults.length) return;
+    const rows:string[][]=[["Item","Summary","Local Available","Supplier","Type","Price Range","Unit","Lead Time","MOQ","Notes"]];
+    quickSourceResults.forEach(r=>{
+      const allS=[...(r.local_suppliers||[]),...(r.international_suppliers||[])];
+      if(!allS.length){rows.push([r.name,r.summary,r.local_available?"Yes":"No","","","","","","",""]);return;}
+      allS.forEach(s=>rows.push([r.name,r.summary,r.local_available?"Yes":"No",s.name,s.type,s.price_range,s.unit,s.lead_time,s.moq,s.notes||""]));
+    });
+    const csv=rows.map(r=>r.map(c=>`"${c}"`).join(",")).join("\n");
+    const a=document.createElement("a");
+    a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
+    a.download=`QuickSource_${selectedProject?.name||"export"}_${new Date().toISOString().split("T")[0]}.csv`;
+    a.click();
+  };
+
   // Filtered projects
   const filtered = projects.filter(p => {
     if (filterStage!=="All" && p.stage!==filterStage) return false;
@@ -241,7 +381,7 @@ export default function Projects() {
   const linkedRFQs: CRMRFQRecord[] = selectedProject ? (allCRM.pendingRFQs||[]).filter(r=>r.projectId===selectedProject.id) : [];
   const linkedPOs: CRMPORecord[] = selectedProject ? (allCRM.pendingPOs||[]).filter(p=>p.projectId===selectedProject.id) : [];
   const linkedSPOs: CRMSPORecord[] = selectedProject ? (allCRM.supplierPOs||[]).filter(s=>s.projectId===selectedProject.id) : [];
-  const linkedSourcing: SourcingSession[] = selectedProject ? allSourcing.filter(s=>s.projectId===selectedProject.id) : [];
+  const linkedSourcing: SourcingSession[] = selectedProject ? (allSourcing||[]).filter(s=>s.projectId===selectedProject.id) : [];
   const allDocs: DocWithSource[] = [
     ...linkedRFQs.flatMap(r=>(r.documents||[]).map(d=>({...d,source:`RFQ ${r.rfqNumber||r.id}`,client:r.client}))),
     ...linkedPOs.flatMap(p=>(p.documents||[]).map(d=>({...d,source:`PO ${p.poNumber||p.id}`,client:p.client}))),
@@ -386,6 +526,243 @@ export default function Projects() {
               <span style={S.pill(STAGE_C[selectedProject.stage]?.bg||"#f0f2f5",STAGE_C[selectedProject.stage]?.fg||"#8a9ab0")}>{selectedProject.stage}</span>
               {saving&&<Spinner/>}
             </div>
+
+            {/* Action bar */}
+            <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap" as const}}>
+              <button onClick={()=>{setShowNewRFQ(s=>!s);setShowNewSPO(false);setShowQuickSource(false);}}
+                style={{...S.addBtn,background:showNewRFQ?"#1a2332":"#EBF3FC",color:showNewRFQ?"#fff":"#185FA5",borderColor:showNewRFQ?"#1a2332":"#185FA5"}}>
+                {showNewRFQ?"✕ Cancel":"+ New RFQ"}
+              </button>
+              <button onClick={()=>{setShowNewSPO(s=>!s);setShowNewRFQ(false);setShowQuickSource(false);}}
+                style={{...S.addBtn,background:showNewSPO?"#1a2332":"#FFF8EC",color:showNewSPO?"#fff":"#854F0B",borderColor:showNewSPO?"#1a2332":"#854F0B"}}>
+                {showNewSPO?"✕ Cancel":"+ New Supplier PO"}
+              </button>
+              <button onClick={()=>{setShowQuickSource(s=>!s);setShowNewRFQ(false);setShowNewSPO(false);}}
+                style={{...S.addBtn,background:showQuickSource?"#1a2332":"#f0faf5",color:showQuickSource?"#fff":"#3B6D11",borderColor:showQuickSource?"#1a2332":"#3B6D11"}}>
+                {showQuickSource?"✕ Cancel":"⚡ Quick Source"}
+              </button>
+            </div>
+
+            {/* New RFQ panel */}
+            {showNewRFQ&&(
+              <div style={{...S.card,padding:16,marginBottom:12,border:"0.5px solid #185FA5"}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#185FA5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>New RFQ -- {selectedProject.client}</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:12}}>
+                  <div style={{gridColumn:"span 2"}}>
+                    <span style={S.lbl}>Subject</span>
+                    <input style={S.inp} placeholder="e.g. LED lighting supply for Substation A" value={newRFQForm.subject} onChange={e=>setNewRFQForm(f=>({...f,subject:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <span style={S.lbl}>Deadline</span>
+                    <input style={S.inp} type="date" value={newRFQForm.deadline} onChange={e=>setNewRFQForm(f=>({...f,deadline:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <span style={S.lbl}>Status</span>
+                    <select style={S.inp} value={newRFQForm.status} onChange={e=>setNewRFQForm(f=>({...f,status:e.target.value}))}>
+                      {["Pending","Submitted","Awarded","No Offer","Cancelled"].map(s=><option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <span style={S.lbl}>Contact Person</span>
+                    <input style={S.inp} placeholder="Name (optional)" value={newRFQForm.contactPersonName} onChange={e=>setNewRFQForm(f=>({...f,contactPersonName:e.target.value}))}/>
+                  </div>
+                  <div style={{gridColumn:"span 2"}}>
+                    <span style={S.lbl}>Notes</span>
+                    <input style={S.inp} placeholder="Optional notes" value={newRFQForm.notes} onChange={e=>setNewRFQForm(f=>({...f,notes:e.target.value}))}/>
+                  </div>
+                </div>
+                <div style={{marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <span style={S.lbl}>Line Items (optional)</span>
+                    <button onClick={()=>setNewRFQForm(f=>({...f,lineItems:[...f.lineItems,{id:genId(),description:"",quantity:1,unit:"pc",unitPrice:0,total:0}]}))} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer"}}>+ Add Item</button>
+                  </div>
+                  {newRFQForm.lineItems.length>0&&(
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                      <thead><tr style={{background:"#f8f9fb"}}>
+                        {["Description","Qty","Unit","Unit Price","Total",""].map(h=><th key={h} style={{padding:"5px 8px",textAlign:"left",fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {newRFQForm.lineItems.map((li,idx)=>(
+                          <tr key={li.id}>
+                            <td style={{padding:"3px 4px"}}><input style={{...S.inp,padding:"4px 6px"}} value={li.description} onChange={e=>setNewRFQForm(f=>({...f,lineItems:liUpdate(f.lineItems,idx,"description",e.target.value)}))}/></td>
+                            <td style={{padding:"3px 4px",width:60}}><input style={{...S.inp,padding:"4px 6px"}} type="number" value={li.quantity} onChange={e=>setNewRFQForm(f=>({...f,lineItems:liUpdate(f.lineItems,idx,"quantity",Number(e.target.value))}))}/></td>
+                            <td style={{padding:"3px 4px",width:60}}><input style={{...S.inp,padding:"4px 6px"}} value={li.unit} onChange={e=>setNewRFQForm(f=>({...f,lineItems:liUpdate(f.lineItems,idx,"unit",e.target.value)}))}/></td>
+                            <td style={{padding:"3px 4px",width:100}}><input style={{...S.inp,padding:"4px 6px"}} type="number" value={li.unitPrice} onChange={e=>setNewRFQForm(f=>({...f,lineItems:liUpdate(f.lineItems,idx,"unitPrice",Number(e.target.value))}))}/></td>
+                            <td style={{padding:"3px 4px",width:100,fontFamily:"'DM Mono',monospace",color:"#3B6D11",fontSize:12,paddingLeft:8}}>{fmt(li.total)}</td>
+                            <td style={{padding:"3px 4px",width:28}}><button onClick={()=>setNewRFQForm(f=>({...f,lineItems:f.lineItems.filter((_,i)=>i!==idx)}))} style={{color:"#d0d8e0",background:"none",border:"none",cursor:"pointer",fontSize:14}}>✕</button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  )}
+                </div>
+                <button onClick={saveNewRFQ} disabled={saving||!newRFQForm.subject.trim()} style={{...S.addBtn,background:"#185FA5",color:"#fff",borderColor:"#185FA5",opacity:!newRFQForm.subject.trim()?0.5:1}}>
+                  {saving?<Spinner/>:<span>Save RFQ</span>}
+                </button>
+              </div>
+            )}
+
+            {/* New Supplier PO panel */}
+            {showNewSPO&&(
+              <div style={{...S.card,padding:16,marginBottom:12,border:"0.5px solid #854F0B"}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#854F0B",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>New Supplier PO</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:12}}>
+                  <div>
+                    <span style={S.lbl}>Supplier</span>
+                    {catalogSuppliers.length>0&&(
+                      <select style={S.inp} value={newSPOForm.supplierId} onChange={e=>{
+                        const sup=catalogSuppliers.find(s=>s.id===e.target.value);
+                        setNewSPOForm(f=>({...f,supplierId:e.target.value,supplierName:sup?.name||f.supplierName}));
+                      }}>
+                        <option value="">-- Select from catalog --</option>
+                        {catalogSuppliers.map(s=><option key={s.id} value={s.id}>{s.name}</option>)}
+                      </select>
+                    )}
+                    {(!newSPOForm.supplierId||!catalogSuppliers.length)&&(
+                      <input style={{...S.inp,marginTop:catalogSuppliers.length>0?4:0}} placeholder="Supplier name" value={newSPOForm.supplierName} onChange={e=>setNewSPOForm(f=>({...f,supplierName:e.target.value}))}/>
+                    )}
+                  </div>
+                  <div>
+                    <span style={S.lbl}>Expected Delivery</span>
+                    <input style={S.inp} type="date" value={newSPOForm.expectedDelivery} onChange={e=>setNewSPOForm(f=>({...f,expectedDelivery:e.target.value}))}/>
+                  </div>
+                  <div>
+                    <span style={S.lbl}>Status</span>
+                    <select style={S.inp} value={newSPOForm.status} onChange={e=>setNewSPOForm(f=>({...f,status:e.target.value}))}>
+                      {["Draft","Sent","Acknowledged","Partially Delivered","Delivered","Cancelled"].map(s=><option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                  <div style={{gridColumn:"span 2"}}>
+                    <span style={S.lbl}>Notes</span>
+                    <input style={S.inp} placeholder="Optional notes" value={newSPOForm.notes} onChange={e=>setNewSPOForm(f=>({...f,notes:e.target.value}))}/>
+                  </div>
+                </div>
+                <div style={{marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <span style={S.lbl}>Line Items</span>
+                    <button onClick={()=>setNewSPOForm(f=>({...f,items:[...f.items,{id:genId(),description:"",quantity:1,unit:"pc",unitPrice:0,total:0}]}))} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #854F0B",background:"#FFF8EC",color:"#854F0B",cursor:"pointer"}}>+ Add Item</button>
+                  </div>
+                  {newSPOForm.items.length>0&&<>
+                    <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                      <thead><tr style={{background:"#f8f9fb"}}>
+                        {["Description","Qty","Unit","Unit Price","Total",""].map(h=><th key={h} style={{padding:"5px 8px",textAlign:"left",fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</th>)}
+                      </tr></thead>
+                      <tbody>
+                        {newSPOForm.items.map((li,idx)=>(
+                          <tr key={li.id}>
+                            <td style={{padding:"3px 4px"}}><input style={{...S.inp,padding:"4px 6px"}} value={li.description} onChange={e=>setNewSPOForm(f=>({...f,items:liUpdate(f.items,idx,"description",e.target.value)}))}/></td>
+                            <td style={{padding:"3px 4px",width:60}}><input style={{...S.inp,padding:"4px 6px"}} type="number" value={li.quantity} onChange={e=>setNewSPOForm(f=>({...f,items:liUpdate(f.items,idx,"quantity",Number(e.target.value))}))}/></td>
+                            <td style={{padding:"3px 4px",width:60}}><input style={{...S.inp,padding:"4px 6px"}} value={li.unit} onChange={e=>setNewSPOForm(f=>({...f,items:liUpdate(f.items,idx,"unit",e.target.value)}))}/></td>
+                            <td style={{padding:"3px 4px",width:100}}><input style={{...S.inp,padding:"4px 6px"}} type="number" value={li.unitPrice} onChange={e=>setNewSPOForm(f=>({...f,items:liUpdate(f.items,idx,"unitPrice",Number(e.target.value))}))}/></td>
+                            <td style={{padding:"3px 4px",width:100,fontFamily:"'DM Mono',monospace",color:"#3B6D11",fontSize:12,paddingLeft:8}}>{fmt(li.total)}</td>
+                            <td style={{padding:"3px 4px",width:28}}><button onClick={()=>setNewSPOForm(f=>({...f,items:f.items.filter((_,i)=>i!==idx)}))} style={{color:"#d0d8e0",background:"none",border:"none",cursor:"pointer",fontSize:14}}>✕</button></td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                    <div style={{textAlign:"right",fontFamily:"'DM Mono',monospace",fontSize:13,color:"#1a2332",fontWeight:600,paddingTop:6}}>
+                      Total: {fmt(newSPOForm.items.reduce((s,it)=>s+it.total,0))}
+                    </div>
+                  </>}
+                </div>
+                <button onClick={saveNewSPO} disabled={saving||!newSPOForm.supplierName.trim()} style={{...S.addBtn,background:"#854F0B",color:"#fff",borderColor:"#854F0B",opacity:!newSPOForm.supplierName.trim()?0.5:1}}>
+                  {saving?<Spinner/>:<span>Save Supplier PO</span>}
+                </button>
+              </div>
+            )}
+
+            {/* Quick Source panel */}
+            {showQuickSource&&(
+              <div style={{...S.card,padding:16,marginBottom:12,border:"0.5px solid #3B6D11"}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#3B6D11",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>⚡ Quick Source</div>
+                <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap" as const}}>
+                  <div style={{flex:1,minWidth:200}}>
+                    <span style={S.lbl}>Session Name</span>
+                    <input style={S.inp} value={quickSourceSessionName} onChange={e=>setQuickSourceSessionName(e.target.value)} placeholder="Name for saving to Sourcing"/>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:8,paddingTop:20}}>
+                    <input type="checkbox" id="qs-web" checked={qsWebSearch} onChange={e=>setQsWebSearch(e.target.checked)}/>
+                    <label htmlFor="qs-web" style={{fontSize:12,color:"#4a6a8a",cursor:"pointer"}}>Web search</label>
+                  </div>
+                </div>
+                <div style={{marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                    <span style={S.lbl}>Items to Source (max 5)</span>
+                    <button onClick={()=>setQuickSourceItems(prev=>prev.length<5?[...prev,{name:"",quantity:"1",specs:""}]:prev)} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #3B6D11",background:"#f0faf5",color:"#3B6D11",cursor:"pointer"}}>+ Item</button>
+                  </div>
+                  {quickSourceItems.map((item,idx)=>(
+                    <div key={idx} style={{display:"grid",gridTemplateColumns:"2fr 1fr 3fr auto",gap:6,marginBottom:6,alignItems:"center"}}>
+                      <input style={S.inp} placeholder="Item name" value={item.name} onChange={e=>setQuickSourceItems(prev=>prev.map((x,i)=>i===idx?{...x,name:e.target.value}:x))}/>
+                      <input style={S.inp} placeholder="Qty" value={item.quantity} onChange={e=>setQuickSourceItems(prev=>prev.map((x,i)=>i===idx?{...x,quantity:e.target.value}:x))}/>
+                      <input style={S.inp} placeholder="Specs (optional)" value={item.specs} onChange={e=>setQuickSourceItems(prev=>prev.map((x,i)=>i===idx?{...x,specs:e.target.value}:x))}/>
+                      {quickSourceItems.length>1&&<button onClick={()=>setQuickSourceItems(prev=>prev.filter((_,i)=>i!==idx))} style={{color:"#d0d8e0",background:"none",border:"none",cursor:"pointer",fontSize:16,padding:"0 4px"}}>✕</button>}
+                    </div>
+                  ))}
+                </div>
+                <button onClick={runQuickSource} disabled={quickSourceLoading||!quickSourceItems.some(i=>i.name.trim())} style={{...S.addBtn,background:"#3B6D11",color:"#fff",borderColor:"#3B6D11",marginBottom:14,opacity:!quickSourceItems.some(i=>i.name.trim())?0.5:1}}>
+                  {quickSourceLoading?<><Spinner/>&nbsp;Sourcing...</>:<span>Run Quick Source</span>}
+                </button>
+                {quickSourceResults.length>0&&(
+                  <div>
+                    <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:8}}>Results</div>
+                    {quickSourceResults.map((r,idx)=>(
+                      <div key={idx} style={{border:"0.5px solid #e2e6ea",borderRadius:10,marginBottom:8,overflow:"hidden"}}>
+                        <button onClick={()=>setQsExpandedItem(qsExpandedItem===idx?null:idx)} style={{width:"100%",background:"#f8f9fb",border:"none",cursor:"pointer",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",textAlign:"left" as const}}>
+                          <div style={{display:"flex",alignItems:"center",gap:8}}>
+                            <span style={{fontSize:13,fontWeight:600,color:"#1a2332"}}>{r.name}</span>
+                            <span style={{fontSize:10,padding:"1px 7px",borderRadius:10,fontFamily:"'DM Mono',monospace",fontWeight:600,...(r.local_available?{background:"#f0faf5",color:"#3B6D11"}:{background:"#f0f2f5",color:"#8a9ab0"})}}>
+                              {r.local_available?"Local Available":"Import"}
+                            </span>
+                          </div>
+                          <span style={{color:"#b0bec8",fontSize:12}}>{qsExpandedItem===idx?"▲":"▼"}</span>
+                        </button>
+                        {qsExpandedItem===idx&&(
+                          <div style={{padding:"12px 14px"}}>
+                            <div style={{fontSize:12,color:"#4a6a8a",marginBottom:10,lineHeight:1.5}}>{r.summary}</div>
+                            {r.local_suppliers?.length>0&&(
+                              <div style={{marginBottom:10}}>
+                                <div style={{fontSize:10,fontWeight:600,color:"#3B6D11",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:5}}>Local Suppliers</div>
+                                {r.local_suppliers.map((s,si)=>(
+                                  <div key={si} style={{fontSize:12,padding:"7px 10px",borderRadius:7,background:"#f0faf5",marginBottom:4}}>
+                                    <div style={{fontWeight:600,color:"#1a2332"}}>{s.name} <span style={{fontWeight:400,color:"#8a9ab0"}}>({s.type})</span></div>
+                                    <div style={{color:"#4a6a8a",marginTop:2}}>{s.price_range} / {s.unit} &middot; Lead: {s.lead_time} &middot; MOQ: {s.moq}</div>
+                                    {s.notes&&<div style={{color:"#8a9ab0",marginTop:2,fontSize:11}}>{s.notes}</div>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            {r.international_suppliers?.length>0&&(
+                              <div style={{marginBottom:10}}>
+                                <div style={{fontSize:10,fontWeight:600,color:"#185FA5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:5}}>International Suppliers</div>
+                                {r.international_suppliers.map((s,si)=>(
+                                  <div key={si} style={{fontSize:12,padding:"7px 10px",borderRadius:7,background:"#EBF3FC",marginBottom:4}}>
+                                    <div style={{fontWeight:600,color:"#1a2332"}}>{s.name} <span style={{fontWeight:400,color:"#8a9ab0"}}>({s.type})</span></div>
+                                    <div style={{color:"#4a6a8a",marginTop:2}}>{s.price_range} / {s.unit} &middot; Lead: {s.lead_time} &middot; MOQ: {s.moq}</div>
+                                    {s.import_notes&&<div style={{color:"#854F0B",marginTop:2,fontSize:11}}>{s.import_notes}</div>}
+                                  </div>
+                                ))}
+                              </div>
+                            )}
+                            <div style={{padding:"8px 10px",background:"#f4f3fe",borderRadius:7,fontSize:12,color:"#534AB7",marginBottom:8}}>
+                              <span style={{fontWeight:600}}>Recommendation: </span>{r.recommendation}
+                            </div>
+                            <div style={{padding:"8px 10px",background:"#FFF8EC",borderRadius:7,fontSize:12,color:"#854F0B"}}>
+                              <span style={{fontWeight:600}}>Quotation Hint: </span>{r.quotation_hint}
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    ))}
+                    <div style={{display:"flex",gap:8,marginTop:10}}>
+                      <button onClick={exportQuickSourceCSV} style={{...S.addBtn,background:"#f0faf5",color:"#3B6D11",borderColor:"#3B6D11"}}>↓ Export CSV</button>
+                      <button onClick={saveQuickSourceSession} disabled={quickSourceSaved} style={{...S.addBtn,background:quickSourceSaved?"#f0f2f5":"#EBF3FC",color:quickSourceSaved?"#8a9ab0":"#185FA5",borderColor:quickSourceSaved?"#e2e6ea":"#185FA5"}}>
+                        {quickSourceSaved?"Saved to Sourcing":"Save to Sourcing"}
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
 
             {/* Asset tab bar */}
             <div style={{display:"flex",borderBottom:"0.5px solid #e2e6ea",marginBottom:14,background:"#fff",borderRadius:"12px 12px 0 0"}}>
@@ -791,8 +1168,8 @@ export default function Projects() {
               <div style={{position:"fixed",top:"50%",left:"50%",transform:"translate(-50%,-50%)",background:"#fff",borderRadius:13,padding:20,zIndex:201,width:500,maxHeight:"70vh",overflow:"auto",boxShadow:"0 8px 32px rgba(0,0,0,0.15)"}}>
                 <div style={{fontSize:14,fontWeight:600,color:"#1a2332",marginBottom:4}}>Link Sourcing Session</div>
                 <div style={{fontSize:12,color:"#8a9ab0",marginBottom:14}}>Select a sourcing session to link to this project</div>
-                {allSourcing.filter(s=>!s.projectId||s.projectId===selectedProject.id).length===0&&<div style={{color:"#b0bec8",fontSize:12,textAlign:"center",padding:"16px 0"}}>No sourcing sessions available to link.</div>}
-                {allSourcing.filter(s=>!s.projectId||s.projectId===selectedProject.id).map(s=>{
+                {(allSourcing||[]).filter(s=>!s.projectId||s.projectId===selectedProject.id).length===0&&<div style={{color:"#b0bec8",fontSize:12,textAlign:"center",padding:"16px 0"}}>No sourcing sessions available to link.</div>}
+                {(allSourcing||[]).filter(s=>!s.projectId||s.projectId===selectedProject.id).map(s=>{
                   const isLinkedHere = s.projectId===selectedProject.id;
                   return(
                     <div key={s.id} style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"10px 0",borderBottom:"0.5px solid #f0f2f5"}}>
