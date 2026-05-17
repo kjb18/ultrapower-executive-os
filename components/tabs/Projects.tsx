@@ -2,7 +2,7 @@
 import { useState, useEffect, useCallback } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
 
-const STAGES = ["RFQ Submitted","Negotiation","PO Received","In Fulfillment","Delivered","Invoiced","Payment Pending","Closed","Lost"] as const;
+const STAGES = ["RFQ Received","Sourcing","RFQ Submitted","Negotiation","PO Received","In Fulfillment","Delivered","Invoiced","Payment Pending","Closed","Lost","No Offer"] as const;
 const VAT_TYPES = ["VAT Inclusive","Zero Rated","Exempt"] as const;
 const PAYMENT_TERMS_LIST = ["30 Days","60 Days","COD","Upon Delivery","50% DP 50% Balance"];
 const EXPENSE_TYPES = ["COGS","Shipping Cost","Shipping Revenue","Project Expense","OpEx"] as const;
@@ -11,11 +11,12 @@ const PROJECT_EXPENSE_CATS = ["Transport","Packaging","Labor","Customs / Duties"
 const PAYMENT_STATUSES = ["Unpaid","Paid","Overdue"] as const;
 
 const STAGE_C: Record<string,{bg:string;fg:string}> = {
-  "RFQ Submitted":{bg:"#EBF3FC",fg:"#185FA5"},"Negotiation":{bg:"#F4F3FE",fg:"#534AB7"},
+  "RFQ Received":{bg:"#f0f2f5",fg:"#4a6a8a"},"Sourcing":{bg:"#F4F3FE",fg:"#534AB7"},
+  "RFQ Submitted":{bg:"#EBF3FC",fg:"#185FA5"},"Negotiation":{bg:"#FFF8EC",fg:"#854F0B"},
   "PO Received":{bg:"#FFF8EC",fg:"#854F0B"},"In Fulfillment":{bg:"#FFF3CD",fg:"#856404"},
   "Delivered":{bg:"#f0faf5",fg:"#3B6D11"},"Invoiced":{bg:"#EBF3FC",fg:"#185FA5"},
   "Payment Pending":{bg:"#FFF8EC",fg:"#854F0B"},"Closed":{bg:"#f0f2f5",fg:"#8a9ab0"},
-  "Lost":{bg:"#FEF0F0",fg:"#A32D2D"},
+  "Lost":{bg:"#FEF0F0",fg:"#A32D2D"},"No Offer":{bg:"#f0f2f5",fg:"#8a9ab0"},
 };
 const PAY_C: Record<string,{bg:string;fg:string}> = {
   "Unpaid":{bg:"#FFF8EC",fg:"#854F0B"},"Paid":{bg:"#f0faf5",fg:"#3B6D11"},"Overdue":{bg:"#FEF0F0",fg:"#A32D2D"},
@@ -33,6 +34,7 @@ interface Project {
   totalCogs?:number; totalShipping?:number; totalProjectExpenses?:number;
   grossProfit?:number; grossMarginPct?:number;
   linkedDocuments?:string[]; linkedSourcing?:string[]; notes?:string;
+  rfqDocument?:string; rfqDocumentName?:string; archived?:boolean;
   createdAt:string; updatedAt:string;
 }
 interface Expense {
@@ -65,12 +67,14 @@ export default function Projects() {
   const [projects, setProjects] = useState<Project[]>([]);
   const [expenses, setExpenses] = useState<Expense[]>([]);
   const [selectedProject, setSelectedProject] = useState<Project|null>(null);
+  const [selectedPreview, setSelectedPreview] = useState<Project|null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showNewExpense, setShowNewExpense] = useState(false);
   const [filterStage, setFilterStage] = useState("All");
   const [filterClient, setFilterClient] = useState("");
+  const [showArchived, setShowArchived] = useState(false);
   const [expenseTab, setExpenseTab] = useState<"project"|"opex">("project");
 
   // Reports state
@@ -102,7 +106,7 @@ export default function Projects() {
   const [qsWebSearch, setQsWebSearch] = useState(true);
 
   // New project form
-  const [np, setNP] = useState({name:"",client:"",stage:"RFQ Submitted" as Stage,vatType:"VAT Inclusive" as VatType,rfqDate:new Date().toISOString().split("T")[0],notes:""});
+  const [np, setNP] = useState({name:"",client:"",stage:"RFQ Received" as Stage,vatType:"VAT Inclusive" as VatType,rfqDate:new Date().toISOString().split("T")[0],notes:""});
 
   // New expense form
   const [ne, setNE] = useState({projectId:"",date:new Date().toISOString().split("T")[0],type:"COGS" as ExpenseType,category:"",description:"",amount:"",vatApplicable:true});
@@ -149,7 +153,7 @@ export default function Projects() {
       setProjects(data.projects||[]);
       setExpenses(data.expenses||[]);
       const updated = (data.projects||[]).map((p:Project) => {
-        if (p.stage==="RFQ Submitted" && daysSince(p.rfqDate)>30) return {...p, stage:"Lost" as Stage};
+        if (["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage) && daysSince(p.rfqDate)>30) return {...p, stage:"Lost" as Stage};
         if (p.paymentDueDate && new Date(p.paymentDueDate)<new Date() && p.paymentStatus==="Unpaid") return {...p, paymentStatus:"Overdue" as PaymentStatus};
         return p;
       });
@@ -174,7 +178,7 @@ export default function Projects() {
     if (!np.name.trim()||!np.client.trim()) return;
     const proj: Project = { id:genId(), ...np, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() };
     await saveProject(proj);
-    setNP({name:"",client:"",stage:"RFQ Submitted",vatType:"VAT Inclusive",rfqDate:new Date().toISOString().split("T")[0],notes:""});
+    setNP({name:"",client:"",stage:"RFQ Received",vatType:"VAT Inclusive",rfqDate:new Date().toISOString().split("T")[0],notes:""});
     setShowNewProject(false);
   };
 
@@ -354,15 +358,16 @@ export default function Projects() {
 
   // Filtered projects
   const filtered = projects.filter(p => {
+    if (showArchived ? !p.archived : p.archived) return false;
     if (filterStage!=="All" && p.stage!==filterStage) return false;
     if (filterClient && !p.client.toLowerCase().includes(filterClient.toLowerCase())) return false;
     return true;
   });
 
   // Stats
-  const openProjects = projects.filter(p=>!["Closed","Lost"].includes(p.stage)).length;
+  const openProjects = projects.filter(p=>!["Closed","Lost","No Offer"].includes(p.stage)&&!p.archived).length;
   const overduePayments = projects.filter(p=>p.paymentStatus==="Overdue").length;
-  const followUpAlert = projects.filter(p=>p.stage==="RFQ Submitted"&&daysSince(p.rfqDate)>=15&&daysSince(p.rfqDate)<=30).length;
+  const followUpAlert = projects.filter(p=>["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage)&&daysSince(p.rfqDate)>=15&&daysSince(p.rfqDate)<=30).length;
   const thisMonth = new Date().toISOString().slice(0,7);
   const monthlyRevenue = projects.filter(p=>p.invoiceDate?.startsWith(thisMonth)).reduce((s,p)=>s+(p.invoiceAmount||0),0);
   const monthlyGP = projects.filter(p=>p.invoiceDate?.startsWith(thisMonth)).reduce((s,p)=>s+(p.grossProfit||0),0);
@@ -389,6 +394,25 @@ export default function Projects() {
 
   const projectExpenses = selectedProject ? expenses.filter(e=>e.projectId===selectedProject.id) : [];
 
+  const handleProjectFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = e => {
+      if (selectedProject) saveProject({...selectedProject, rfqDocument: e.target?.result as string, rfqDocumentName: file.name});
+    };
+    reader.readAsDataURL(file);
+  };
+
+  const handleProjectPaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i = 0; i < items.length; i++) {
+      if (items[i].type.startsWith("image/")) {
+        const file = items[i].getAsFile();
+        if (file) { handleProjectFile(file); break; }
+      }
+    }
+  };
+
   return (
     <div style={{flex:1,overflow:"auto"}}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
@@ -401,7 +425,7 @@ export default function Projects() {
         </div>
         <div style={{display:"flex"}}>
           {(["list","expenses","reports"] as const).map(v=>(
-            <button key={v} style={S.tabBtn(view===v)} onClick={()=>setView(v)}>
+            <button key={v} style={S.tabBtn(view===v)} onClick={()=>{setView(v);setSelectedPreview(null);}}>
               {v==="list"?"Projects":v==="expenses"?"Expenses":"Reports"}
             </button>
           ))}
@@ -436,6 +460,9 @@ export default function Projects() {
               </select>
               <input style={{...S.inp,width:200}} placeholder="Filter by client..." value={filterClient} onChange={e=>setFilterClient(e.target.value)}/>
               <button onClick={()=>setShowNewProject(s=>!s)} style={S.addBtn}>{showNewProject?"Cancel":"+ New Project"}</button>
+              <button onClick={()=>{setShowArchived(s=>!s);setSelectedPreview(null);}} style={{fontSize:13,padding:"7px 12px",borderRadius:8,border:`0.5px solid ${showArchived?"#A32D2D":"#e2e6ea"}`,background:showArchived?"#FEF0F0":"#f8f9fb",color:showArchived?"#A32D2D":"#4a6a8a",cursor:"pointer"}}>
+                {showArchived?"← Active":"Show Archived"}{!showArchived&&` (${projects.filter(p=>p.archived).length})`}
+              </button>
               <button onClick={loadData} style={{fontSize:13,padding:"7px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>↺ Refresh</button>
             </div>
 
@@ -473,8 +500,9 @@ export default function Projects() {
             )}
 
             {loading?<div style={{textAlign:"center",padding:40,color:"#b0bec8"}}><Spinner/></div>:(
-              <div style={S.card}>
-                <div style={{overflowX:"auto"}}>
+              <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
+                <div style={{...S.card,flex:1,minWidth:0}}>
+                  <div style={{overflowX:"auto"}}>
                   <table style={{width:"100%",borderCollapse:"collapse"}}>
                     <thead>
                       <tr style={{background:"#fafbfc"}}>
@@ -484,12 +512,12 @@ export default function Projects() {
                       </tr>
                     </thead>
                     <tbody>
-                      {filtered.length===0&&<tr><td colSpan={9} style={{textAlign:"center",padding:28,color:"#b0bec8",fontSize:13}}>No projects yet.</td></tr>}
+                      {filtered.length===0&&<tr><td colSpan={9} style={{textAlign:"center",padding:28,color:"#b0bec8",fontSize:13}}>{showArchived?"No archived projects.":"No projects yet."}</td></tr>}
                       {filtered.map((p,i)=>{
                         const rfqDays = daysSince(p.rfqDate);
-                        const needsFollowUp = p.stage==="RFQ Submitted" && rfqDays>=15 && rfqDays<=30;
+                        const needsFollowUp = ["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage) && rfqDays>=15 && rfqDays<=30;
                         return(
-                          <tr key={p.id} style={{background:i%2===0?"#fff":"#fafbfc",cursor:"pointer"}} onClick={()=>{setSelectedProject(p);setView("detail" as any);}}>
+                          <tr key={p.id} style={{background:selectedPreview?.id===p.id?"#EBF3FC":i%2===0?"#fff":"#fafbfc",cursor:"pointer"}} onClick={()=>setSelectedPreview(p)}>
                             <td style={{padding:"10px 13px",fontSize:13}}>
                               <div style={{fontWeight:500,color:"#1a2332"}}>{p.name}</div>
                               {needsFollowUp&&<div style={{fontSize:10,color:"#854F0B",fontFamily:"'DM Mono',monospace",marginTop:2}}>⚠ Follow up ({rfqDays}d)</div>}
@@ -505,14 +533,65 @@ export default function Projects() {
                             <td style={{padding:"10px 13px",fontSize:13,fontFamily:"'DM Mono',monospace",color:(p.grossProfit||0)>=0?"#3B6D11":"#A32D2D",fontWeight:600}}>{fmt(p.grossProfit)}</td>
                             <td style={{padding:"10px 13px",fontSize:12,fontFamily:"'DM Mono',monospace",color:(p.grossMarginPct||0)>=0?"#3B6D11":"#A32D2D"}}>{p.grossMarginPct!==undefined?`${p.grossMarginPct}%`:"—"}</td>
                             <td style={{padding:"10px 13px"}} onClick={e=>e.stopPropagation()}>
-                              <button onClick={()=>{setSelectedProject(p);setView("detail" as any);}} style={{fontSize:11,padding:"4px 9px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginRight:4}}>Open</button>
+                              <button onClick={()=>{setSelectedProject(p);setSelectedPreview(null);setView("detail" as any);}} style={{fontSize:11,padding:"4px 9px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginRight:4}}>Open</button>
+                              <button onClick={()=>saveProject({...p,archived:!p.archived})} style={{fontSize:11,padding:"4px 9px",borderRadius:6,border:`0.5px solid ${p.archived?"#3B6D11":"#d0d8e0"}`,background:p.archived?"#f0faf5":"#f8f9fb",color:p.archived?"#3B6D11":"#8a9ab0",cursor:"pointer"}}>
+                                {p.archived?"Restore":"Archive"}
+                              </button>
                             </td>
                           </tr>
                         );
                       })}
                     </tbody>
                   </table>
+                  </div>
                 </div>
+
+                {/* Side preview panel */}
+                {selectedPreview&&(
+                  <div style={{...S.card,width:360,flexShrink:0,padding:16}}>
+                    <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:12}}>
+                      <div style={{flex:1,minWidth:0,paddingRight:8}}>
+                        <div style={{fontSize:14,fontWeight:600,color:"#1a2332",marginBottom:6,lineHeight:1.3}}>{selectedPreview.name}</div>
+                        <span style={S.pill(STAGE_C[selectedPreview.stage]?.bg||"#f0f2f5",STAGE_C[selectedPreview.stage]?.fg||"#8a9ab0")}>{selectedPreview.stage}</span>
+                      </div>
+                      <button onClick={()=>setSelectedPreview(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#b0bec8",padding:0,lineHeight:1,flexShrink:0}}>×</button>
+                    </div>
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
+                      <div>
+                        <span style={S.lbl}>Client</span>
+                        <div style={{fontSize:13,color:"#1a2332"}}>{selectedPreview.client}</div>
+                      </div>
+                      <div>
+                        <span style={S.lbl}>VAT Type</span>
+                        <div style={{fontSize:12,color:"#4a6a8a"}}>{selectedPreview.vatType}</div>
+                      </div>
+                      <div>
+                        <span style={S.lbl}>RFQ Date</span>
+                        <div style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:"#8a9ab0"}}>{selectedPreview.rfqDate}</div>
+                      </div>
+                      <div>
+                        <span style={S.lbl}>Payment</span>
+                        <div>{selectedPreview.paymentStatus?<span style={S.pill(PAY_C[selectedPreview.paymentStatus]?.bg||"#f0f2f5",PAY_C[selectedPreview.paymentStatus]?.fg||"#8a9ab0")}>{selectedPreview.paymentStatus}</span>:<span style={{fontSize:12,color:"#b0bec8"}}>--</span>}</div>
+                      </div>
+                      <div style={{gridColumn:"span 2"}}>
+                        <span style={S.lbl}>Gross Profit</span>
+                        <div style={{fontSize:14,fontWeight:600,fontFamily:"'DM Mono',monospace",color:(selectedPreview.grossProfit||0)>=0?"#3B6D11":"#A32D2D"}}>{fmt(selectedPreview.grossProfit)}</div>
+                      </div>
+                    </div>
+                    <div style={{marginBottom:12}}>
+                      <span style={S.lbl}>Notes</span>
+                      <textarea
+                        style={{...S.inp,minHeight:70,resize:"vertical" as const,fontSize:12}}
+                        value={selectedPreview.notes||""}
+                        onChange={e=>setSelectedPreview(prev=>prev?{...prev,notes:e.target.value}:null)}
+                        onBlur={e=>saveProject({...selectedPreview,notes:e.target.value})}
+                        placeholder="Notes..."/>
+                    </div>
+                    <button onClick={()=>{setSelectedProject(selectedPreview);setSelectedPreview(null);setView("detail" as any);}} style={{...S.addBtn,width:"100%",justifyContent:"center",background:"#1a2332",color:"#fff",borderColor:"#1a2332"}}>
+                      Open Project →
+                    </button>
+                  </div>
+                )}
               </div>
             )}
           </>}
@@ -521,7 +600,7 @@ export default function Projects() {
           {(view as string)==="detail"&&selectedProject&&<>
             {/* Header */}
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
-              <button onClick={()=>setView("list")} style={{fontSize:12,padding:"5px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>← Back</button>
+              <button onClick={()=>{setView("list");setSelectedPreview(null);}} style={{fontSize:12,padding:"5px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>← Back</button>
               <div style={{fontSize:16,fontWeight:600,color:"#1a2332",flex:1}}>{selectedProject.name}</div>
               <span style={S.pill(STAGE_C[selectedProject.stage]?.bg||"#f0f2f5",STAGE_C[selectedProject.stage]?.fg||"#8a9ab0")}>{selectedProject.stage}</span>
               {saving&&<Spinner/>}
@@ -919,6 +998,28 @@ export default function Projects() {
                 <textarea style={{...S.inp,minHeight:80,resize:"vertical" as const}} value={selectedProject.notes||""}
                   onChange={e=>saveProject({...selectedProject,notes:e.target.value})}
                   placeholder="Project notes, follow-up actions, client context..."/>
+              </div>
+
+              {/* Reference Documents */}
+              <div style={{...S.card,padding:16,marginTop:12}} onPaste={handleProjectPaste}>
+                <span style={S.lbl}>Reference Documents</span>
+                {!selectedProject.rfqDocument?(
+                  <label style={{display:"block",marginTop:8,border:"1.5px dashed #e2e6ea",borderRadius:8,padding:"20px 16px",textAlign:"center" as const,cursor:"pointer",color:"#b0bec8",fontSize:12}}>
+                    <input type="file" accept="image/*,.pdf" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)handleProjectFile(f);}}/>
+                    Click to upload or paste (Ctrl+V) an image or PDF
+                  </label>
+                ):(
+                  <div style={{marginTop:8}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                      <span style={{fontSize:12,color:"#4a6a8a",fontFamily:"'DM Mono',monospace"}}>{selectedProject.rfqDocumentName}</span>
+                      <button onClick={()=>saveProject({...selectedProject,rfqDocument:undefined,rfqDocumentName:undefined})} style={{fontSize:11,color:"#A32D2D",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
+                    </div>
+                    {selectedProject.rfqDocumentName?.toLowerCase().endsWith(".pdf")
+                      ?<iframe src={selectedProject.rfqDocument} style={{width:"100%",height:420,border:"0.5px solid #e2e6ea",borderRadius:6}}/>
+                      :<img src={selectedProject.rfqDocument} alt="reference doc" style={{width:"100%",borderRadius:6,border:"0.5px solid #e2e6ea"}}/>
+                    }
+                  </div>
+                )}
               </div>
             </>}
 

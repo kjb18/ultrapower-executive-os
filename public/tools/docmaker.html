@@ -91,6 +91,9 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 .items-table td:nth-child(3) input{text-align:center}
 .item-remove{background:none;border:none;cursor:pointer;color:#ccc;font-size:16px;padding:2px 6px;border-radius:4px;transition:color 0.15s}
 .item-remove:hover{color:var(--up-red)}
+.item-photo-btn{background:none;border:none;cursor:pointer;color:#c0c8d0;font-size:15px;padding:2px 5px;border-radius:4px;transition:all 0.15s;display:block;margin:0 auto}
+.item-photo-btn:hover{color:var(--up-blue)}
+.item-photo-thumb{width:40px;height:40px;object-fit:cover;border-radius:4px;border:1px solid var(--up-border);cursor:pointer;display:block;margin:0 auto}
 .add-item-btn{display:flex;align-items:center;gap:6px;padding:8px 12px;background:none;border:1.5px dashed var(--up-border);border-radius:var(--radius-sm);font-size:13px;color:var(--up-blue);cursor:pointer;margin-top:10px;width:100%;justify-content:center;transition:all 0.15s;font-family:'DM Sans',sans-serif}
 .add-item-btn:hover{background:var(--up-light);border-color:var(--up-blue)}
 
@@ -425,11 +428,12 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
         <table class="items-table" id="items-table">
           <thead>
             <tr>
-              <th style="width:40%">Description</th>
+              <th style="width:36%">Description</th>
               <th style="width:10%">Unit</th>
               <th style="width:10%">Qty</th>
-              <th style="width:18%">Unit Price</th>
-              <th style="width:18%">Total</th>
+              <th style="width:16%">Unit Price</th>
+              <th style="width:16%">Total</th>
+              <th style="width:8%;text-align:center">📷</th>
               <th style="width:4%"></th>
             </tr>
           </thead>
@@ -751,16 +755,67 @@ function addItem() {
   const id = itemCount;
   const tbody = document.getElementById('items-body');
   const tr = document.createElement('tr');
-  tr.id = `item-row-${id}`;
-  tr.innerHTML = `
-    <td><input placeholder="Product name, specs, brand, PN..." id="item-desc-${id}" oninput="recalc()" style="width:100%"/></td>
-    <td><input placeholder="PCS" id="item-unit-${id}" style="width:100%"/></td>
-    <td><input type="number" placeholder="1" id="item-qty-${id}" oninput="recalc()" style="width:100%;text-align:center"/></td>
-    <td><input type="number" placeholder="0.00" id="item-price-${id}" oninput="recalc()" style="width:100%;text-align:right"/></td>
-    <td><input readonly id="item-total-${id}" style="width:100%;text-align:right;color:var(--up-dark);font-weight:500;background:var(--up-light)"/></td>
-    <td><button class="item-remove" onclick="removeItem(${id})">×</button></td>
-  `;
+  tr.id = 'item-row-' + id;
+  tr.innerHTML = '<td><input placeholder="Product name, specs, brand, PN..." id="item-desc-' + id + '" oninput="recalc()" onpaste="handleItemPaste(event,' + id + ')" style="width:100%"/></td>' +
+    '<td><input placeholder="PCS" id="item-unit-' + id + '" style="width:100%"/></td>' +
+    '<td><input type="number" placeholder="1" id="item-qty-' + id + '" oninput="recalc()" style="width:100%;text-align:center"/></td>' +
+    '<td><input type="number" placeholder="0.00" id="item-price-' + id + '" oninput="recalc()" style="width:100%;text-align:right"/></td>' +
+    '<td><input readonly id="item-total-' + id + '" style="width:100%;text-align:right;color:var(--up-dark);font-weight:500;background:var(--up-light)"/></td>' +
+    '<td style="text-align:center;vertical-align:middle" id="item-photo-cell-' + id + '">' +
+      '<button class="item-photo-btn" onclick="triggerPhotoUpload(' + id + ')" title="Add photo">📷</button>' +
+      '<input type="file" accept="image/*" id="item-photo-input-' + id + '" style="display:none" onchange="handleItemPhoto(' + id + ')"/>' +
+    '</td>' +
+    '<td><button class="item-remove" onclick="removeItem(' + id + ')">×</button></td>';
   tbody.appendChild(tr);
+}
+
+function triggerPhotoUpload(id) {
+  var input = document.getElementById('item-photo-input-' + id);
+  if (input) input.click();
+}
+
+function handleItemPhoto(id) {
+  var input = document.getElementById('item-photo-input-' + id);
+  if (!input || !input.files || !input.files[0]) return;
+  var file = input.files[0];
+  var reader = new FileReader();
+  reader.onload = function(e) { setItemPhoto(id, e.target.result); };
+  reader.readAsDataURL(file);
+}
+
+function setItemPhoto(id, dataUrl) {
+  var row = document.getElementById('item-row-' + id);
+  if (row) row.dataset.photo = dataUrl;
+  var cell = document.getElementById('item-photo-cell-' + id);
+  if (!cell) return;
+  cell.innerHTML = '<img src="' + dataUrl + '" class="item-photo-thumb" onclick="triggerPhotoUpload(' + id + ')" title="Click to replace"/>' +
+    '<input type="file" accept="image/*" id="item-photo-input-' + id + '" style="display:none" onchange="handleItemPhoto(' + id + ')"/>' +
+    '<button class="item-remove" onclick="removeItemPhoto(' + id + ')" style="font-size:11px;display:block;margin:2px auto 0">×</button>';
+}
+
+function removeItemPhoto(id) {
+  var row = document.getElementById('item-row-' + id);
+  if (row) delete row.dataset.photo;
+  var cell = document.getElementById('item-photo-cell-' + id);
+  if (!cell) return;
+  cell.innerHTML = '<button class="item-photo-btn" onclick="triggerPhotoUpload(' + id + ')" title="Add photo">📷</button>' +
+    '<input type="file" accept="image/*" id="item-photo-input-' + id + '" style="display:none" onchange="handleItemPhoto(' + id + ')"/>';
+}
+
+function handleItemPaste(event, id) {
+  var items = event.clipboardData && event.clipboardData.items;
+  if (!items) return;
+  for (var i = 0; i < items.length; i++) {
+    if (items[i].type.indexOf('image/') === 0) {
+      var file = items[i].getAsFile();
+      if (file) {
+        var reader = new FileReader();
+        reader.onload = (function(rowId) { return function(e) { setItemPhoto(rowId, e.target.result); }; })(id);
+        reader.readAsDataURL(file);
+        break;
+      }
+    }
+  }
 }
 
 function removeItem(id) {
@@ -773,13 +828,15 @@ function getItems() {
   const items = [];
   document.querySelectorAll('[id^="item-desc-"]').forEach(el => {
     const id = el.id.replace('item-desc-','');
+    const row = document.getElementById('item-row-' + id);
     const desc = el.value;
-    const unit = document.getElementById(`item-unit-${id}`)?.value||'PCS';
-    const qty = parseFloat(document.getElementById(`item-qty-${id}`)?.value)||0;
-    const price = parseFloat(document.getElementById(`item-price-${id}`)?.value)||0;
+    const unit = document.getElementById('item-unit-' + id)?.value||'PCS';
+    const qty = parseFloat(document.getElementById('item-qty-' + id)?.value)||0;
+    const price = parseFloat(document.getElementById('item-price-' + id)?.value)||0;
     const total = qty*price;
-    document.getElementById(`item-total-${id}`).value = formatNum(total);
-    if(desc||qty||price) items.push({desc,unit,qty,price,total});
+    const photo = (row && row.dataset && row.dataset.photo) ? row.dataset.photo : '';
+    document.getElementById('item-total-' + id).value = formatNum(total);
+    if(desc||qty||price) items.push({desc,unit,qty,price,total,photo});
   });
   return items;
 }
@@ -858,15 +915,17 @@ function openPreview() {
   const isDR = currentDocType==='dr';
 
   // Build items rows
-  let itemsHTML = items.map(i=>`
-    <tr>
-      <td>${i.desc}</td>
-      <td>${i.unit}</td>
-      <td style="text-align:right">${i.qty}</td>
-      <td style="text-align:right">${sym} ${formatNum(i.price)}</td>
-      <td style="text-align:right">${sym} ${formatNum(i.total)}</td>
-    </tr>
-  `).join('');
+  const hasPhotos = items.some(i => i.photo);
+  let itemsHTML = items.map(i =>
+    '<tr>' +
+    (hasPhotos ? '<td style="width:90px;text-align:center;vertical-align:middle">' + (i.photo ? '<img src="' + i.photo + '" style="width:80px;height:auto;border-radius:4px" />' : '') + '</td>' : '') +
+    '<td>' + i.desc + '</td>' +
+    '<td>' + i.unit + '</td>' +
+    '<td style="text-align:right">' + i.qty + '</td>' +
+    '<td style="text-align:right">' + sym + ' ' + formatNum(i.price) + '</td>' +
+    '<td style="text-align:right">' + sym + ' ' + formatNum(i.total) + '</td>' +
+    '</tr>'
+  ).join('');
 
   // Totals
   let totalsHTML = '';
@@ -969,6 +1028,7 @@ function openPreview() {
     <table class="doc-table">
       <thead>
         <tr>
+          ${hasPhotos ? '<th style="width:90px">Photo</th>' : ''}
           <th>Description</th>
           <th>Unit</th>
           <th style="text-align:right">Qty</th>
@@ -1297,9 +1357,11 @@ function exportDocx() {
       const unit = cells[3]?.querySelector('input')?.value || '';
       const price = cells[4]?.querySelector('input')?.value || '';
       const amount = cells[5]?.querySelector('input,span')?.textContent || cells[5]?.textContent || '';
-      if (desc.trim()) lineItems.push({ desc, qty, unit, price, amount });
+      const photo = row.dataset && row.dataset.photo ? row.dataset.photo : '';
+      if (desc.trim()) lineItems.push({ desc, qty, unit, price, amount, photo });
     }
   });
+  const docHasPhotos = lineItems.some(function(item) { return item.photo; });
 
   // Build DOCX content as HTML string for download
   const htmlContent = `<!DOCTYPE html>
@@ -1349,10 +1411,10 @@ ${subject ? `<div class="subject-block"><strong>Subject:</strong> ${subject}</di
 <div class="salutation">${salutation}</div>
 <p>We are pleased to offer the following:</p>
 <table>
-  <thead><tr><th style="width:5%">#</th><th style="width:45%">Description</th><th style="width:10%">Qty</th><th style="width:10%">Unit</th><th style="width:15%">Unit Price</th><th style="width:15%">Amount</th></tr></thead>
+  <thead><tr>${docHasPhotos ? '<th style="width:80px">Photo</th>' : ''}<th style="width:5%">#</th><th style="width:45%">Description</th><th style="width:10%">Qty</th><th style="width:10%">Unit</th><th style="width:15%">Unit Price</th><th style="width:15%">Amount</th></tr></thead>
   <tbody>
-    ${lineItems.map((item, i) => `<tr><td>${i+1}</td><td>${item.desc}</td><td>${item.qty}</td><td>${item.unit}</td><td>${item.price}</td><td>${item.amount}</td></tr>`).join('')}
-    ${lineItems.length === 0 ? '<tr><td colspan="6" style="text-align:center;color:#999">No items added</td></tr>' : ''}
+    ${lineItems.map((item, i) => '<tr>' + (docHasPhotos ? '<td style="text-align:center">' + (item.photo ? '<img src="' + item.photo + '" width="80" />' : '') + '</td>' : '') + '<td>' + (i+1) + '</td><td>' + item.desc + '</td><td>' + item.qty + '</td><td>' + item.unit + '</td><td>' + item.price + '</td><td>' + item.amount + '</td></tr>').join('')}
+    ${lineItems.length === 0 ? '<tr><td colspan="' + (docHasPhotos ? '7' : '6') + '" style="text-align:center;color:#999">No items added</td></tr>' : ''}
   </tbody>
 </table>
 <div class="sig-block">

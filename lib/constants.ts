@@ -300,3 +300,9 @@ export interface SupplierPO {
   notes: string;
   archived?: boolean;
 }
+
+export interface Project {
+  rfqDocument?: string;
+  rfqDocumentName?: string;
+  archived?: boolean;
+}
