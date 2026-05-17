@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { Redis } from "@upstash/redis";
+import type { Quotation } from "@/lib/constants";
 
 const redis = new Redis({ url: process.env.KV_REST_API_URL!, token: process.env.KV_REST_API_TOKEN! });
 const CORS = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Methods": "GET,POST,PUT,DELETE,OPTIONS", "Access-Control-Allow-Headers": "Content-Type" };
@@ -10,9 +11,19 @@ export interface Project {
   id: string;
   name: string;
   client: string;
-  stage: "RFQ Submitted"|"Negotiation"|"PO Received"|"In Fulfillment"|"Delivered"|"Invoiced"|"Payment Pending"|"Closed"|"Lost";
+  stage: "RFQ Received"|"Sourcing"|"RFQ Submitted"|"Negotiation"|"PO Received"|"In Fulfillment"|"Delivered"|"Invoiced"|"Payment Pending"|"Closed"|"Lost"|"No Offer";
   vatType: "VAT Inclusive"|"Zero Rated"|"Exempt";
   rfqDate: string;
+  rfqDeadline?: string;
+  finalDeliveryDate?: string;
+  rfqNumber?: string;
+  rfqSubject?: string;
+  rfqContactPersonId?: number;
+  rfqContactPersonName?: string;
+  rfqLineItems?: unknown[];
+  rfqDocument?: string;
+  rfqDocumentName?: string;
+  quotations?: Quotation[];
   poDate?: string;
   invoiceDate?: string;
   invoiceAmount?: number;
@@ -27,6 +38,7 @@ export interface Project {
   linkedDocuments?: string[];
   linkedSourcing?: string[];
   notes?: string;
+  archived?: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -86,7 +98,8 @@ export async function POST(req: NextRequest) {
         project.rfqDate, project.poDate||"", project.invoiceDate||"", project.invoiceAmount||"",
         project.paymentTerms||"", project.paymentDueDate||"", project.paymentStatus||"",
         project.totalCogs||0, project.totalShipping||0, project.totalProjectExpenses||0,
-        project.grossProfit||0, project.grossMarginPct||0, project.createdAt];
+        project.grossProfit||0, project.grossMarginPct||0, project.createdAt,
+        project.rfqDeadline||"", project.finalDeliveryDate||"", project.rfqNumber||"", project.rfqSubject||""];
       await syncToSheets("updateProject", { action:"updateProject", sheet:"Projects", rows:[row], projectId:project.id });
       return NextResponse.json({ ok: true, projects: updated }, { headers: CORS });
     }
@@ -118,7 +131,8 @@ export async function POST(req: NextRequest) {
           const row = [updatedProj.id, updatedProj.name, updatedProj.client, updatedProj.stage, updatedProj.vatType,
             updatedProj.rfqDate, updatedProj.poDate||"", updatedProj.invoiceDate||"", updatedProj.invoiceAmount||"",
             updatedProj.paymentTerms||"", updatedProj.paymentDueDate||"", updatedProj.paymentStatus||"",
-            cogs, shipping, projExp, gp, gm, updatedProj.createdAt];
+            cogs, shipping, projExp, gp, gm, updatedProj.createdAt,
+            updatedProj.rfqDeadline||"", updatedProj.finalDeliveryDate||"", updatedProj.rfqNumber||"", updatedProj.rfqSubject||""];
           await syncToSheets("updateProject", { action:"updateProject", sheet:"Projects", rows:[row], projectId:updatedProj.id });
         }
       }
@@ -144,6 +158,34 @@ export async function POST(req: NextRequest) {
       const updated = existing.filter(p => p.id !== body.id);
       await redis.set("projects:all", JSON.stringify(updated));
       return NextResponse.json({ ok: true }, { headers: CORS });
+    }
+
+    if (action === "saveQuotation") {
+      const { projectId, quotation }: { projectId: string; quotation: Quotation } = body;
+      const existing = await redis.get<Project[]>("projects:all") || [];
+      const projIdx = existing.findIndex(p => p.id === projectId);
+      if (projIdx < 0) {
+        return NextResponse.json({ error: "Project not found" }, { status: 404, headers: CORS });
+      }
+      const proj = existing[projIdx];
+      const quotations: Quotation[] = proj.quotations || [];
+      const qIdx = quotations.findIndex(q => q.id === quotation.id);
+      let finalQuotation = { ...quotation };
+      let updatedQuotations: Quotation[];
+      if (qIdx >= 0) {
+        updatedQuotations = quotations.map(q => q.id === quotation.id ? finalQuotation : q);
+      } else {
+        finalQuotation = { ...quotation, version: quotations.length + 1 };
+        updatedQuotations = [...quotations, finalQuotation];
+      }
+      const updatedProj: Project = { ...proj, quotations: updatedQuotations, updatedAt: new Date().toISOString() };
+      const updated = existing.map(p => p.id === projectId ? updatedProj : p);
+      await redis.set("projects:all", JSON.stringify(updated));
+      // Sync to Sheets Documents tab
+      const docRow = [finalQuotation.dateCreated, proj.id, proj.name, proj.client,
+        "Quotation", finalQuotation.docNumber, finalQuotation.grandTotal, finalQuotation.status];
+      await syncToSheets("append", { action: "append", sheet: "Documents", rows: [docRow] });
+      return NextResponse.json({ ok: true, project: updatedProj }, { headers: CORS });
     }
 
     return NextResponse.json({ error: "Unknown action" }, { status: 400, headers: CORS });

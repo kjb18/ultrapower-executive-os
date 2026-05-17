@@ -301,8 +301,68 @@ export interface SupplierPO {
   archived?: boolean;
 }
 
+export const STAGES = [
+  "RFQ Received",
+  "Sourcing",
+  "RFQ Submitted",
+  "Negotiation",
+  "PO Received",
+  "In Fulfillment",
+  "Delivered",
+  "Invoiced",
+  "Payment Pending",
+  "Closed",
+  "Lost",
+  "No Offer",
+] as const;
+
+export type Stage = typeof STAGES[number];
+
+export const STAGE_C: Record<string, {bg:string; fg:string}> = {
+  "RFQ Received":    {bg:"#f0f2f5",  fg:"#8a9ab0"},
+  "Sourcing":        {bg:"#F4F3FE",  fg:"#534AB7"},
+  "RFQ Submitted":   {bg:"#EBF3FC",  fg:"#185FA5"},
+  "Negotiation":     {bg:"#FFF8EC",  fg:"#854F0B"},
+  "PO Received":     {bg:"#FFF8EC",  fg:"#854F0B"},
+  "In Fulfillment":  {bg:"#FFF3CD",  fg:"#856404"},
+  "Delivered":       {bg:"#f0faf5",  fg:"#3B6D11"},
+  "Invoiced":        {bg:"#EBF3FC",  fg:"#185FA5"},
+  "Payment Pending": {bg:"#FFF8EC",  fg:"#854F0B"},
+  "Closed":          {bg:"#f0f2f5",  fg:"#8a9ab0"},
+  "Lost":            {bg:"#FEF0F0",  fg:"#A32D2D"},
+  "No Offer":        {bg:"#f0f2f5",  fg:"#8a9ab0"},
+};
+
+export interface Quotation {
+  id: string;
+  version: number;
+  docNumber: string;
+  dateCreated: string;
+  status: "Draft"|"Sent"|"Awarded"|"Lost"|"No Offer";
+  lineItems: LineItem[];
+  totalAmount: number;
+  vatType: "VAT Inclusive"|"Zero Rated"|"Exempt";
+  vatAmount: number;
+  grandTotal: number;
+  notes: string;
+  html?: string;
+  salutation: "Dear Sir,"|"Dear Ma'am,"|"Dear Sir/Ma'am,";
+  validity: string;
+  delivery: string;
+  warranty: string;
+  paymentTerms: string;
+}
+
 export interface Project {
+  rfqDeadline?: string;
+  finalDeliveryDate?: string;
+  rfqNumber?: string;
+  rfqSubject?: string;
+  rfqContactPersonId?: number;
+  rfqContactPersonName?: string;
+  rfqLineItems?: LineItem[];
   rfqDocument?: string;
   rfqDocumentName?: string;
+  quotations?: Quotation[];
   archived?: boolean;
 }
