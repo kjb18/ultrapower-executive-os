@@ -121,21 +121,14 @@ export default function Projects() {
   const [qsExpandedItem, setQsExpandedItem] = useState<number|null>(null);
   const [qsWebSearch, setQsWebSearch] = useState(true);
 
-  // Quotations
-  const [quotationForm, setQuotationForm] = useState<{
-    id:string; docNumber:string; lineItems:LocalLineItem[];
-    salutation:"Dear Sir,"|"Dear Ma'am,"|"Dear Sir/Ma'am,";
-    validity:string; delivery:string; warranty:string;
-    paymentTerms:string; notes:string;
-    status:"Draft"|"Sent"|"Awarded"|"Lost"|"No Offer";
-  }|null>(null);
-  const [quotationPreview, setQuotationPreview] = useState<string|null>(null);
-  const [savingQuotation, setSavingQuotation] = useState(false);
+  // Quotation overlay
+  const [showQuotationOverlay, setShowQuotationOverlay] = useState(false);
+  const [quotationOverlayUrl, setQuotationOverlayUrl] = useState("");
 
   // Local editable fields
   const [migrationBanner, setMigrationBanner] = useState(0);
   const [localNotes, setLocalNotes] = useState("");
-  const [localInvoiceAmount, setLocalInvoiceAmount] = useState("");
+  const [plFields, setPLFields] = useState({invoiceAmount:0,totalCogs:0,totalShipping:0,totalProjectExpenses:0});
 
   // New project form
   const [np, setNP] = useState({name:"",client:"",stage:"RFQ Received" as Stage,vatType:"VAT Inclusive" as VatType,rfqDate:new Date().toISOString().split("T")[0],notes:""});
@@ -154,13 +147,20 @@ export default function Projects() {
 
   useEffect(() => {
     setLocalNotes(selectedProject?.notes || "");
-    setLocalInvoiceAmount(selectedProject?.invoiceAmount !== undefined ? String(selectedProject.invoiceAmount) : "");
+    if (selectedProject) {
+      setPLFields({
+        invoiceAmount: selectedProject.invoiceAmount || 0,
+        totalCogs: selectedProject.totalCogs || 0,
+        totalShipping: selectedProject.totalShipping || 0,
+        totalProjectExpenses: selectedProject.totalProjectExpenses || 0,
+      });
+    }
   }, [selectedProject?.id]);
 
   useEffect(() => {
     if (!selectedProject) return;
     setAssetTab("quotations");
-    setQuotationForm(null); setQuotationPreview(null);
+    setShowQuotationOverlay(false); setQuotationOverlayUrl("");
     setShowLinkRFQ(false); setShowLinkPO(false); setShowLinkSourcing(false); setShowLinkSPO(false);
     setShowNewRFQ(false); setShowNewSPO(false); setShowQuickSource(false);
     setQuickSourceResults([]); setQuickSourceSaved(false); setQsExpandedItem(null);
@@ -391,18 +391,6 @@ export default function Projects() {
     saveProject({ ...selectedProject, notes });
   }, 800);
 
-  const handleRecalculate = () => {
-    if (!selectedProject) return;
-    const allExp = expenses.filter(e => e.projectId === selectedProject.id);
-    const cogs = allExp.filter(e=>e.type==="COGS").reduce((s,e)=>s+e.amount,0);
-    const shipping = allExp.filter(e=>e.type==="Shipping Cost").reduce((s,e)=>s+e.amount,0);
-    const projExp = allExp.filter(e=>e.type==="Project Expense").reduce((s,e)=>s+e.amount,0);
-    const revenue = parseFloat(localInvoiceAmount)||selectedProject.invoiceAmount||0;
-    const gp = revenue - cogs - shipping - projExp;
-    const gm = revenue > 0 ? Math.round((gp/revenue)*100) : 0;
-    saveProject({...selectedProject, invoiceAmount:revenue, totalCogs:cogs, totalShipping:shipping, totalProjectExpenses:projExp, grossProfit:gp, grossMarginPct:gm});
-  };
-
   const exportQuickSourceCSV = () => {
     if(!quickSourceResults.length) return;
     const rows:string[][]=[["Item","Summary","Local Available","Supplier","Type","Price Range","Unit","Lead Time","MOQ","Notes"]];
@@ -423,51 +411,6 @@ export default function Projects() {
     "Awarded":{bg:"#f0faf5",fg:"#3B6D11"},"Lost":{bg:"#FEF0F0",fg:"#A32D2D"},"No Offer":{bg:"#f0f2f5",fg:"#8a9ab0"},
   };
 
-  const generateQuotationHTML = (q: typeof quotationForm, project: Project): string => {
-    if (!q) return "";
-    const fmtV = (n: number) => `PHP ${n.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-    const vatRate = project.vatType==="VAT Inclusive" ? 0.12 : 0;
-    const subtotal = q.lineItems.reduce((s,li)=>s+li.total,0);
-    const vatAmt = Math.round(subtotal*vatRate*100)/100;
-    const grand = subtotal+vatAmt;
-    const vatLabel = project.vatType==="VAT Inclusive"?"VAT (12%)":project.vatType==="Zero Rated"?"Zero-Rated VAT":"Exempt";
-    const rows = q.lineItems.map((li,i)=>`<tr><td style="padding:8px 12px;border-bottom:1px solid #eee;color:#9ca3af;font-size:11px">${i+1}</td><td style="padding:8px 12px;border-bottom:1px solid #eee">${li.description}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">${li.unit}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">${li.quantity}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">${fmtV(li.unitPrice)}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600">${fmtV(li.total)}</td></tr>`).join("");
-    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${q.docNumber}</title><style>body{font-family:Arial,sans-serif;color:#1a1a2e;margin:0;padding:40px;font-size:13px}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0066CC;padding-bottom:20px;margin-bottom:28px}.logo{font-size:24px;font-weight:700}.ultra{color:#0066CC}.power{color:#CC0000}.co{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#4a4a5a;margin-top:3px}.addr{font-size:10px;color:#6b7280;margin-top:5px;line-height:1.7}.badge{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#0066CC;border:1.5px solid #0066CC;padding:4px 12px;border-radius:3px;display:inline-block;margin-bottom:8px}.dnum{font-family:monospace;font-size:12px}.ddate{font-size:11px;color:#6b7280;margin-top:2px}.meta{display:flex;gap:40px;margin-bottom:28px}.ml{font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af;margin-bottom:4px}.mv{font-size:13px;font-weight:600}.md{font-size:11px;color:#4a4a5a;line-height:1.6}table{width:100%;border-collapse:collapse}thead tr{background:#1a1a2e;color:#fff}th{padding:10px 12px;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;text-align:left}th:nth-child(4),th:nth-child(5),th:last-child{text-align:right}.tots{display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-top:12px}.tr{display:flex;gap:48px;font-size:12px;color:#6b7280}.trgrand{font-size:14px;font-weight:700;color:#1a1a2e;border-top:2px solid #1a1a2e;padding-top:6px;margin-top:4px}.tbl2{width:100%;border-collapse:collapse;margin-top:10px}.tbl2 td{padding:6px 12px;font-size:12px;border-bottom:.5px solid #eee}.tbl2 td:first-child{font-weight:600;color:#1a1a2e;width:180px}.notes{margin-top:16px;padding:10px 14px;background:#f8f9fb;border-left:3px solid #0066CC;font-size:12px;color:#4a4a5a;border-radius:0 6px 6px 0}.sig{margin-top:48px;display:flex;gap:48px}.sb{flex:1}.sl{border-top:1px solid #ccc;margin-top:32px;margin-bottom:6px}.slbl{font-size:11px;color:#6b7280}.footer{margin-top:28px;border-top:1px solid #eee;padding-top:8px;font-size:9px;color:#9ca3af;text-align:center}</style></head><body><div class="hdr"><div><div class="logo"><span class="ultra">ULTRA</span> <span class="power">POWER</span></div><div class="co">Ultra Power Industrial Resources, Inc.</div><div class="addr">Makati City, Metro Manila, Philippines<br>TIN: 238-917-595-000 &middot; khalil@ultrapowerindustrialinc.com</div></div><div style="text-align:right"><div class="badge">Quotation</div><div class="dnum">${q.docNumber}</div><div class="ddate">${new Date(new Date().toISOString()).toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"})}</div></div></div><div class="meta"><div><div class="ml">Attention To</div><div class="mv">${project.client}</div>${project.rfqContactPersonName?`<div class="md">${project.rfqContactPersonName}</div>`:""}</div>${project.rfqSubject?`<div><div class="ml">Subject</div><div class="md">${project.rfqSubject}</div></div>`:""} ${project.rfqNumber?`<div><div class="ml">Ref. RFQ</div><div class="md">${project.rfqNumber}</div></div>`:""}</div><p style="font-size:13px;color:#4a4a5a;margin-bottom:8px">${q.salutation}</p><p style="font-size:13px;color:#4a4a5a;margin-bottom:20px;line-height:1.6">We are pleased to submit our quotation for the above-referenced requirement:</p><table><thead><tr><th>#</th><th>Description</th><th style="text-align:center">Unit</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Price</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows||`<tr><td colspan="6" style="text-align:center;padding:20px;color:#9ca3af">No items added</td></tr>`}</tbody></table><div class="tots"><div class="tr"><span>Subtotal</span><span>${fmtV(subtotal)}</span></div><div class="tr"><span>${vatLabel}</span><span>${fmtV(vatAmt)}</span></div><div class="tr trgrand"><span>GRAND TOTAL</span><span>${fmtV(grand)}</span></div></div><div style="margin-top:24px"><strong style="font-size:12px">Terms and Conditions</strong><table class="tbl2"><tr><td>Validity</td><td>${q.validity||"30 days from date of quotation"}</td></tr><tr><td>Delivery</td><td>${q.delivery||"To be confirmed upon PO receipt"}</td></tr><tr><td>Warranty</td><td>${q.warranty||"As per manufacturer's warranty"}</td></tr><tr><td>Payment Terms</td><td>${q.paymentTerms||"30 days from invoice date"}</td></tr><tr><td>VAT</td><td>${project.vatType}</td></tr></table></div>${q.notes?`<div class="notes"><strong>Notes:</strong> ${q.notes}</div>`:""}<div class="sig"><div class="sb"><div class="sl"></div><div>Khalil Joseph Banares</div><div class="slbl">Engineering Solutions Director</div><div class="slbl">Ultra Power Industrial Resources, Inc.</div></div><div class="sb"><div class="sl"></div><div class="slbl">Received by / Conforme</div><div class="slbl">Date: ____________________</div></div></div><div class="footer">This quotation is subject to the terms stated above. Prices are in Philippine Pesos (PHP) and valid for the stated validity period.</div></body></html>`;
-  };
-
-  const saveQuotationFn = async (q: typeof quotationForm) => {
-    if (!q || !selectedProject) return;
-    setSavingQuotation(true);
-    const vatRate = selectedProject.vatType==="VAT Inclusive" ? 0.12 : 0;
-    const totalAmount = q.lineItems.reduce((s,li)=>s+li.total, 0);
-    const vatAmount = Math.round(totalAmount*vatRate*100)/100;
-    const grandTotal = totalAmount + vatAmount;
-    const html = generateQuotationHTML(q, selectedProject);
-    const quotation: Quotation = {
-      id: q.id, version: 0, docNumber: q.docNumber,
-      dateCreated: new Date().toISOString().split("T")[0],
-      status: q.status,
-      lineItems: q.lineItems,
-      totalAmount, vatType: selectedProject.vatType as "VAT Inclusive"|"Zero Rated"|"Exempt",
-      vatAmount, grandTotal,
-      notes: q.notes, html,
-      salutation: q.salutation, validity: q.validity,
-      delivery: q.delivery, warranty: q.warranty, paymentTerms: q.paymentTerms,
-    };
-    try {
-      const res = await fetch("/api/projects", {
-        method:"POST", headers:{"Content-Type":"application/json"},
-        body: JSON.stringify({action:"saveQuotation", projectId:selectedProject.id, quotation})
-      });
-      const data = await res.json();
-      if (data.ok && data.project) {
-        setSelectedProject(data.project);
-        setProjects(prev=>prev.map(p=>p.id===data.project.id?data.project:p));
-        setQuotationForm(null); setQuotationPreview(null);
-      }
-    } catch(e) { console.error(e); }
-    setSavingQuotation(false);
-  };
 
   // Filtered projects
   const filtered = projects.filter(p => {
@@ -493,6 +436,10 @@ export default function Projects() {
     tabBtn:(a:boolean):React.CSSProperties=>({padding:"8px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,color:a?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${a?"#185FA5":"transparent"}`,fontWeight:a?600:400}),
     addBtn:{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600} as React.CSSProperties,
   };
+
+  // P&L computed values (from plFields local state)
+  const gp = plFields.invoiceAmount - plFields.totalCogs - plFields.totalShipping - plFields.totalProjectExpenses;
+  const gm = plFields.invoiceAmount > 0 ? ((gp / plFields.invoiceAmount) * 100).toFixed(1) : null;
 
   // Derived values for Assets tabs
   type DocWithSource = CRMDoc & {source:string; client:string};
@@ -994,13 +941,15 @@ export default function Projects() {
                 <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Quotations</div>
                 <button onClick={async()=>{
                   const dn=await generateDocNum("QUOT");
-                  setQuotationForm({id:genId(),docNumber:dn,lineItems:[],salutation:"Dear Sir/Ma'am,",validity:"30 days from date of quotation",delivery:"To be confirmed upon PO receipt",warranty:"As per manufacturer's warranty",paymentTerms:selectedProject.paymentTerms||"30 Days",notes:"",status:"Draft"});
-                  setQuotationPreview(null);
+                  const url=`/tools/docmaker.html?client=${encodeURIComponent(selectedProject.client)}&subject=${encodeURIComponent(selectedProject.rfqSubject||selectedProject.name)}&rfq=${encodeURIComponent(selectedProject.rfqNumber||"")}&docnum=${encodeURIComponent(dn)}&projectId=${encodeURIComponent(selectedProject.id)}&mode=quotation`;
+                  setQuotationOverlayUrl(url);
+                  setShowQuotationOverlay(true);
+                  document.body.style.overflow="hidden";
                 }} style={S.addBtn}>+ New Quotation</button>
               </div>
 
               {/* Existing quotation cards */}
-              {(selectedProject.quotations||[]).length===0&&!quotationForm&&(
+              {(selectedProject.quotations||[]).length===0&&(
                 <div style={{...S.card,padding:32,textAlign:"center",color:"#b0bec8",fontSize:13}}>No quotations yet. Click + New Quotation to create one.</div>
               )}
               {(selectedProject.quotations||[]).map((q,i)=>(
@@ -1014,9 +963,9 @@ export default function Projects() {
                       <span style={{fontSize:13,fontFamily:"'DM Mono',monospace",fontWeight:700,color:"#3B6D11",marginLeft:4}}>{fmt(q.grandTotal)}</span>
                     </div>
                     <div style={{display:"flex",gap:6,flexShrink:0}}>
-                      {q.html&&<button onClick={()=>{const w=window.open("","_blank");if(w){w.document.write(q.html as string);w.document.close();}}} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer"}}>View</button>}
-                      <button onClick={()=>setQuotationForm({id:q.id,docNumber:q.docNumber,lineItems:q.lineItems||[],salutation:q.salutation||"Dear Sir/Ma'am,",validity:q.validity||"",delivery:q.delivery||"",warranty:q.warranty||"",paymentTerms:q.paymentTerms||"",notes:q.notes||"",status:q.status})} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Edit</button>
-                      <button onClick={async()=>{const dn=await generateDocNum("QUOT");setQuotationForm({id:genId(),docNumber:dn,lineItems:[...(q.lineItems||[])],salutation:q.salutation||"Dear Sir/Ma'am,",validity:q.validity||"",delivery:q.delivery||"",warranty:q.warranty||"",paymentTerms:q.paymentTerms||"",notes:q.notes||"",status:"Draft"});}} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Duplicate</button>
+                      <button onClick={()=>{if(q.html){const w=window.open("","_blank");if(w){w.document.write(q.html as string);w.document.close();}}else{const url=`/tools/docmaker.html?client=${encodeURIComponent(selectedProject.client)}&subject=${encodeURIComponent(selectedProject.rfqSubject||selectedProject.name)}&rfq=${encodeURIComponent(selectedProject.rfqNumber||"")}&docnum=${encodeURIComponent(q.docNumber)}&projectId=${encodeURIComponent(selectedProject.id)}&mode=quotation&editId=${encodeURIComponent(q.id)}&existingDocnum=${encodeURIComponent(q.docNumber)}`;setQuotationOverlayUrl(url);setShowQuotationOverlay(true);document.body.style.overflow="hidden";}}} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer"}}>View</button>
+                      <button onClick={()=>{const url=`/tools/docmaker.html?client=${encodeURIComponent(selectedProject.client)}&subject=${encodeURIComponent(selectedProject.rfqSubject||selectedProject.name)}&rfq=${encodeURIComponent(selectedProject.rfqNumber||"")}&docnum=${encodeURIComponent(q.docNumber)}&projectId=${encodeURIComponent(selectedProject.id)}&mode=quotation&editId=${encodeURIComponent(q.id)}&existingDocnum=${encodeURIComponent(q.docNumber)}`;setQuotationOverlayUrl(url);setShowQuotationOverlay(true);document.body.style.overflow="hidden";}} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Edit</button>
+                      <button onClick={async()=>{const dn=await generateDocNum("QUOT");const url=`/tools/docmaker.html?client=${encodeURIComponent(selectedProject.client)}&subject=${encodeURIComponent(selectedProject.rfqSubject||selectedProject.name)}&rfq=${encodeURIComponent(selectedProject.rfqNumber||"")}&docnum=${encodeURIComponent(dn)}&projectId=${encodeURIComponent(selectedProject.id)}&mode=quotation`;setQuotationOverlayUrl(url);setShowQuotationOverlay(true);document.body.style.overflow="hidden";}} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Duplicate</button>
                       <select value={q.status} onChange={e=>{const updated={...q,status:e.target.value as Quotation["status"]};const updProj={...selectedProject,quotations:(selectedProject.quotations||[]).map(x=>x.id===q.id?updated:x)};saveProject(updProj);}} style={{fontSize:11,padding:"3px 8px",borderRadius:7,border:`0.5px solid ${QUOT_STATUS_C[q.status]?.fg||"#e2e6ea"}44`,background:QUOT_STATUS_C[q.status]?.bg||"#f0f2f5",color:QUOT_STATUS_C[q.status]?.fg||"#8a9ab0",fontWeight:600,cursor:"pointer"}}>
                         {(["Draft","Sent","Awarded","Lost","No Offer"] as const).map(s=><option key={s}>{s}</option>)}
                       </select>
@@ -1025,227 +974,194 @@ export default function Projects() {
                 </div>
               ))}
 
-              {/* Inline new/edit quotation form */}
-              {quotationForm&&(
-                <div style={{...S.card,padding:16,marginTop:8,border:"0.5px solid #185FA5"}}>
-                  <div style={{fontSize:12,fontWeight:600,color:"#185FA5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>
-                    {(selectedProject.quotations||[]).find(q=>q.id===quotationForm.id)?"Edit Quotation":"New Quotation"} -- {quotationForm.docNumber}
-                  </div>
-                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:12}}>
-                    <div>
-                      <span style={S.lbl}>Salutation</span>
-                      <select style={S.inp} value={quotationForm.salutation} onChange={e=>setQuotationForm(f=>f?{...f,salutation:e.target.value as typeof f.salutation}:f)}>
-                        {(["Dear Sir,","Dear Ma'am,","Dear Sir/Ma'am,"] as const).map(s=><option key={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <span style={S.lbl}>Status</span>
-                      <select style={{...S.inp,background:QUOT_STATUS_C[quotationForm.status]?.bg,color:QUOT_STATUS_C[quotationForm.status]?.fg,fontWeight:600}} value={quotationForm.status} onChange={e=>setQuotationForm(f=>f?{...f,status:e.target.value as typeof f.status}:f)}>
-                        {(["Draft","Sent","Awarded","Lost","No Offer"] as const).map(s=><option key={s}>{s}</option>)}
-                      </select>
-                    </div>
-                    <div>
-                      <span style={S.lbl}>Validity</span>
-                      <input style={S.inp} value={quotationForm.validity} onChange={e=>setQuotationForm(f=>f?{...f,validity:e.target.value}:f)} placeholder="30 days from date of quotation"/>
-                    </div>
-                    <div>
-                      <span style={S.lbl}>Delivery</span>
-                      <input style={S.inp} value={quotationForm.delivery} onChange={e=>setQuotationForm(f=>f?{...f,delivery:e.target.value}:f)} placeholder="To be confirmed upon PO receipt"/>
-                    </div>
-                    <div>
-                      <span style={S.lbl}>Warranty</span>
-                      <input style={S.inp} value={quotationForm.warranty} onChange={e=>setQuotationForm(f=>f?{...f,warranty:e.target.value}:f)} placeholder="As per manufacturer's warranty"/>
-                    </div>
-                    <div>
-                      <span style={S.lbl}>Payment Terms</span>
-                      <input style={S.inp} value={quotationForm.paymentTerms} onChange={e=>setQuotationForm(f=>f?{...f,paymentTerms:e.target.value}:f)} placeholder="30 days from invoice date"/>
-                    </div>
-                  </div>
-
-                  {/* Line items */}
-                  <div style={{marginBottom:12}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                      <span style={S.lbl}>Line Items</span>
-                      <button onClick={()=>setQuotationForm(f=>f?{...f,lineItems:[...f.lineItems,{id:genId(),description:"",quantity:1,unit:"pc",unitPrice:0,total:0}]}:f)} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer"}}>+ Add Item</button>
-                    </div>
-                    {quotationForm.lineItems.length>0&&(
-                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
-                        <thead><tr style={{background:"#f8f9fb"}}>
-                          {["Description","Unit","Qty","Unit Price","Total",""].map(h=><th key={h} style={{padding:"5px 8px",textAlign:"left",fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</th>)}
-                        </tr></thead>
-                        <tbody>
-                          {quotationForm.lineItems.map((li,idx)=>(
-                            <tr key={li.id}>
-                              <td style={{padding:"3px 4px"}}><input style={{...S.inp,padding:"4px 6px"}} value={li.description} onChange={e=>setQuotationForm(f=>f?{...f,lineItems:liUpdate(f.lineItems,idx,"description",e.target.value)}:f)}/></td>
-                              <td style={{padding:"3px 4px",width:60}}><input style={{...S.inp,padding:"4px 6px"}} value={li.unit} onChange={e=>setQuotationForm(f=>f?{...f,lineItems:liUpdate(f.lineItems,idx,"unit",e.target.value)}:f)}/></td>
-                              <td style={{padding:"3px 4px",width:60}}><input style={{...S.inp,padding:"4px 6px"}} type="number" value={li.quantity} onChange={e=>setQuotationForm(f=>f?{...f,lineItems:liUpdate(f.lineItems,idx,"quantity",Number(e.target.value))}:f)}/></td>
-                              <td style={{padding:"3px 4px",width:110}}><input style={{...S.inp,padding:"4px 6px"}} type="number" value={li.unitPrice} onChange={e=>setQuotationForm(f=>f?{...f,lineItems:liUpdate(f.lineItems,idx,"unitPrice",Number(e.target.value))}:f)}/></td>
-                              <td style={{padding:"3px 4px",width:110,fontFamily:"'DM Mono',monospace",color:"#3B6D11",fontSize:12,paddingLeft:8}}>{fmt(li.total)}</td>
-                              <td style={{padding:"3px 4px",width:28}}><button onClick={()=>setQuotationForm(f=>f?{...f,lineItems:f.lineItems.filter((_,i)=>i!==idx)}:f)} style={{color:"#d0d8e0",background:"none",border:"none",cursor:"pointer",fontSize:14}}>✕</button></td>
-                            </tr>
-                          ))}
-                        </tbody>
-                      </table>
-                    )}
-                    {quotationForm.lineItems.length>0&&(
-                      <div style={{textAlign:"right",fontSize:12,fontFamily:"'DM Mono',monospace",color:"#1a2332",paddingTop:8}}>
-                        {selectedProject.vatType==="VAT Inclusive"&&<div style={{color:"#8a9ab0"}}>VAT (12%): {fmt(Math.round(quotationForm.lineItems.reduce((s,li)=>s+li.total,0)*0.12*100)/100)}</div>}
-                        <div style={{fontWeight:700,fontSize:14}}>Grand Total: {fmt(quotationForm.lineItems.reduce((s,li)=>s+li.total,0)+(selectedProject.vatType==="VAT Inclusive"?Math.round(quotationForm.lineItems.reduce((s,li)=>s+li.total,0)*0.12*100)/100:0))}</div>
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{marginBottom:12}}>
-                    <span style={S.lbl}>Notes</span>
-                    <textarea style={{...S.inp,minHeight:60,resize:"vertical" as const}} value={quotationForm.notes} onChange={e=>setQuotationForm(f=>f?{...f,notes:e.target.value}:f)} placeholder="Optional notes for the quotation..."/>
-                  </div>
-
-                  <div style={{display:"flex",gap:8}}>
-                    <button onClick={()=>{const html=generateQuotationHTML(quotationForm,selectedProject);const w=window.open("","_blank");if(w){w.document.write(html);w.document.close();}}} style={{...S.addBtn,background:"#f0faf5",color:"#3B6D11",borderColor:"#3B6D11"}}>Preview</button>
-                    <button onClick={()=>saveQuotationFn(quotationForm)} disabled={savingQuotation} style={{...S.addBtn,background:"#185FA5",color:"#fff",borderColor:"#185FA5",opacity:savingQuotation?0.6:1}}>
-                      {savingQuotation?<Spinner/>:<span>Save Quotation</span>}
-                    </button>
-                    <button onClick={()=>{setQuotationForm(null);setQuotationPreview(null);}} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Cancel</button>
-                  </div>
-                </div>
-              )}
             </>}
 
             {/* OVERVIEW TAB */}
             {assetTab==="overview"&&<>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12,marginBottom:12}}>
-                {/* Project Details */}
-                <div style={{...S.card,padding:16}}>
-                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>Project Details</div>
-                  <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                    {[
-                      ["Client",selectedProject.client,"client"],
-                      ["VAT Type",selectedProject.vatType,"vatType"],
-                      ["RFQ Date",selectedProject.rfqDate,"rfqDate"],
-                      ["PO Date",selectedProject.poDate||"","poDate"],
-                      ["Invoice Date",selectedProject.invoiceDate||"","invoiceDate"],
-                      ["Payment Terms",selectedProject.paymentTerms||"","paymentTerms"],
-                      ["Payment Due Date",selectedProject.paymentDueDate||"","paymentDueDate"],
-                    ].map(([lbl,val,key])=>(
-                      <div key={key}>
-                        <span style={S.lbl}>{lbl}</span>
-                        {key==="vatType"?(
-                          <select style={S.inp} value={val} onChange={e=>saveProject({...selectedProject, vatType:e.target.value as VatType})}>
-                            {VAT_TYPES.map(v=><option key={v}>{v}</option>)}
-                          </select>
-                        ):key==="paymentTerms"?(
-                          <select style={S.inp} value={val} onChange={e=>{
-                            const pt=e.target.value;
-                            const invDate=selectedProject.invoiceDate;
-                            let dueDate=selectedProject.paymentDueDate||"";
-                            if(invDate&&pt.match(/^\d+ Days/)){const days=parseInt(pt);const d=new Date(invDate);d.setDate(d.getDate()+days);dueDate=d.toISOString().split("T")[0];}
-                            saveProject({...selectedProject,paymentTerms:pt,paymentDueDate:dueDate});
-                          }}>
-                            <option value="">-- Select --</option>
-                            {PAYMENT_TERMS_LIST.map(t=><option key={t}>{t}</option>)}
-                          </select>
-                        ):key.includes("Date")?(
-                          <input style={S.inp} type="date" value={val} onChange={e=>saveProject({...selectedProject,[key]:e.target.value})}/>
-                        ):(
-                          <input style={S.inp} value={val} onChange={e=>saveProject({...selectedProject,[key]:e.target.value})}/>
-                        )}
-                      </div>
-                    ))}
-                    <div>
-                      <span style={S.lbl}>Stage</span>
-                      <select style={{...S.inp,background:STAGE_C[selectedProject.stage]?.bg,color:STAGE_C[selectedProject.stage]?.fg,fontWeight:600}} value={selectedProject.stage} onChange={e=>saveProject({...selectedProject,stage:e.target.value as Stage})}>
-                        {STAGES.map(s=><option key={s}>{s}</option>)}
-                      </select>
+              {/* 1. Reference Documents */}
+              <div style={{...S.card,padding:16,marginBottom:12}} onPaste={handleProjectPaste}>
+                <span style={S.lbl}>Reference Documents</span>
+                {!selectedProject.rfqDocument?(
+                  <label style={{display:"block",marginTop:8,border:"1.5px dashed #e2e6ea",borderRadius:10,padding:"28px 16px",textAlign:"center" as const,cursor:"pointer",background:"#fafbfc"}}>
+                    <input type="file" accept="image/*,.pdf" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)handleProjectFile(f);}}/>
+                    <div style={{fontSize:22,marginBottom:8,color:"#d0d8e0",lineHeight:1}}>↑</div>
+                    <div style={{fontSize:13,fontWeight:500,color:"#8a9ab0",marginBottom:4}}>Click to upload or paste (Ctrl+V)</div>
+                    <div style={{fontSize:11,color:"#b0bec8"}}>Image or PDF -- reference, RFQ, spec sheet</div>
+                  </label>
+                ):(
+                  <div style={{marginTop:8}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
+                      <span style={{fontSize:12,color:"#4a6a8a",fontFamily:"'DM Mono',monospace"}}>{selectedProject.rfqDocumentName}</span>
+                      <button onClick={()=>saveProject({...selectedProject,rfqDocument:undefined,rfqDocumentName:undefined})} style={{fontSize:11,color:"#A32D2D",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
                     </div>
-                    <div>
-                      <span style={S.lbl}>Payment Status</span>
-                      <select style={{...S.inp,background:PAY_C[selectedProject.paymentStatus||"Unpaid"]?.bg,color:PAY_C[selectedProject.paymentStatus||"Unpaid"]?.fg,fontWeight:600}} value={selectedProject.paymentStatus||"Unpaid"} onChange={e=>saveProject({...selectedProject,paymentStatus:e.target.value as PaymentStatus})}>
-                        {PAYMENT_STATUSES.map(s=><option key={s}>{s}</option>)}
-                      </select>
-                    </div>
+                    {selectedProject.rfqDocumentName?.toLowerCase().endsWith(".pdf")
+                      ?<iframe src={selectedProject.rfqDocument} style={{width:"100%",height:420,border:"0.5px solid #e2e6ea",borderRadius:6}}/>
+                      :<img src={selectedProject.rfqDocument} alt="reference doc" style={{width:"100%",borderRadius:6,border:"0.5px solid #e2e6ea"}}/>
+                    }
                   </div>
+                )}
+              </div>
 
-                  {/* RFQ Details subsection */}
-                  <div style={{marginTop:14,borderTop:"0.5px solid #f0f2f5",paddingTop:12}}>
-                    <div style={{fontSize:10,fontWeight:600,color:"#b0bec8",textTransform:"uppercase" as const,letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:8}}>RFQ Details</div>
-                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8}}>
-                      <div>
-                        <span style={S.lbl}>RFQ Number</span>
-                        <div style={{display:"flex",gap:4}}>
-                          <input style={{...S.inp,flex:1}} value={selectedProject.rfqNumber||""} onChange={e=>saveProject({...selectedProject,rfqNumber:e.target.value})} placeholder="e.g. RFQ-260518-001"/>
-                          {!selectedProject.rfqNumber&&<button onClick={()=>{const d=new Date().toISOString().split("T")[0].replace(/-/g,"").slice(2);const r=Math.floor(Math.random()*900)+100;saveProject({...selectedProject,rfqNumber:`RFQ-${d}-${r}`});}} style={{fontSize:11,padding:"4px 8px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",flexShrink:0,whiteSpace:"nowrap" as const}}>Gen</button>}
-                        </div>
-                      </div>
-                      <div>
-                        <span style={S.lbl}>Contact Person</span>
-                        <input style={S.inp} value={selectedProject.rfqContactPersonName||""} onChange={e=>saveProject({...selectedProject,rfqContactPersonName:e.target.value})} placeholder="Procurement contact"/>
-                      </div>
-                      <div style={{gridColumn:"span 2"}}>
-                        <span style={S.lbl}>RFQ Subject</span>
-                        <input style={S.inp} value={selectedProject.rfqSubject||""} onChange={e=>saveProject({...selectedProject,rfqSubject:e.target.value})} placeholder="e.g. LED lighting supply for Substation A"/>
-                      </div>
-                      <div>
-                        <span style={S.lbl}>RFQ Deadline</span>
-                        <input style={S.inp} type="date" value={selectedProject.rfqDeadline||""} onChange={e=>saveProject({...selectedProject,rfqDeadline:e.target.value})}/>
-                      </div>
-                      <div>
-                        <span style={S.lbl}>Final Delivery</span>
-                        <input style={S.inp} type="date" value={selectedProject.finalDeliveryDate||""} onChange={e=>saveProject({...selectedProject,finalDeliveryDate:e.target.value})}/>
-                      </div>
-                    </div>
-                  </div>
-                </div>
-
-                {/* P&L Summary -- receipt style */}
-                <div style={{...S.card,padding:16}}>
-                  <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:10}}>P&L Summary</div>
-
-                  <div style={{fontSize:10,fontWeight:600,color:"#b0bec8",textTransform:"uppercase" as const,letterSpacing:"0.12em",fontFamily:"'DM Mono',monospace",marginBottom:6}}>Revenue</div>
-                  <div style={{marginBottom:4}}>
-                    <span style={S.lbl}>Invoice Amount</span>
-                    <input style={S.inp} type="number" placeholder="0.00" value={localInvoiceAmount}
-                      onChange={e=>setLocalInvoiceAmount(e.target.value)}
-                      onBlur={()=>{const v=parseFloat(localInvoiceAmount)||0;saveProject({...selectedProject,invoiceAmount:v});}}/>
-                  </div>
-                  <div style={{fontSize:11,color:"#8a9ab0",marginBottom:12,fontFamily:"'DM Mono',monospace"}}>{selectedProject.vatType}{selectedProject.vatType==="VAT Inclusive"?" · 12% Output VAT":""}</div>
-
-                  <div style={{fontSize:10,fontWeight:600,color:"#b0bec8",textTransform:"uppercase" as const,letterSpacing:"0.12em",fontFamily:"'DM Mono',monospace",marginBottom:6}}>Costs</div>
-                  {([
-                    ["COGS",selectedProject.totalCogs||0,"#A32D2D",projectExpenses.filter(e=>e.type==="COGS").length],
-                    ["Shipping Cost",selectedProject.totalShipping||0,"#854F0B",projectExpenses.filter(e=>e.type==="Shipping Cost").length],
-                    ["Project Expenses",selectedProject.totalProjectExpenses||0,"#534AB7",projectExpenses.filter(e=>e.type==="Project Expense").length],
-                  ] as [string,number,string,number][]).map(([lbl,val,clr,count])=>(
-                    <div key={lbl} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"5px 0",borderBottom:"0.5px solid #f0f2f5"}}>
-                      <div style={{display:"flex",alignItems:"center",gap:6}}>
-                        <span style={{fontSize:12,color:"#4a6a8a"}}>{lbl}</span>
-                        {count>0&&<span style={{fontSize:10,color:clr,fontFamily:"'DM Mono',monospace"}}>{count} item{count!==1?"s":""}</span>}
-                      </div>
-                      <span style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:clr}}>({fmt(val)})</span>
+              {/* 2. Project Details */}
+              <div style={{...S.card,padding:16,marginBottom:12}}>
+                <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>Project Details</div>
+                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8}}>
+                  {[
+                    ["Client",selectedProject.client,"client"],
+                    ["VAT Type",selectedProject.vatType,"vatType"],
+                    ["RFQ Date",selectedProject.rfqDate,"rfqDate"],
+                    ["PO Date",selectedProject.poDate||"","poDate"],
+                    ["Invoice Date",selectedProject.invoiceDate||"","invoiceDate"],
+                    ["Payment Terms",selectedProject.paymentTerms||"","paymentTerms"],
+                    ["Payment Due Date",selectedProject.paymentDueDate||"","paymentDueDate"],
+                  ].map(([lbl,val,key])=>(
+                    <div key={key}>
+                      <span style={S.lbl}>{lbl}</span>
+                      {key==="vatType"?(
+                        <select style={S.inp} value={val} onChange={e=>saveProject({...selectedProject, vatType:e.target.value as VatType})}>
+                          {VAT_TYPES.map(v=><option key={v}>{v}</option>)}
+                        </select>
+                      ):key==="paymentTerms"?(
+                        <select style={S.inp} value={val} onChange={e=>{
+                          const pt=e.target.value;
+                          const invDate=selectedProject.invoiceDate;
+                          let dueDate=selectedProject.paymentDueDate||"";
+                          if(invDate&&pt.match(/^\d+ Days/)){const days=parseInt(pt);const d=new Date(invDate);d.setDate(d.getDate()+days);dueDate=d.toISOString().split("T")[0];}
+                          saveProject({...selectedProject,paymentTerms:pt,paymentDueDate:dueDate});
+                        }}>
+                          <option value="">-- Select --</option>
+                          {PAYMENT_TERMS_LIST.map(t=><option key={t}>{t}</option>)}
+                        </select>
+                      ):key.includes("Date")?(
+                        <input style={S.inp} type="date" value={val} onChange={e=>saveProject({...selectedProject,[key]:e.target.value})}/>
+                      ):(
+                        <input style={S.inp} value={val} onChange={e=>saveProject({...selectedProject,[key]:e.target.value})}/>
+                      )}
                     </div>
                   ))}
-
-                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"10px 0",borderTop:"2px solid #1a2332",marginTop:8}}>
-                    <span style={{fontSize:14,fontWeight:600,color:"#1a2332"}}>Gross Profit</span>
-                    <span style={{fontSize:16,fontWeight:600,fontFamily:"'DM Mono',monospace",color:(selectedProject.grossProfit||0)>=0?"#3B6D11":"#A32D2D"}}>{fmt(selectedProject.grossProfit)}</span>
+                  <div>
+                    <span style={S.lbl}>Stage</span>
+                    <select style={{...S.inp,background:STAGE_C[selectedProject.stage]?.bg,color:STAGE_C[selectedProject.stage]?.fg,fontWeight:600}} value={selectedProject.stage} onChange={e=>saveProject({...selectedProject,stage:e.target.value as Stage})}>
+                      {STAGES.map(s=><option key={s}>{s}</option>)}
+                    </select>
                   </div>
-                  {selectedProject.grossMarginPct!==undefined&&(
-                    <div style={{textAlign:"right",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",marginBottom:4}}>Gross Margin: {selectedProject.grossMarginPct}%</div>
-                  )}
-
-                  {selectedProject.invoiceDate&&(
-                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderTop:"0.5px solid #f0f2f5",marginTop:4}}>
-                      <span style={{fontSize:11,color:"#8a9ab0"}}>Payment{selectedProject.paymentDueDate?` · Due: ${selectedProject.paymentDueDate}`:""}</span>
-                      {selectedProject.paymentStatus&&<span style={S.pill(PAY_C[selectedProject.paymentStatus]?.bg||"#f0f2f5",PAY_C[selectedProject.paymentStatus]?.fg||"#8a9ab0")}>{selectedProject.paymentStatus}</span>}
+                  <div>
+                    <span style={S.lbl}>Payment Status</span>
+                    <select style={{...S.inp,background:PAY_C[selectedProject.paymentStatus||"Unpaid"]?.bg,color:PAY_C[selectedProject.paymentStatus||"Unpaid"]?.fg,fontWeight:600}} value={selectedProject.paymentStatus||"Unpaid"} onChange={e=>saveProject({...selectedProject,paymentStatus:e.target.value as PaymentStatus})}>
+                      {PAYMENT_STATUSES.map(s=><option key={s}>{s}</option>)}
+                    </select>
+                  </div>
+                </div>
+                <div style={{marginTop:14,borderTop:"0.5px solid #f0f2f5",paddingTop:12}}>
+                  <div style={{fontSize:10,fontWeight:600,color:"#b0bec8",textTransform:"uppercase" as const,letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:8}}>RFQ Details</div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:8}}>
+                    <div>
+                      <span style={S.lbl}>RFQ Number</span>
+                      <div style={{display:"flex",gap:4}}>
+                        <input style={{...S.inp,flex:1}} value={selectedProject.rfqNumber||""} onChange={e=>saveProject({...selectedProject,rfqNumber:e.target.value})} placeholder="e.g. RFQ-260518-001"/>
+                        {!selectedProject.rfqNumber&&<button onClick={()=>{const d=new Date().toISOString().split("T")[0].replace(/-/g,"").slice(2);const r=Math.floor(Math.random()*900)+100;saveProject({...selectedProject,rfqNumber:`RFQ-${d}-${r}`});}} style={{fontSize:11,padding:"4px 8px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",flexShrink:0,whiteSpace:"nowrap" as const}}>Gen</button>}
+                      </div>
                     </div>
-                  )}
-
-                  <button onClick={handleRecalculate} style={{...S.addBtn,width:"100%",marginTop:12,background:"#f8f9fb",justifyContent:"center"}}>
-                    Recalculate P&L
-                  </button>
+                    <div>
+                      <span style={S.lbl}>Contact Person</span>
+                      <input style={S.inp} value={selectedProject.rfqContactPersonName||""} onChange={e=>saveProject({...selectedProject,rfqContactPersonName:e.target.value})} placeholder="Procurement contact"/>
+                    </div>
+                    <div style={{gridColumn:"span 2"}}>
+                      <span style={S.lbl}>RFQ Subject</span>
+                      <input style={S.inp} value={selectedProject.rfqSubject||""} onChange={e=>saveProject({...selectedProject,rfqSubject:e.target.value})} placeholder="e.g. LED lighting supply for Substation A"/>
+                    </div>
+                    <div>
+                      <span style={S.lbl}>RFQ Deadline</span>
+                      <input style={S.inp} type="date" value={selectedProject.rfqDeadline||""} onChange={e=>saveProject({...selectedProject,rfqDeadline:e.target.value})}/>
+                    </div>
+                    <div>
+                      <span style={S.lbl}>Final Delivery</span>
+                      <input style={S.inp} type="date" value={selectedProject.finalDeliveryDate||""} onChange={e=>saveProject({...selectedProject,finalDeliveryDate:e.target.value})}/>
+                    </div>
+                  </div>
                 </div>
               </div>
 
-              {/* Expenses for this project */}
+              {/* 3. P&L Summary -- manual inputs */}
+              <div style={{...S.card,padding:16,marginBottom:12}}>
+                <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>P&L Summary</div>
+
+                <div style={{fontSize:10,fontWeight:600,color:"#b0bec8",textTransform:"uppercase" as const,letterSpacing:"0.12em",fontFamily:"'DM Mono',monospace",marginBottom:8}}>Revenue</div>
+                <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"0.5px solid #f0f2f5",marginBottom:12}}>
+                  <div style={{display:"flex",alignItems:"center",gap:8}}>
+                    <span style={{fontSize:12,color:"#4a6a8a"}}>Invoice Amount</span>
+                    <span style={S.pill(selectedProject.vatType==="VAT Inclusive"?"#EBF3FC":selectedProject.vatType==="Zero Rated"?"#f0faf5":"#f0f2f5",selectedProject.vatType==="VAT Inclusive"?"#185FA5":selectedProject.vatType==="Zero Rated"?"#3B6D11":"#8a9ab0")}>{selectedProject.vatType}</span>
+                  </div>
+                  <div style={{display:"flex",alignItems:"center",gap:4}}>
+                    <span style={{fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>₱</span>
+                    <input type="number" style={{...S.inp,width:130,textAlign:"right" as const,fontFamily:"'DM Mono',monospace",fontSize:13,padding:"4px 8px"}} value={plFields.invoiceAmount||""} placeholder="0.00"
+                      onChange={e=>setPLFields(f=>({...f,invoiceAmount:Number(e.target.value)||0}))}
+                      onBlur={()=>saveProject({...selectedProject,invoiceAmount:plFields.invoiceAmount})}/>
+                  </div>
+                </div>
+
+                <div style={{fontSize:10,fontWeight:600,color:"#b0bec8",textTransform:"uppercase" as const,letterSpacing:"0.12em",fontFamily:"'DM Mono',monospace",marginBottom:8}}>Costs</div>
+                {([
+                  ["COGS","totalCogs"],
+                  ["Shipping Cost","totalShipping"],
+                  ["Project Expenses","totalProjectExpenses"],
+                ] as [string,"totalCogs"|"totalShipping"|"totalProjectExpenses"][]).map(([lbl,key])=>(
+                  <div key={key} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"6px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                    <div style={{display:"flex",alignItems:"center",gap:6}}>
+                      <span style={{fontSize:11,color:"#A32D2D",fontFamily:"'DM Mono',monospace",fontWeight:700}}>-</span>
+                      <span style={{fontSize:12,color:"#4a6a8a"}}>{lbl}</span>
+                    </div>
+                    <div style={{display:"flex",alignItems:"center",gap:4}}>
+                      <span style={{fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>₱</span>
+                      <input type="number" style={{...S.inp,width:130,textAlign:"right" as const,fontFamily:"'DM Mono',monospace",fontSize:13,padding:"4px 8px"}} value={plFields[key]||""} placeholder="0.00"
+                        onChange={e=>setPLFields(f=>({...f,[key]:Number(e.target.value)||0}))}
+                        onBlur={()=>saveProject({...selectedProject,[key]:plFields[key]})}/>
+                    </div>
+                  </div>
+                ))}
+
+                <div style={{borderTop:"1px solid #1a2332",marginTop:12,paddingTop:12}}>
+                  <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                    <span style={{fontSize:14,fontWeight:600,color:"#1a2332"}}>Gross Profit</span>
+                    <span style={{fontSize:18,fontWeight:700,fontFamily:"'DM Mono',monospace",color:gp>=0?"#3B6D11":"#A32D2D"}}>{fmt(gp)}</span>
+                  </div>
+                  <div style={{textAlign:"right" as const,fontSize:12,fontFamily:"'DM Mono',monospace",color:gp>=0?"#3B6D11":"#A32D2D",marginBottom:4}}>
+                    {gm!==null?`${gm}% gross margin`:"--"}
+                  </div>
+                </div>
+
+                {selectedProject.invoiceDate&&(
+                  <div style={{borderTop:"0.5px solid #f0f2f5",marginTop:8,paddingTop:10}}>
+                    <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                      <span style={{fontSize:12,color:"#8a9ab0"}}>Payment Terms</span>
+                      <span style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:"#4a6a8a"}}>{selectedProject.paymentTerms||"--"}</span>
+                    </div>
+                    {selectedProject.paymentDueDate&&(
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:4}}>
+                        <span style={{fontSize:12,color:"#8a9ab0"}}>Due Date</span>
+                        <span style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:"#4a6a8a"}}>{selectedProject.paymentDueDate}</span>
+                      </div>
+                    )}
+                    {selectedProject.paymentStatus&&(
+                      <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+                        <span style={{fontSize:12,color:"#8a9ab0"}}>Status</span>
+                        <span style={S.pill(PAY_C[selectedProject.paymentStatus]?.bg||"#f0f2f5",PAY_C[selectedProject.paymentStatus]?.fg||"#8a9ab0")}>{selectedProject.paymentStatus}</span>
+                      </div>
+                    )}
+                  </div>
+                )}
+              </div>
+
+              {/* 4. Notes */}
+              <div style={{...S.card,padding:16,marginBottom:12}}>
+                <span style={S.lbl}>Notes</span>
+                <textarea style={{...S.inp,minHeight:80,resize:"vertical" as const}} value={localNotes}
+                  onChange={e=>{setLocalNotes(e.target.value);debouncedSaveNotes(e.target.value);}}
+                  onBlur={()=>saveProject({...selectedProject,notes:localNotes})}
+                  placeholder="Project notes, follow-up actions, client context..."/>
+              </div>
+
+              {/* Project Expenses */}
               <div style={{...S.card,marginBottom:12}}>
                 <div style={{padding:"12px 16px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                   <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Project Expenses</div>
@@ -1301,39 +1217,6 @@ export default function Projects() {
                     </tbody>
                   </table>
                 </div>
-              </div>
-
-              {/* Notes */}
-              <div style={{...S.card,padding:16}}>
-                <span style={S.lbl}>Notes</span>
-                <textarea style={{...S.inp,minHeight:80,resize:"vertical" as const}} value={localNotes}
-                  onChange={e=>{setLocalNotes(e.target.value);debouncedSaveNotes(e.target.value);}}
-                  onBlur={()=>saveProject({...selectedProject,notes:localNotes})}
-                  placeholder="Project notes, follow-up actions, client context..."/>
-              </div>
-
-              {/* Reference Documents */}
-              <div style={{...S.card,padding:16,marginTop:12}} onPaste={handleProjectPaste}>
-                <span style={S.lbl}>Reference Documents</span>
-                {!selectedProject.rfqDocument?(
-                  <label style={{display:"block",marginTop:8,border:"1.5px dashed #e2e6ea",borderRadius:10,padding:"28px 16px",textAlign:"center" as const,cursor:"pointer",background:"#fafbfc"}}>
-                    <input type="file" accept="image/*,.pdf" style={{display:"none"}} onChange={e=>{const f=e.target.files?.[0];if(f)handleProjectFile(f);}}/>
-                    <div style={{fontSize:22,marginBottom:8,color:"#d0d8e0",lineHeight:1}}>↑</div>
-                    <div style={{fontSize:13,fontWeight:500,color:"#8a9ab0",marginBottom:4}}>Click to upload or paste (Ctrl+V)</div>
-                    <div style={{fontSize:11,color:"#b0bec8"}}>Image or PDF -- reference, RFQ, spec sheet</div>
-                  </label>
-                ):(
-                  <div style={{marginTop:8}}>
-                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:8}}>
-                      <span style={{fontSize:12,color:"#4a6a8a",fontFamily:"'DM Mono',monospace"}}>{selectedProject.rfqDocumentName}</span>
-                      <button onClick={()=>saveProject({...selectedProject,rfqDocument:undefined,rfqDocumentName:undefined})} style={{fontSize:11,color:"#A32D2D",background:"none",border:"none",cursor:"pointer"}}>Remove</button>
-                    </div>
-                    {selectedProject.rfqDocumentName?.toLowerCase().endsWith(".pdf")
-                      ?<iframe src={selectedProject.rfqDocument} style={{width:"100%",height:420,border:"0.5px solid #e2e6ea",borderRadius:6}}/>
-                      :<img src={selectedProject.rfqDocument} alt="reference doc" style={{width:"100%",borderRadius:6,border:"0.5px solid #e2e6ea"}}/>
-                    }
-                  </div>
-                )}
               </div>
             </>}
 
@@ -1907,6 +1790,17 @@ export default function Projects() {
 
         </div>
       </div>
+
+      {/* Quotation Document Maker overlay */}
+      {showQuotationOverlay&&selectedProject&&(
+        <div style={{position:"fixed",inset:0,zIndex:100,display:"flex",flexDirection:"column" as const}}>
+          <div style={{height:52,background:"#1a2332",padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",position:"sticky" as const,top:0,flexShrink:0}}>
+            <span style={{color:"#fff",fontSize:14,fontWeight:600}}>New Quotation -- {selectedProject.name}</span>
+            <button onClick={()=>{setShowQuotationOverlay(false);setQuotationOverlayUrl("");document.body.style.overflow="";}} style={{fontSize:13,color:"rgba(255,255,255,0.8)",background:"rgba(255,255,255,0.1)",border:"none",padding:"6px 14px",borderRadius:7,cursor:"pointer"}}>✕ Close</button>
+          </div>
+          <iframe src={quotationOverlayUrl} style={{width:"100%",height:"calc(100vh - 52px)",border:"none",background:"#fff"}}/>
+        </div>
+      )}
     </div>
   );
 }

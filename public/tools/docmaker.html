@@ -1451,15 +1451,10 @@ function closeSaveToCRMModal() {
 }
 
 async function showSaveToCRM() {
-  try {
-    var res = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=crm');
-    var d = await res.json();
-    var crm = d && d.value ? JSON.parse(d.value) : {};
-    _crmRFQs = (crm.pendingRFQs || []).filter(function(r) { return !r.archived; });
-    _crmPOs = (crm.pendingPOs || []).filter(function(p) { return !p.archived; });
-  } catch(e) { _crmRFQs = []; _crmPOs = []; }
+  var urlParams = new URLSearchParams(window.location.search);
+  var projectId = urlParams.get('projectId') || '';
 
-  // Compute current document summary for preview
+  // Compute current document summary
   recalc();
   var items = getItems();
   var itemsCount = items.length;
@@ -1470,31 +1465,73 @@ async function showSaveToCRM() {
   var docNum = document.getElementById('doc-number') ? document.getElementById('doc-number').value : '';
   var docTypeLabel = { quotation:'Quotation', po:'Purchase Order', rfq:'RFQ Response', invoice:'Invoice', dr:'Delivery Receipt' }[currentDocType] || currentDocType;
 
-  // Remove any existing modal
   var existing = document.getElementById('crm-save-modal');
   if (existing && existing.parentNode) existing.parentNode.removeChild(existing);
 
+  if (projectId) {
+    // Simplified project modal -- no RFQ/PO dropdowns needed
+    var projectName = '';
+    try {
+      var pRes = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/projects');
+      var pData = await pRes.json();
+      var proj = (pData.projects || []).find(function(p) { return p.id === projectId; });
+      if (proj) projectName = proj.name;
+    } catch(e) {}
+
+    var summaryLine = itemsCount > 0
+      ? '<div style="background:#f0faf5;border:0.5px solid #3B6D11;border-radius:8px;padding:10px 14px;margin-bottom:14px;font-size:12px;color:#1a2332">' +
+        '<span style="color:#3B6D11;font-weight:600;font-family:DM Mono,monospace">' + docTypeLabel + (docNum ? ' ' + docNum : '') + '</span>' +
+        '&nbsp;&middot;&nbsp;' + itemsCount + ' item' + (itemsCount === 1 ? '' : 's') +
+        '&nbsp;&middot;&nbsp;<span style="font-family:DM Mono,monospace;font-weight:600">' + sym + ' ' + formatNum(total) + '</span>' +
+        '</div>'
+      : '';
+
+    var modal = document.createElement('div');
+    modal.id = 'crm-save-modal';
+    modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+    modal.innerHTML =
+      '<div style="background:#fff;border-radius:14px;padding:24px;width:420px;max-width:92vw;box-shadow:0 8px 32px rgba(0,0,0,0.18)">' +
+      '<div style="font-size:15px;font-weight:600;color:#1a2332;margin-bottom:6px">Save quotation to project?</div>' +
+      '<div style="font-size:12px;color:#8a9ab0;margin-bottom:14px;font-family:DM Mono,monospace">' + (projectName || projectId) + '</div>' +
+      summaryLine +
+      '<div style="display:flex;gap:8px">' +
+      '<button id="crm-save-proj-btn" onclick="saveToCRM()" style="flex:1;padding:10px;border-radius:9px;border:none;background:#185FA5;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Save to Project</button>' +
+      '<button onclick="closeSaveToCRMModal()" style="padding:10px 16px;border-radius:9px;border:0.5px solid #e2e6ea;background:#f8f9fb;color:#4a6a8a;font-size:13px;cursor:pointer">Cancel</button>' +
+      '</div></div>';
+    document.body.appendChild(modal);
+    return;
+  }
+
+  // Standard CRM modal (no projectId) -- load RFQs and POs
+  try {
+    var res = await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/kv?key=crm');
+    var d = await res.json();
+    var crm = d && d.value ? JSON.parse(d.value) : {};
+    _crmRFQs = (crm.pendingRFQs || []).filter(function(r) { return !r.archived; });
+    _crmPOs = (crm.pendingPOs || []).filter(function(p) { return !p.archived; });
+  } catch(e) { _crmRFQs = []; _crmPOs = []; }
+
   var rfqOptions = '<option value="">-- None --</option>' +
     _crmRFQs.map(function(r) {
-      return '<option value="' + r.id + '">' + (r.rfqNumber || 'RFQ-' + r.id) + ' · ' + r.client + '</option>';
+      return '<option value="' + r.id + '">' + (r.rfqNumber || 'RFQ-' + r.id) + ' &middot; ' + r.client + '</option>';
     }).join('');
   var poOptions = '<option value="">-- None --</option>' +
     _crmPOs.map(function(p) {
-      return '<option value="' + p.id + '">' + (p.poNumber || 'PO-' + p.id) + ' · ' + p.client + '</option>';
+      return '<option value="' + p.id + '">' + (p.poNumber || 'PO-' + p.id) + ' &middot; ' + p.client + '</option>';
     }).join('');
 
   var summaryHTML = itemsCount > 0
     ? '<div style="background:#f0faf5;border:0.5px solid #3B6D11;border-radius:8px;padding:10px 14px;margin-bottom:16px;font-size:12px;color:#1a2332">' +
       '<span style="color:#3B6D11;font-weight:600;font-family:DM Mono,monospace">' + docTypeLabel + (docNum ? ' ' + docNum : '') + '</span>' +
-      '&nbsp;&nbsp;·&nbsp;&nbsp;' + itemsCount + ' line item' + (itemsCount === 1 ? '' : 's') +
-      '&nbsp;&nbsp;·&nbsp;&nbsp;<span style="font-family:DM Mono,monospace;font-weight:600">' + sym + ' ' + formatNum(total) + '</span>' +
+      '&nbsp;&nbsp;&middot;&nbsp;&nbsp;' + itemsCount + ' line item' + (itemsCount === 1 ? '' : 's') +
+      '&nbsp;&nbsp;&middot;&nbsp;&nbsp;<span style="font-family:DM Mono,monospace;font-weight:600">' + sym + ' ' + formatNum(total) + '</span>' +
       '</div>'
     : '';
 
-  var modal = document.createElement('div');
-  modal.id = 'crm-save-modal';
-  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
-  modal.innerHTML =
+  var modal2 = document.createElement('div');
+  modal2.id = 'crm-save-modal';
+  modal2.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,0.5);z-index:1000;display:flex;align-items:center;justify-content:center';
+  modal2.innerHTML =
     '<div style="background:#fff;border-radius:14px;padding:24px;width:460px;max-width:92vw;box-shadow:0 8px 32px rgba(0,0,0,0.18)">' +
     '<div style="font-size:15px;font-weight:600;color:#1a2332;margin-bottom:14px">Save to CRM</div>' +
     summaryHTML +
@@ -1506,12 +1543,11 @@ async function showSaveToCRM() {
     '<button onclick="saveToCRM()" style="flex:1;padding:10px;border-radius:9px;border:none;background:#185FA5;color:#fff;font-size:13px;font-weight:600;cursor:pointer">Save</button>' +
     '<button onclick="closeSaveToCRMModal()" style="padding:10px 16px;border-radius:9px;border:0.5px solid #e2e6ea;background:#f8f9fb;color:#4a6a8a;font-size:13px;cursor:pointer">Cancel</button>' +
     '</div></div>';
-  document.body.appendChild(modal);
+  document.body.appendChild(modal2);
 
-  // Pre-select dropdowns from URL params if available
-  var params = new URLSearchParams(window.location.search);
-  var rfqParam = params.get('rfq') || '';
-  var poParam = params.get('po') || '';
+  // Pre-select dropdowns from URL params
+  var rfqParam = urlParams.get('rfq') || '';
+  var poParam = urlParams.get('po') || '';
   if (rfqParam) {
     var rfqMatch = _crmRFQs.find(function(r) { return r.rfqNumber === rfqParam; });
     if (rfqMatch) document.getElementById('crm-rfq-sel').value = String(rfqMatch.id);
@@ -1523,19 +1559,71 @@ async function showSaveToCRM() {
 }
 
 async function saveToCRM() {
-  var rfqId = parseInt(document.getElementById('crm-rfq-sel').value) || 0;
-  var poId = parseInt(document.getElementById('crm-po-sel').value) || 0;
-  if (!rfqId && !poId) { showToast('Please select an RFQ or PO to link this document to.', 'error'); return; }
-
-  var docNum = document.getElementById('doc-number') ? document.getElementById('doc-number').value : '';
-  var docType = currentDocType || 'quotation';
-  var docTypeLabel = { quotation:'Quotation', po:'Purchase Order', rfq:'RFQ Response', invoice:'Invoice', dr:'Delivery Receipt' }[docType] || docType;
+  var urlParams = new URLSearchParams(window.location.search);
+  var projectId = urlParams.get('projectId') || '';
 
   recalc();
   var items = getItems();
   var grand = items.reduce(function(s,i) { return s + i.total; }, 0);
   var vatAmt = currentVAT === 'exclusive' ? grand * 0.12 : 0;
   var totalAmount = grand + vatAmt;
+  var docNum = document.getElementById('doc-number') ? document.getElementById('doc-number').value : '';
+
+  if (projectId) {
+    // Save quotation to project
+    var previewEl = document.getElementById('doc-preview');
+    var salutationEl = document.querySelector('input[name="salutation"]:checked');
+    var noteValidity = document.getElementById('note-validity');
+    var noteDelivery = document.getElementById('note-delivery');
+    var noteWarranty = document.getElementById('note-warranty');
+    var notePayment = document.getElementById('note-payment');
+
+    var vatTypeStr = currentVAT === 'exclusive' ? 'VAT Inclusive' : currentVAT === 'zero' ? 'Zero Rated' : 'Exempt';
+    var quotationObj = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+      version: 0,
+      docNumber: docNum || '',
+      dateCreated: new Date().toISOString(),
+      status: 'Draft',
+      lineItems: items,
+      totalAmount: grand,
+      vatType: vatTypeStr,
+      vatAmount: vatAmt,
+      grandTotal: totalAmount,
+      notes: '',
+      html: previewEl ? previewEl.innerHTML : '',
+      salutation: salutationEl ? salutationEl.value : 'Dear Sir,',
+      validity: noteValidity ? noteValidity.value : '',
+      delivery: noteDelivery ? noteDelivery.value : '',
+      warranty: noteWarranty ? noteWarranty.value : '',
+      paymentTerms: notePayment ? notePayment.value : ''
+    };
+
+    try {
+      var saveBtn = document.getElementById('crm-save-proj-btn');
+      if (saveBtn) { saveBtn.textContent = 'Saving...'; saveBtn.disabled = true; }
+
+      await fetch('https://ultrapower-executive-os-vgrr.vercel.app/api/projects', {
+        method: 'POST',
+        headers: { 'Content-Type':'application/json' },
+        body: JSON.stringify({ action:'saveQuotation', projectId: projectId, quotation: quotationObj })
+      });
+
+      closeSaveToCRMModal();
+      showToast('Quotation saved to project. You can close this window.', 'success');
+    } catch(e) {
+      showToast('Error saving quotation: ' + e.message, 'error');
+    }
+    return;
+  }
+
+  // Standard CRM save (no projectId)
+  var rfqId = parseInt(document.getElementById('crm-rfq-sel').value) || 0;
+  var poId = parseInt(document.getElementById('crm-po-sel').value) || 0;
+  if (!rfqId && !poId) { showToast('Please select an RFQ or PO to link this document to.', 'error'); return; }
+
+  var docType = currentDocType || 'quotation';
+  var docTypeLabel = { quotation:'Quotation', po:'Purchase Order', rfq:'RFQ Response', invoice:'Invoice', dr:'Delivery Receipt' }[docType] || docType;
 
   var preview = document.getElementById('doc-preview');
   var html = preview ? preview.innerHTML : '';
