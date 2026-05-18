@@ -216,34 +216,45 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 
 /* ─── PRINT ─── */
 @media print{
-  @page {
-    margin: 12mm 14mm;
-    size: A4;
+  @page{
+    size:8.5in 14in portrait;
+    margin:15mm 18mm;
   }
-  /* Hide everything on the page */
-  body > * { display: none !important; }
-  /* Show only the isolated print root */
-  body > #print-root { display: block !important; }
-  #print-root {
-    display: block !important;
-    position: absolute !important;
-    top: 0 !important;
-    left: 0 !important;
-    width: 100% !important;
-    background: white !important;
-    padding: 0 !important;
-    margin: 0 !important;
+  body>*{display:none!important}
+  body>#print-root{display:block!important}
+  #print-root{
+    display:block!important;
+    position:absolute!important;
+    top:0!important;
+    left:0!important;
+    width:100%!important;
+    background:white!important;
+    padding:0!important;
+    margin:0!important;
   }
-  /* Apply doc-preview styles to print-root content */
-  #print-root, #print-root * {
-    -webkit-print-color-adjust: exact !important;
-    print-color-adjust: exact !important;
+  #print-root,#print-root *{
+    -webkit-print-color-adjust:exact!important;
+    print-color-adjust:exact!important;
+    color-adjust:exact!important;
   }
-  body {
-    background: white !important;
-    margin: 0 !important;
-    padding: 0 !important;
+  body{
+    background:white!important;
+    margin:0!important;
+    padding:0!important;
   }
+  /* Compact layout */
+  .doc-preview{font-size:10pt;line-height:1.4}
+  .doc-header{padding:0 0 8pt}
+  .doc-meta{margin-bottom:10pt}
+  .doc-meta-label{font-size:7pt}
+  .doc-meta-company{font-size:11pt}
+  .doc-meta-detail{font-size:9pt}
+  .items-table th,.items-table td{padding:5pt 6pt;font-size:9pt}
+  .doc-totals{padding:6pt 0}
+  .doc-footer{padding:8pt 0 0}
+  /* Prevent awkward breaks */
+  .doc-header,.doc-meta,.doc-totals,.doc-footer{page-break-inside:avoid}
+  tr{page-break-inside:avoid}
 }
 
 .empty-state{text-align:center;padding:64px 24px;color:var(--up-gray)}
@@ -365,7 +376,7 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 
       <!-- Client / Supplier -->
       <div class="card">
-        <div class="card-title"><span class="dot"></span> <span id="party-label">Client / Recipient</span></div>
+        <div class="card-title"><span class="dot"></span> <span id="party-label">Client</span></div>
         <div class="form-grid">
           <div class="form-group">
             <label class="form-label">Company Name</label>
@@ -613,9 +624,20 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     <div class="modal-body">
       <div id="doc-preview"></div>
     </div>
-    <div class="modal-footer">
-      <button class="btn btn-outline" onclick="closePreview()">Close</button>
-      <button class="btn btn-primary" onclick="printWithFilename()">⊞ Print / Save as PDF</button>
+    <div class="modal-footer" style="flex-direction:column;gap:10px">
+      <p style="font-size:11px;color:#999;margin:0;text-align:center">Tip: In the print dialog, uncheck Headers &amp; Footers for a clean document.</p>
+      <div style="display:flex;align-items:center;gap:10px;width:100%">
+        <div style="display:flex;align-items:center;gap:6px;margin-right:auto">
+          <span style="font-size:12px;color:#666;white-space:nowrap">Paper size:</span>
+          <select id="paper-size-select" onchange="updatePaperSize(this.value)" style="font-size:12px;padding:4px 8px;border:1px solid #ddd;border-radius:6px;cursor:pointer;background:#fff">
+            <option value="legal">Legal (8.5 x 14 in)</option>
+            <option value="a4">A4 (210 x 297 mm)</option>
+            <option value="auto">Auto-fit</option>
+          </select>
+        </div>
+        <button class="btn btn-outline" onclick="closePreview()">Close</button>
+        <button class="btn btn-primary" onclick="printWithFilename()">Print / Save as PDF</button>
+      </div>
     </div>
   </div>
 </div>
@@ -654,8 +676,24 @@ const DOC_LABELS = {
 
 const CUR_SYMBOLS = { PHP: 'Php', USD: 'US$', EUR: '€', SGD: 'S$' };
 
+// ─── PAPER SIZE ───
+function updatePaperSize(size) {
+  var styleId = 'dynamic-page-size';
+  var el = document.getElementById(styleId);
+  if (!el) { el = document.createElement('style'); el.id = styleId; document.head.appendChild(el); }
+  var sizes = {
+    legal: '@page{size:8.5in 14in portrait;margin:15mm 18mm}',
+    a4: '@page{size:210mm 297mm portrait;margin:15mm 18mm}',
+    auto: '@page{size:auto;margin:15mm 18mm}'
+  };
+  el.textContent = sizes[size] || sizes.legal;
+  var sel = document.getElementById('paper-size-select');
+  if (sel) sel.value = size;
+}
+
 // ─── INIT ───
 document.addEventListener('DOMContentLoaded', function() {
+  updatePaperSize('legal');
   document.getElementById('doc-date').value = new Date().toISOString().split('T')[0];
   addItem();
   updateDocCount();
@@ -722,7 +760,7 @@ function setDocType(type, btn) {
   document.getElementById('shipping-group').style.display = isInvoice?'block':'none';
   document.getElementById('rfq-ref-group').style.display = isRFQ?'block':'none';
   document.getElementById('po-ref-group').style.display = (isInvoice||isDR)?'block':'none';
-  document.getElementById('party-label').textContent = isPO?'Supplier':'Client / Recipient';
+  document.getElementById('party-label').textContent = isPO?'Supplier':'Client';
   document.getElementById('dp-row').style.display = isInvoice?'flex':'none';
   recalc();
 }
@@ -1009,7 +1047,7 @@ function openPreview() {
 
     <div class="doc-meta">
       <div class="doc-meta-block">
-        <div class="doc-meta-label">${isPO?'Supplier':'Invoice To'}</div>
+        <div class="doc-meta-label">${(function(){var m={quotation:'SUBMITTED TO',rfq:'SUBMITTED TO',po:'ISSUED TO',dr:'DELIVERED TO',invoice:'BILLED TO'};return m[currentDocType]||'SUBMITTED TO';})()}</div>
         <div class="doc-meta-company">${clientName}</div>
         ${clientTIN?`<div class="doc-meta-detail">TIN: ${clientTIN}</div>`:''}
         ${clientAddr?`<div class="doc-meta-detail">${clientAddr}</div>`:''}
