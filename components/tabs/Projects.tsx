@@ -99,7 +99,7 @@ export default function Projects() {
   const [rptYear, setRptYear] = useState(_phNow.getFullYear());
 
   // Assets tab system
-  const [assetTab, setAssetTab] = useState<"quotations"|"overview"|"rfqspos"|"sourcing"|"documents">("quotations");
+  const [assetTab, setAssetTab] = useState<"quotations"|"overview"|"rfqspos"|"sourcing"|"documents">("overview");
   const [allCRM, setAllCRM] = useState<CRMStore>({});
   const [allSourcing, setAllSourcing] = useState<SourcingSession[]>([]);
   const [showLinkRFQ, setShowLinkRFQ] = useState(false);
@@ -159,7 +159,7 @@ export default function Projects() {
 
   useEffect(() => {
     if (!selectedProject) return;
-    setAssetTab("quotations");
+    setAssetTab("overview");
     setShowQuotationOverlay(false); setQuotationOverlayUrl("");
     setShowLinkRFQ(false); setShowLinkPO(false); setShowLinkSourcing(false); setShowLinkSPO(false);
     setShowNewRFQ(false); setShowNewSPO(false); setShowQuickSource(false);
@@ -195,14 +195,19 @@ export default function Projects() {
     try {
       const res = await fetch("/api/projects");
       const data = await res.json();
-      setProjects(data.projects||[]);
-      setExpenses(data.expenses||[]);
       const updated = (data.projects||[]).map((p:Project) => {
         if (["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage) && daysSince(p.rfqDate)>30) return {...p, stage:"Lost" as Stage};
         if (p.paymentDueDate && new Date(p.paymentDueDate)<new Date() && p.paymentStatus==="Unpaid") return {...p, paymentStatus:"Overdue" as PaymentStatus};
         return p;
       });
       setProjects(updated);
+      setExpenses(data.expenses||[]);
+      const autoOpenId = sessionStorage.getItem("openProjectId");
+      if (autoOpenId) {
+        sessionStorage.removeItem("openProjectId");
+        const found = updated.find((p:Project) => p.id === autoOpenId);
+        if (found) { setSelectedProject(found); setView("detail" as const); }
+      }
     } catch(e) { console.error(e); }
     setLoading(false);
   };
