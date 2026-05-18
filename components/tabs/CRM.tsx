@@ -8,7 +8,6 @@ const LABELS = ["Unlabeled","To Reactivate","Key Account","Refer to Alex","Dead 
 const SECTORS = ["Power Generation","Oil & Gas","Manufacturing","Mining","Government / B2G","Food & Beverage","Other"];
 const SOURCES = ["Referral","LinkedIn","PhilGEPS","Cold Outreach","Inbound","Event","Other"];
 const PO_STATUSES = ["Received","Processing","Ordered from Supplier","Waiting for Delivery","Ready for Delivery","Delivered","Completed"];
-const RFQ_STATUSES = ["Draft","Submitted","Followed Up","Awarded","Lost","Cancelled"];
 const PAGE_SIZE = 50;
 
 const STAGE_C: Record<string,{bg:string;fg:string}> = {
@@ -29,11 +28,6 @@ const PO_STATUS_C: Record<string,{bg:string;fg:string}> = {
   "Waiting for Delivery":{bg:"#FFF3CD",fg:"#856404"},
   "Ready for Delivery":{bg:"#f0faf5",fg:"#3B6D11"},
   "Delivered":{bg:"#f0faf5",fg:"#3B6D11"},"Completed":{bg:"#f0f2f5",fg:"#8a9ab0"},
-};
-const RFQ_STATUS_C: Record<string,{bg:string;fg:string}> = {
-  "Draft":{bg:"#f0f2f5",fg:"#8a9ab0"},"Submitted":{bg:"#EBF3FC",fg:"#185FA5"},
-  "Followed Up":{bg:"#FFF8EC",fg:"#854F0B"},"Awarded":{bg:"#f0faf5",fg:"#3B6D11"},
-  "Lost":{bg:"#FEF0F0",fg:"#A32D2D"},"Cancelled":{bg:"#f0f2f5",fg:"#8a9ab0"},
 };
 const SPO_STATUS_C: Record<string,{bg:string;fg:string}> = {
   "Draft":{bg:"#f0f2f5",fg:"#8a9ab0"},"Sent":{bg:"#EBF3FC",fg:"#185FA5"},
@@ -74,10 +68,9 @@ function parseCSV(text: string): Record<string,string>[] {
 }
 
 export default function CRM() {
-  const [tab,setTab]=useState<"pipeline"|"contacts"|"old"|"pos"|"rfqs"|"spos"|"products"|"suppliers">("pipeline");
+  const [tab,setTab]=useState<"pipeline"|"contacts"|"old"|"pos"|"spos"|"products"|"suppliers">("pipeline");
   const [data,setDataRaw]=useState<CRMData>({prospects:[],contacts:[],pendingPOs:[],pendingRFQs:[],supplierPOs:[],nid:1});
   const [showArchivedPOs, setShowArchivedPOs]=useState(false);
-  const [showArchivedRFQs, setShowArchivedRFQs]=useState(false);
   const [showArchivedSPOs, setShowArchivedSPOs]=useState(false);
   const [slideSPOId, setSlideSPOId]=useState<number|null>(null);
   const [spoSlideTab, setSpoSlideTab]=useState<"details"|"items">("details");
@@ -91,7 +84,7 @@ export default function CRM() {
   const [newOld,setNewOld]=useState({Name:"",Email:"",Company:"",Type:"",Priority:"",Status:"",Account:"",Notes:""});
   const [nc,setNC]=useState({name:"",company:"",email:"",sector:"",source:"",notes:""});
   const [loaded,setLoaded]=useState(false);
-  const [slideOver, setSlideOver]=useState<{type:"rfq"|"po";id:number}|null>(null);
+  const [slideOver, setSlideOver]=useState<{type:"po";id:number}|null>(null);
   const [slideTab, setSlideTab]=useState<"details"|"items"|"documents">("details");
   const [products, setProducts]=useState<ProductItem[]>([]);
   const [suppliers, setSuppliers]=useState<Supplier[]>([]);
@@ -124,7 +117,6 @@ export default function CRM() {
     setLoaded(true);
   })();},[]);
 
-  const slideRFQ = slideOver?.type==="rfq" ? (data.pendingRFQs||[]).find(r=>r.id===slideOver.id)||null : null;
   const slidePO = slideOver?.type==="po" ? (data.pendingPOs||[]).find(p=>p.id===slideOver.id)||null : null;
   const slideSPO = slideSPOId !== null ? (data.supplierPOs||[]).find(s=>s.id===slideSPOId)||null : null;
 
@@ -154,11 +146,6 @@ export default function CRM() {
   const delPO=(id:number)=>setData({pendingPOs:(data.pendingPOs||[]).filter(x=>x.id!==id)});
   const archivePO=(id:number)=>setData({pendingPOs:(data.pendingPOs||[]).map(x=>x.id===id?{...x,archived:!x.archived}:x)});
 
-  // RFQs
-  const addRFQ=()=>{const id=data.nid;setData({pendingRFQs:[...(data.pendingRFQs||[]),{id,rfqNumber:"",client:"",subject:"",dateSubmitted:"",deadline:"",status:"Submitted",notes:"",archived:false}],nid:id+1});};
-  const updRFQ=(id:number,p:Partial<PendingRFQ>)=>setData({pendingRFQs:(data.pendingRFQs||[]).map(x=>x.id===id?{...x,...p}:x)});
-  const delRFQ=(id:number)=>setData({pendingRFQs:(data.pendingRFQs||[]).filter(x=>x.id!==id)});
-  const archiveRFQ=(id:number)=>setData({pendingRFQs:(data.pendingRFQs||[]).map(x=>x.id===id?{...x,archived:!x.archived}:x)});
 
   // Supplier POs
   const addSPO=()=>{
@@ -254,7 +241,6 @@ export default function CRM() {
   };
 
   const pos=data.pendingPOs||[];
-  const rfqs=data.pendingRFQs||[];
   const spos=data.supplierPOs||[];
 
   if(!loaded)return<div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#b0bec8",fontSize:13,fontFamily:"'DM Mono',monospace"}}>Loading CRM...</div>;
@@ -267,9 +253,9 @@ export default function CRM() {
           <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Industrial Sales Intelligence</div>
         </div>
         <div style={{display:"flex",overflowX:"auto"}}>
-          {(["pipeline","contacts","old","pos","rfqs","spos","products","suppliers"] as const).map(t=>(
+          {(["pipeline","contacts","old","pos","spos","products","suppliers"] as const).map(t=>(
             <button key={t} style={S.tabBtn(tab===t)} onClick={()=>setTab(t)}>
-              {t==="pipeline"?"Pipeline":t==="contacts"?"New Contacts":t==="old"?"Old Contacts":t==="pos"?"Pending POs"+(pos.length>0?` (${pos.length})`:""):t==="rfqs"?"Pending RFQs"+(rfqs.length>0?` (${rfqs.length})`:""):t==="spos"?"Supplier POs"+(spos.filter(s=>!s.archived).length>0?` (${spos.filter(s=>!s.archived).length})`:""):t==="products"?"Products"+(products.length>0?` (${products.length})`:""):"Suppliers"+(suppliers.length>0?` (${suppliers.length})`:"")}
+              {t==="pipeline"?"Pipeline":t==="contacts"?"New Contacts":t==="old"?"Old Contacts":t==="pos"?"Pending POs"+(pos.length>0?` (${pos.length})`:""):t==="spos"?"Supplier POs"+(spos.filter(s=>!s.archived).length>0?` (${spos.filter(s=>!s.archived).length})`:""):t==="products"?"Products"+(products.length>0?` (${products.length})`:""):"Suppliers"+(suppliers.length>0?` (${suppliers.length})`:"")}
             </button>
           ))}
         </div>
@@ -526,58 +512,6 @@ export default function CRM() {
           </div>
         </>}
 
-        {/* PENDING RFQs */}
-        {tab==="rfqs"&&<>
-          <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:14}}>
-            <div>
-              <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>Pending RFQ Responses</div>
-              <div style={{fontSize:12,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>Track submitted quotations awaiting response</div>
-            </div>
-            <div style={{display:"flex",gap:8,alignItems:"center"}}>
-              <button onClick={()=>setShowArchivedRFQs(s=>!s)} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:`0.5px solid ${showArchivedRFQs?"#854F0B":"#e2e6ea"}`,background:showArchivedRFQs?"#FFF8EC":"#f8f9fb",color:showArchivedRFQs?"#854F0B":"#4a6a8a",cursor:"pointer"}}>
-                {showArchivedRFQs?"Active":"Archived"} ({(data.pendingRFQs||[]).filter(r=>showArchivedRFQs?!r.archived:r.archived).length})
-              </button>
-              <button onClick={addRFQ} style={S.addBtn}>+ Add RFQ</button>
-            </div>
-          </div>
-          <div style={S.panel}>
-            <div style={{overflowX:"auto"}}>
-              <table style={{width:"100%",borderCollapse:"collapse"}}>
-                <thead><tr>{["#","RFQ Number","Client","Subject","Date Submitted","Response Deadline","Status","Notes",""].map(h=><th key={h} style={S.th}>{h}</th>)}</tr></thead>
-                <tbody>
-                  {rfqs.filter(r=>!r.archived).length===0&&!showArchivedRFQs&&<tr><td colSpan={9} style={{...S.td,textAlign:"center",color:"#b0bec8",padding:"32px"}}>No active RFQs.</td></tr>}
-                  {rfqs.filter(r=>showArchivedRFQs?r.archived:!r.archived).map((r,i)=>{
-                    const isOverdue=r.deadline&&new Date(r.deadline)<new Date()&&r.status==="Submitted";
-                    return(
-                      <tr key={r.id} style={{background:r.archived?"#fafafa":isOverdue?"#FFFBF0":i%2===0?"#fff":"#fafbfc",opacity:r.archived?0.75:1}}>
-                        <td style={{...S.td,color:"#b0bec8",fontSize:11}}>{i+1}</td>
-                        <td style={S.td}><input style={{...S.inp,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={r.rfqNumber} placeholder="RFQ-2026-001" onChange={e=>updRFQ(r.id,{rfqNumber:e.target.value})}/></td>
-                        <td style={S.td}><input style={S.inp} value={r.client} placeholder="Client" onChange={e=>updRFQ(r.id,{client:e.target.value})}/></td>
-                        <td style={S.td}><input style={S.inp} value={r.subject} placeholder="Subject" onChange={e=>updRFQ(r.id,{subject:e.target.value})}/></td>
-                        <td style={S.td}><input style={{...S.inp,width:130}} type="date" value={r.dateSubmitted} onChange={e=>updRFQ(r.id,{dateSubmitted:e.target.value})}/></td>
-                        <td style={S.td}>
-                          <input style={{...S.inp,width:130,color:isOverdue?"#A32D2D":"#1a2332",fontWeight:isOverdue?600:400}} type="date" value={r.deadline} onChange={e=>updRFQ(r.id,{deadline:e.target.value})}/>
-                          {isOverdue&&<div style={{fontSize:10,color:"#A32D2D",fontFamily:"'DM Mono',monospace",marginTop:2}}>Overdue</div>}
-                        </td>
-                        <td style={S.td}>
-                          <select style={{...S.inp,background:RFQ_STATUS_C[r.status]?.bg||"#f8f9fb",color:RFQ_STATUS_C[r.status]?.fg||"#3a4a5a",fontWeight:600}} value={r.status} onChange={e=>updRFQ(r.id,{status:e.target.value})}>
-                            {RFQ_STATUSES.map(s=><option key={s}>{s}</option>)}
-                          </select>
-                        </td>
-                        <td style={S.td}><input style={S.inp} value={r.notes} placeholder="Notes" onChange={e=>updRFQ(r.id,{notes:e.target.value})}/></td>
-                        <td style={{...S.td,whiteSpace:"nowrap"}}>
-                          <button onClick={()=>{setSlideOver({type:"rfq",id:r.id});setSlideTab("details");}} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginRight:4}}>Open</button>
-                          <button onClick={()=>archiveRFQ(r.id)} style={{fontSize:11,padding:"3px 8px",borderRadius:6,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",marginRight:4}}>{r.archived?"Restore":"Archive"}</button>
-                          <button onClick={()=>delRFQ(r.id)} style={{fontSize:13,color:"#d0d8e0",background:"none",border:"none",cursor:"pointer"}}>✕</button>
-                        </td>
-                      </tr>
-                    );
-                  })}
-                </tbody>
-              </table>
-            </div>
-          </div>
-        </>}
 
         {/* SUPPLIER POs */}
         {tab==="spos"&&(()=>{
@@ -1071,12 +1005,12 @@ export default function CRM() {
       })()}
 
       {/* SLIDE-OVER PANEL */}
-      {slideOver&&(slideRFQ||slidePO)&&(()=>{
+      {slideOver&&slidePO&&(()=>{
         const closeSlide=()=>{setSlideOver(null);setItemForm(null);setContactSearch("");};
         const lbl={fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase" as const,color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"};
         const inp={fontSize:13,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",width:"100%"} as React.CSSProperties;
         const fmtPHP=(v:number)=>`₱${v.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
-        const rec=slideRFQ||slidePO!;
+        const rec=slidePO!;
         const lineItems=rec.lineItems||[];
         const linkedProject=projects.find(p=>p.id===rec.projectId);
         const vatRate=linkedProject?.vatType==="VAT Inclusive"?0.12:0;
@@ -1087,14 +1021,12 @@ export default function CRM() {
         const addLineItem=()=>{
           if(!itemForm||!itemForm.description.trim())return;
           const newLine:LineItem={id:genId(),description:itemForm.description,quantity:itemForm.quantity,unit:itemForm.unit,unitPrice:itemForm.unitPrice,total:Math.round(itemForm.quantity*itemForm.unitPrice*100)/100};
-          if(slideRFQ)updRFQ(slideRFQ.id,{lineItems:[...lineItems,newLine]});
-          else if(slidePO)updPO(slidePO.id,{lineItems:[...lineItems,newLine]});
+          updPO(slidePO.id,{lineItems:[...lineItems,newLine]});
           setItemForm(null);
         };
         const deleteLineItem=(itemId:string)=>{
           const updated=lineItems.filter(i=>i.id!==itemId);
-          if(slideRFQ)updRFQ(slideRFQ.id,{lineItems:updated});
-          else if(slidePO)updPO(slidePO.id,{lineItems:updated});
+          updPO(slidePO.id,{lineItems:updated});
         };
         const filteredContacts=data.contacts.filter(c=>
           c.name.toLowerCase().includes(contactSearch.toLowerCase())||
@@ -1110,9 +1042,9 @@ export default function CRM() {
               <div style={{padding:"16px 18px",borderBottom:"0.5px solid #e2e6ea",display:"flex",alignItems:"center",justifyContent:"space-between",background:"#fff",position:"sticky",top:0,zIndex:2}}>
                 <div>
                   <div style={{fontSize:15,fontWeight:600,color:"#1a2332"}}>
-                    {slideRFQ?(slideRFQ.rfqNumber||`RFQ-${slideRFQ.id}`):(slidePO?.poNumber||`PO-${slidePO?.id}`)}
+                    {slidePO.poNumber||`PO-${slidePO.id}`}
                   </div>
-                  <div style={{fontSize:12,color:"#8a9ab0",marginTop:1}}>{slideRFQ?slideRFQ.client:slidePO?.client}</div>
+                  <div style={{fontSize:12,color:"#8a9ab0",marginTop:1}}>{slidePO.client}</div>
                 </div>
                 <button onClick={closeSlide} style={{fontSize:18,color:"#b0bec8",background:"none",border:"none",cursor:"pointer",padding:"4px 8px"}}>✕</button>
               </div>
@@ -1122,7 +1054,7 @@ export default function CRM() {
                 {(["details","items","documents"] as const).map(t=>(
                   <button key={t} onClick={()=>{setSlideTab(t);setItemForm(null);setContactSearch("");}}
                     style={{padding:"10px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,color:slideTab===t?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${slideTab===t?"#185FA5":"transparent"}`,fontWeight:slideTab===t?600:400,whiteSpace:"nowrap" as const}}>
-                    {t==="details"?"Details":t==="items"?`Items (${lineItems.length})`:`Documents (${((slideRFQ?.documents||slidePO?.documents)||[]).length})`}
+                    {t==="details"?"Details":t==="items"?`Items (${lineItems.length})`:`Documents (${(slidePO.documents||[]).length})`}
                   </button>
                 ))}
               </div>
@@ -1132,98 +1064,7 @@ export default function CRM() {
                 {/* DETAILS TAB */}
                 {slideTab==="details"&&(
                   <div style={{display:"flex",flexDirection:"column",gap:12}}>
-                    {slideRFQ&&<>
-                      {/* RFQ Number + Generate */}
-                      <div>
-                        <div style={lbl}>RFQ Number</div>
-                        <div style={{display:"flex",gap:6}}>
-                          <input style={{...inp,flex:1,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}} value={slideRFQ.rfqNumber} placeholder="RFQ-2026-001" onChange={e=>updRFQ(slideRFQ.id,{rfqNumber:e.target.value})}/>
-                          <button disabled={!!slideRFQ.rfqNumber} onClick={async()=>{const r=await fetch("/api/docnum?type=RFQ").then(x=>x.json());if(r.docNumber)updRFQ(slideRFQ.id,{rfqNumber:r.docNumber});}}
-                            style={{fontSize:12,padding:"0 12px",borderRadius:8,border:"0.5px solid #185FA5",background:slideRFQ.rfqNumber?"#f0f2f5":"#EBF3FC",color:slideRFQ.rfqNumber?"#b0bec8":"#185FA5",cursor:slideRFQ.rfqNumber?"not-allowed":"pointer",whiteSpace:"nowrap" as const,fontWeight:600}}>
-                            Generate
-                          </button>
-                        </div>
-                      </div>
-
-                      {/* Client */}
-                      <div>
-                        <div style={lbl}>Client</div>
-                        <input style={inp} value={slideRFQ.client} placeholder="Client name" onChange={e=>updRFQ(slideRFQ.id,{client:e.target.value})}/>
-                      </div>
-
-                      {/* Contact Person */}
-                      <div>
-                        <div style={lbl}>Contact Person</div>
-                        {slideRFQ.contactPersonId?(
-                          <div style={{display:"flex",alignItems:"center",gap:8,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb"}}>
-                            <span style={{fontSize:13,fontWeight:500,color:"#1a2332",flex:1}}>{slideRFQ.contactPersonName}</span>
-                            {data.contacts.find(c=>c.id===slideRFQ.contactPersonId)?.company&&(
-                              <Pill t={data.contacts.find(c=>c.id===slideRFQ.contactPersonId)!.company} c={{bg:"#EBF3FC",fg:"#185FA5"}}/>
-                            )}
-                            <button onClick={()=>updRFQ(slideRFQ.id,{contactPersonId:undefined,contactPersonName:""})} style={{fontSize:13,color:"#b0bec8",background:"none",border:"none",cursor:"pointer",lineHeight:1}}>x</button>
-                          </div>
-                        ):(
-                          <div style={{position:"relative"}}>
-                            <input style={inp} placeholder="Type name or company..." value={contactSearch} onChange={e=>setContactSearch(e.target.value)}/>
-                            {contactSearch&&filteredContacts.length>0&&(
-                              <div style={{position:"absolute",top:"100%",left:0,right:0,background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:8,zIndex:20,maxHeight:180,overflowY:"auto" as const,boxShadow:"0 4px 12px rgba(0,0,0,0.1)"}}>
-                                {filteredContacts.map(c=>(
-                                  <div key={c.id} onMouseDown={()=>{updRFQ(slideRFQ.id,{contactPersonId:c.id,contactPersonName:c.name});setContactSearch("");}}
-                                    style={{padding:"8px 12px",cursor:"pointer",borderBottom:"0.5px solid #f0f2f5",fontSize:13,display:"flex",alignItems:"center",gap:8}}>
-                                    <span style={{fontWeight:500}}>{c.name}</span>
-                                    {c.company&&<span style={{color:"#8a9ab0",fontSize:11}}>{c.company}</span>}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                          </div>
-                        )}
-                      </div>
-
-                      {/* Project */}
-                      <div>
-                        <div style={lbl}>Linked Project</div>
-                        <div style={{display:"flex",gap:6}}>
-                          <select style={{...inp,flex:1}} value={slideRFQ.projectId||""} onChange={e=>updRFQ(slideRFQ.id,{projectId:e.target.value||undefined})}>
-                            <option value="">-- No project linked --</option>
-                            {projects.map(p=><option key={p.id} value={p.id}>{p.name} ({p.stage})</option>)}
-                          </select>
-                          {slideRFQ.projectId&&<button onClick={()=>updRFQ(slideRFQ.id,{projectId:undefined})} style={{fontSize:13,padding:"0 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#8a9ab0",cursor:"pointer"}}>x</button>}
-                        </div>
-                      </div>
-
-                      {/* Remaining fields */}
-                      {([
-                        {lbl2:"Subject",key:"subject",type:"text",ph:"e.g. Supply of LED Lighting"},
-                        {lbl2:"Date Submitted",key:"dateSubmitted",type:"date",ph:""},
-                        {lbl2:"Response Deadline",key:"deadline",type:"date",ph:""},
-                        {lbl2:"Notes",key:"notes",type:"textarea",ph:"Additional notes..."},
-                      ] as {lbl2:string;key:string;type:string;ph:string}[]).map(f=>(
-                        <div key={f.key}>
-                          <div style={lbl}>{f.lbl2}</div>
-                          {f.type==="textarea"
-                            ? <textarea style={{...inp,minHeight:80,resize:"vertical"} as React.CSSProperties} value={((slideRFQ as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
-                            : <input style={inp} type={f.type} value={((slideRFQ as unknown) as Record<string,string>)[f.key]||""} onChange={e=>updRFQ(slideRFQ.id,{[f.key]:e.target.value})} placeholder={f.ph}/>
-                          }
-                        </div>
-                      ))}
-
-                      {/* Status */}
-                      <div>
-                        <div style={lbl}>Status</div>
-                        <select style={{...inp,border:`0.5px solid ${RFQ_STATUS_C[slideRFQ.status]?.fg||"#e2e6ea"}44`,background:RFQ_STATUS_C[slideRFQ.status]?.bg||"#f8f9fb",color:RFQ_STATUS_C[slideRFQ.status]?.fg||"#3a4a5a",fontWeight:600}} value={slideRFQ.status} onChange={e=>updRFQ(slideRFQ.id,{status:e.target.value})}>
-                          {RFQ_STATUSES.map(s=><option key={s}>{s}</option>)}
-                        </select>
-                      </div>
-
-                      <a href={`/tools/docmaker.html?rfq=${encodeURIComponent(slideRFQ.rfqNumber||"")}&client=${encodeURIComponent(slideRFQ.client||"")}&subject=${encodeURIComponent(slideRFQ.subject||"")}`}
-                        target="_blank" rel="noopener noreferrer"
-                        style={{display:"block",textAlign:"center",padding:"10px",borderRadius:9,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",fontSize:13,fontWeight:600,textDecoration:"none",marginTop:4}}>
-                        Open in Document Maker
-                      </a>
-                    </>}
-
-                    {slidePO&&<>
+                    <>
                       {/* PO Number + Generate */}
                       <div>
                         <div style={lbl}>PO Number</div>
@@ -1314,7 +1155,7 @@ export default function CRM() {
                         style={{display:"block",textAlign:"center",padding:"10px",borderRadius:9,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",fontSize:13,fontWeight:600,textDecoration:"none",marginTop:4}}>
                         Open in Document Maker
                       </a>
-                    </>}
+                    </>
                   </div>
                 )}
 
@@ -1419,10 +1260,10 @@ export default function CRM() {
                     <div style={{fontSize:12,color:"#b0bec8",marginBottom:14,lineHeight:1.6}}>
                       Documents saved from Document Maker appear here. Use the Save to CRM button in Document Maker and select this RFQ or PO.
                     </div>
-                    {((slideRFQ?.documents||slidePO?.documents)||[]).length===0&&(
+                    {(slidePO.documents||[]).length===0&&(
                       <div style={{textAlign:"center",padding:"28px 0",color:"#b0bec8",fontSize:13}}>No documents saved yet.</div>
                     )}
-                    {((slideRFQ?.documents||slidePO?.documents)||[]).map((doc:CRMDocument)=>(
+                    {(slidePO.documents||[]).map((doc:CRMDocument)=>(
                       <div key={doc.id} style={{padding:"12px 14px",borderRadius:9,border:"0.5px solid #e2e6ea",marginBottom:8,background:"#fafbfc"}}>
                         <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:4}}>
                           <div style={{fontSize:13,fontWeight:500,color:"#1a2332"}}>{doc.type} -- {doc.number}</div>

@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect } from "react";
+import { useState, useEffect, useRef, useCallback } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
 
 interface SourcingItem { name: string; quantity: string; specs: string; }
@@ -105,6 +105,10 @@ export default function SourcingModule() {
   const [rfqFile, setRfqFile] = useState<string|null>(null); // base64 data URL
   const [rfqFileName, setRfqFileName] = useState<string>("");
   const [showRfqPane, setShowRfqPane] = useState(false);
+  const [rfqPaneWidth, setRfqPaneWidth] = useState(380);
+  const isDragging = useRef(false);
+  const dragStartX = useRef(0);
+  const dragStartWidth = useRef(380);
 
   useEffect(() => {
     kvGet<SourcingReport[]>("sourcing:history").then(h => {
@@ -145,6 +149,26 @@ export default function SourcingModule() {
     kvSet("sourcing:history", updated);
     if (report?.id===id) setReport(r => r ? {...r,...patch} : r);
   };
+
+  const handleDragStart = useCallback((e: React.MouseEvent) => {
+    e.preventDefault();
+    isDragging.current = true;
+    dragStartX.current = e.clientX;
+    dragStartWidth.current = rfqPaneWidth;
+    const onMove = (ev: MouseEvent) => {
+      if (!isDragging.current) return;
+      const delta = dragStartX.current - ev.clientX;
+      const newWidth = Math.min(600, Math.max(280, dragStartWidth.current + delta));
+      setRfqPaneWidth(newWidth);
+    };
+    const onUp = () => {
+      isDragging.current = false;
+      document.removeEventListener("mousemove", onMove);
+      document.removeEventListener("mouseup", onUp);
+    };
+    document.addEventListener("mousemove", onMove);
+    document.addEventListener("mouseup", onUp);
+  }, [rfqPaneWidth]);
 
   const runSearch = async (searchItems: SourcingItem[], existingReport?: SourcingReport) => {
     const valid = searchItems.filter(i=>i.name.trim());
@@ -474,7 +498,12 @@ export default function SourcingModule() {
                 </div>
                 {/* RFQ Document Pane */}
                 {showRfqPane&&report.rfqFile&&(
-                  <div style={{width:380,flexShrink:0,position:"sticky",top:0}}>
+                  <div style={{display:"flex",flexShrink:0,alignItems:"flex-start",position:"sticky",top:0}}>
+                    {/* Drag handle */}
+                    <div onMouseDown={handleDragStart} style={{width:6,cursor:"col-resize",alignSelf:"stretch",display:"flex",alignItems:"center",justifyContent:"center",flexShrink:0,userSelect:"none" as const}}>
+                      <div style={{width:2,height:32,background:"#d0d8e0",borderRadius:2}}/>
+                    </div>
+                  <div style={{width:rfqPaneWidth,flexShrink:0}}>
                     <div style={{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,overflow:"hidden"}}>
                       <div style={{padding:"10px 14px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                         <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Reference RFQ</div>
@@ -490,6 +519,7 @@ export default function SourcingModule() {
                         )}
                       </div>
                     </div>
+                  </div>
                   </div>
                 )}
               </div>

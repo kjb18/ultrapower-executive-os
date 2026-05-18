@@ -1,6 +1,7 @@
 "use client";
 import { useState, useEffect, useCallback, useRef } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
+import type { Quotation } from "@/lib/constants";
 
 const STAGES = ["RFQ Received","Sourcing","RFQ Submitted","Negotiation","PO Received","In Fulfillment","Delivered","Invoiced","Payment Pending","Closed","Lost","No Offer"] as const;
 const VAT_TYPES = ["VAT Inclusive","Zero Rated","Exempt"] as const;
@@ -38,6 +39,7 @@ interface Project {
   rfqDeadline?:string; finalDeliveryDate?:string; rfqNumber?:string;
   rfqSubject?:string; rfqContactPersonId?:number; rfqContactPersonName?:string;
   rfqLineItems?:LocalLineItem[];
+  quotations?:Quotation[];
   createdAt:string; updatedAt:string;
 }
 interface Expense {
@@ -97,7 +99,7 @@ export default function Projects() {
   const [rptYear, setRptYear] = useState(_phNow.getFullYear());
 
   // Assets tab system
-  const [assetTab, setAssetTab] = useState<"overview"|"rfqspos"|"sourcing"|"documents">("overview");
+  const [assetTab, setAssetTab] = useState<"quotations"|"overview"|"rfqspos"|"sourcing"|"documents">("quotations");
   const [allCRM, setAllCRM] = useState<CRMStore>({});
   const [allSourcing, setAllSourcing] = useState<SourcingSession[]>([]);
   const [showLinkRFQ, setShowLinkRFQ] = useState(false);
@@ -118,6 +120,17 @@ export default function Projects() {
   const [quickSourceSaved, setQuickSourceSaved] = useState(false);
   const [qsExpandedItem, setQsExpandedItem] = useState<number|null>(null);
   const [qsWebSearch, setQsWebSearch] = useState(true);
+
+  // Quotations
+  const [quotationForm, setQuotationForm] = useState<{
+    id:string; docNumber:string; lineItems:LocalLineItem[];
+    salutation:"Dear Sir,"|"Dear Ma'am,"|"Dear Sir/Ma'am,";
+    validity:string; delivery:string; warranty:string;
+    paymentTerms:string; notes:string;
+    status:"Draft"|"Sent"|"Awarded"|"Lost"|"No Offer";
+  }|null>(null);
+  const [quotationPreview, setQuotationPreview] = useState<string|null>(null);
+  const [savingQuotation, setSavingQuotation] = useState(false);
 
   // Local editable fields
   const [migrationBanner, setMigrationBanner] = useState(0);
@@ -146,7 +159,8 @@ export default function Projects() {
 
   useEffect(() => {
     if (!selectedProject) return;
-    setAssetTab("overview");
+    setAssetTab("quotations");
+    setQuotationForm(null); setQuotationPreview(null);
     setShowLinkRFQ(false); setShowLinkPO(false); setShowLinkSourcing(false); setShowLinkSPO(false);
     setShowNewRFQ(false); setShowNewSPO(false); setShowQuickSource(false);
     setQuickSourceResults([]); setQuickSourceSaved(false); setQsExpandedItem(null);
@@ -402,6 +416,57 @@ export default function Projects() {
     a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
     a.download=`QuickSource_${selectedProject?.name||"export"}_${new Date().toISOString().split("T")[0]}.csv`;
     a.click();
+  };
+
+  const QUOT_STATUS_C: Record<string,{bg:string;fg:string}> = {
+    "Draft":{bg:"#f0f2f5",fg:"#8a9ab0"},"Sent":{bg:"#EBF3FC",fg:"#185FA5"},
+    "Awarded":{bg:"#f0faf5",fg:"#3B6D11"},"Lost":{bg:"#FEF0F0",fg:"#A32D2D"},"No Offer":{bg:"#f0f2f5",fg:"#8a9ab0"},
+  };
+
+  const generateQuotationHTML = (q: typeof quotationForm, project: Project): string => {
+    if (!q) return "";
+    const fmtV = (n: number) => `PHP ${n.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}`;
+    const vatRate = project.vatType==="VAT Inclusive" ? 0.12 : 0;
+    const subtotal = q.lineItems.reduce((s,li)=>s+li.total,0);
+    const vatAmt = Math.round(subtotal*vatRate*100)/100;
+    const grand = subtotal+vatAmt;
+    const vatLabel = project.vatType==="VAT Inclusive"?"VAT (12%)":project.vatType==="Zero Rated"?"Zero-Rated VAT":"Exempt";
+    const rows = q.lineItems.map((li,i)=>`<tr><td style="padding:8px 12px;border-bottom:1px solid #eee;color:#9ca3af;font-size:11px">${i+1}</td><td style="padding:8px 12px;border-bottom:1px solid #eee">${li.description}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:center">${li.unit}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">${li.quantity}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right">${fmtV(li.unitPrice)}</td><td style="padding:8px 12px;border-bottom:1px solid #eee;text-align:right;font-weight:600">${fmtV(li.total)}</td></tr>`).join("");
+    return `<!DOCTYPE html><html lang="en"><head><meta charset="UTF-8"><title>${q.docNumber}</title><style>body{font-family:Arial,sans-serif;color:#1a1a2e;margin:0;padding:40px;font-size:13px}.hdr{display:flex;justify-content:space-between;align-items:flex-start;border-bottom:3px solid #0066CC;padding-bottom:20px;margin-bottom:28px}.logo{font-size:24px;font-weight:700}.ultra{color:#0066CC}.power{color:#CC0000}.co{font-size:10px;letter-spacing:.15em;text-transform:uppercase;color:#4a4a5a;margin-top:3px}.addr{font-size:10px;color:#6b7280;margin-top:5px;line-height:1.7}.badge{font-size:10px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#0066CC;border:1.5px solid #0066CC;padding:4px 12px;border-radius:3px;display:inline-block;margin-bottom:8px}.dnum{font-family:monospace;font-size:12px}.ddate{font-size:11px;color:#6b7280;margin-top:2px}.meta{display:flex;gap:40px;margin-bottom:28px}.ml{font-size:9px;font-weight:700;letter-spacing:.12em;text-transform:uppercase;color:#9ca3af;margin-bottom:4px}.mv{font-size:13px;font-weight:600}.md{font-size:11px;color:#4a4a5a;line-height:1.6}table{width:100%;border-collapse:collapse}thead tr{background:#1a1a2e;color:#fff}th{padding:10px 12px;font-size:10px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;text-align:left}th:nth-child(4),th:nth-child(5),th:last-child{text-align:right}.tots{display:flex;flex-direction:column;align-items:flex-end;gap:4px;margin-top:12px}.tr{display:flex;gap:48px;font-size:12px;color:#6b7280}.trgrand{font-size:14px;font-weight:700;color:#1a1a2e;border-top:2px solid #1a1a2e;padding-top:6px;margin-top:4px}.tbl2{width:100%;border-collapse:collapse;margin-top:10px}.tbl2 td{padding:6px 12px;font-size:12px;border-bottom:.5px solid #eee}.tbl2 td:first-child{font-weight:600;color:#1a1a2e;width:180px}.notes{margin-top:16px;padding:10px 14px;background:#f8f9fb;border-left:3px solid #0066CC;font-size:12px;color:#4a4a5a;border-radius:0 6px 6px 0}.sig{margin-top:48px;display:flex;gap:48px}.sb{flex:1}.sl{border-top:1px solid #ccc;margin-top:32px;margin-bottom:6px}.slbl{font-size:11px;color:#6b7280}.footer{margin-top:28px;border-top:1px solid #eee;padding-top:8px;font-size:9px;color:#9ca3af;text-align:center}</style></head><body><div class="hdr"><div><div class="logo"><span class="ultra">ULTRA</span> <span class="power">POWER</span></div><div class="co">Ultra Power Industrial Resources, Inc.</div><div class="addr">Makati City, Metro Manila, Philippines<br>TIN: 238-917-595-000 &middot; khalil@ultrapowerindustrialinc.com</div></div><div style="text-align:right"><div class="badge">Quotation</div><div class="dnum">${q.docNumber}</div><div class="ddate">${new Date(new Date().toISOString()).toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"})}</div></div></div><div class="meta"><div><div class="ml">Attention To</div><div class="mv">${project.client}</div>${project.rfqContactPersonName?`<div class="md">${project.rfqContactPersonName}</div>`:""}</div>${project.rfqSubject?`<div><div class="ml">Subject</div><div class="md">${project.rfqSubject}</div></div>`:""} ${project.rfqNumber?`<div><div class="ml">Ref. RFQ</div><div class="md">${project.rfqNumber}</div></div>`:""}</div><p style="font-size:13px;color:#4a4a5a;margin-bottom:8px">${q.salutation}</p><p style="font-size:13px;color:#4a4a5a;margin-bottom:20px;line-height:1.6">We are pleased to submit our quotation for the above-referenced requirement:</p><table><thead><tr><th>#</th><th>Description</th><th style="text-align:center">Unit</th><th style="text-align:right">Qty</th><th style="text-align:right">Unit Price</th><th style="text-align:right">Amount</th></tr></thead><tbody>${rows||`<tr><td colspan="6" style="text-align:center;padding:20px;color:#9ca3af">No items added</td></tr>`}</tbody></table><div class="tots"><div class="tr"><span>Subtotal</span><span>${fmtV(subtotal)}</span></div><div class="tr"><span>${vatLabel}</span><span>${fmtV(vatAmt)}</span></div><div class="tr trgrand"><span>GRAND TOTAL</span><span>${fmtV(grand)}</span></div></div><div style="margin-top:24px"><strong style="font-size:12px">Terms and Conditions</strong><table class="tbl2"><tr><td>Validity</td><td>${q.validity||"30 days from date of quotation"}</td></tr><tr><td>Delivery</td><td>${q.delivery||"To be confirmed upon PO receipt"}</td></tr><tr><td>Warranty</td><td>${q.warranty||"As per manufacturer's warranty"}</td></tr><tr><td>Payment Terms</td><td>${q.paymentTerms||"30 days from invoice date"}</td></tr><tr><td>VAT</td><td>${project.vatType}</td></tr></table></div>${q.notes?`<div class="notes"><strong>Notes:</strong> ${q.notes}</div>`:""}<div class="sig"><div class="sb"><div class="sl"></div><div>Khalil Joseph Banares</div><div class="slbl">Engineering Solutions Director</div><div class="slbl">Ultra Power Industrial Resources, Inc.</div></div><div class="sb"><div class="sl"></div><div class="slbl">Received by / Conforme</div><div class="slbl">Date: ____________________</div></div></div><div class="footer">This quotation is subject to the terms stated above. Prices are in Philippine Pesos (PHP) and valid for the stated validity period.</div></body></html>`;
+  };
+
+  const saveQuotationFn = async (q: typeof quotationForm) => {
+    if (!q || !selectedProject) return;
+    setSavingQuotation(true);
+    const vatRate = selectedProject.vatType==="VAT Inclusive" ? 0.12 : 0;
+    const totalAmount = q.lineItems.reduce((s,li)=>s+li.total, 0);
+    const vatAmount = Math.round(totalAmount*vatRate*100)/100;
+    const grandTotal = totalAmount + vatAmount;
+    const html = generateQuotationHTML(q, selectedProject);
+    const quotation: Quotation = {
+      id: q.id, version: 0, docNumber: q.docNumber,
+      dateCreated: new Date().toISOString().split("T")[0],
+      status: q.status,
+      lineItems: q.lineItems,
+      totalAmount, vatType: selectedProject.vatType as "VAT Inclusive"|"Zero Rated"|"Exempt",
+      vatAmount, grandTotal,
+      notes: q.notes, html,
+      salutation: q.salutation, validity: q.validity,
+      delivery: q.delivery, warranty: q.warranty, paymentTerms: q.paymentTerms,
+    };
+    try {
+      const res = await fetch("/api/projects", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({action:"saveQuotation", projectId:selectedProject.id, quotation})
+      });
+      const data = await res.json();
+      if (data.ok && data.project) {
+        setSelectedProject(data.project);
+        setProjects(prev=>prev.map(p=>p.id===data.project.id?data.project:p));
+        setQuotationForm(null); setQuotationPreview(null);
+      }
+    } catch(e) { console.error(e); }
+    setSavingQuotation(false);
   };
 
   // Filtered projects
@@ -915,12 +980,136 @@ export default function Projects() {
 
             {/* Asset tab bar */}
             <div style={{display:"flex",borderBottom:"0.5px solid #e2e6ea",marginBottom:14,background:"#fff",borderRadius:"12px 12px 0 0"}}>
-              {(["overview","rfqspos","sourcing","documents"] as const).map(t=>(
+              {(["quotations","overview","rfqspos","sourcing","documents"] as const).map(t=>(
                 <button key={t} style={S.tabBtn(assetTab===t)} onClick={()=>setAssetTab(t)}>
-                  {t==="overview"?"Overview":t==="rfqspos"?"RFQs & POs":t==="sourcing"?"Sourcing":"Documents"}
+                  {t==="quotations"?`Quotations${(selectedProject.quotations||[]).length>0?` (${(selectedProject.quotations||[]).length})`:""}`
+                    :t==="overview"?"Overview":t==="rfqspos"?"RFQs & POs":t==="sourcing"?"Sourcing":"Documents"}
                 </button>
               ))}
             </div>
+
+            {/* QUOTATIONS TAB */}
+            {assetTab==="quotations"&&<>
+              <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
+                <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace"}}>Quotations</div>
+                <button onClick={async()=>{
+                  const dn=await generateDocNum("QUOT");
+                  setQuotationForm({id:genId(),docNumber:dn,lineItems:[],salutation:"Dear Sir/Ma'am,",validity:"30 days from date of quotation",delivery:"To be confirmed upon PO receipt",warranty:"As per manufacturer's warranty",paymentTerms:selectedProject.paymentTerms||"30 Days",notes:"",status:"Draft"});
+                  setQuotationPreview(null);
+                }} style={S.addBtn}>+ New Quotation</button>
+              </div>
+
+              {/* Existing quotation cards */}
+              {(selectedProject.quotations||[]).length===0&&!quotationForm&&(
+                <div style={{...S.card,padding:32,textAlign:"center",color:"#b0bec8",fontSize:13}}>No quotations yet. Click + New Quotation to create one.</div>
+              )}
+              {(selectedProject.quotations||[]).map((q,i)=>(
+                <div key={q.id} style={{...S.card,padding:"12px 16px",marginBottom:10}}>
+                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",gap:10}}>
+                    <div style={{display:"flex",alignItems:"center",gap:10,flex:1,flexWrap:"wrap" as const}}>
+                      <span style={{fontSize:11,padding:"1px 7px",borderRadius:20,background:"#f0f2f5",color:"#4a6a8a",fontFamily:"'DM Mono',monospace",fontWeight:600}}>v{q.version||i+1}</span>
+                      <span style={{fontSize:12,fontFamily:"'DM Mono',monospace",fontWeight:600,color:"#185FA5"}}>{q.docNumber}</span>
+                      <span style={{fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{q.dateCreated}</span>
+                      <span style={S.pill(QUOT_STATUS_C[q.status]?.bg||"#f0f2f5",QUOT_STATUS_C[q.status]?.fg||"#8a9ab0")}>{q.status}</span>
+                      <span style={{fontSize:13,fontFamily:"'DM Mono',monospace",fontWeight:700,color:"#3B6D11",marginLeft:4}}>{fmt(q.grandTotal)}</span>
+                    </div>
+                    <div style={{display:"flex",gap:6,flexShrink:0}}>
+                      {q.html&&<button onClick={()=>{const w=window.open("","_blank");if(w){w.document.write(q.html as string);w.document.close();}}} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer"}}>View</button>}
+                      <button onClick={()=>setQuotationForm({id:q.id,docNumber:q.docNumber,lineItems:q.lineItems||[],salutation:q.salutation||"Dear Sir/Ma'am,",validity:q.validity||"",delivery:q.delivery||"",warranty:q.warranty||"",paymentTerms:q.paymentTerms||"",notes:q.notes||"",status:q.status})} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Edit</button>
+                      <button onClick={async()=>{const dn=await generateDocNum("QUOT");setQuotationForm({id:genId(),docNumber:dn,lineItems:[...(q.lineItems||[])],salutation:q.salutation||"Dear Sir/Ma'am,",validity:q.validity||"",delivery:q.delivery||"",warranty:q.warranty||"",paymentTerms:q.paymentTerms||"",notes:q.notes||"",status:"Draft"});}} style={{fontSize:11,padding:"4px 10px",borderRadius:7,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Duplicate</button>
+                      <select value={q.status} onChange={e=>{const updated={...q,status:e.target.value as Quotation["status"]};const updProj={...selectedProject,quotations:(selectedProject.quotations||[]).map(x=>x.id===q.id?updated:x)};saveProject(updProj);}} style={{fontSize:11,padding:"3px 8px",borderRadius:7,border:`0.5px solid ${QUOT_STATUS_C[q.status]?.fg||"#e2e6ea"}44`,background:QUOT_STATUS_C[q.status]?.bg||"#f0f2f5",color:QUOT_STATUS_C[q.status]?.fg||"#8a9ab0",fontWeight:600,cursor:"pointer"}}>
+                        {(["Draft","Sent","Awarded","Lost","No Offer"] as const).map(s=><option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              ))}
+
+              {/* Inline new/edit quotation form */}
+              {quotationForm&&(
+                <div style={{...S.card,padding:16,marginTop:8,border:"0.5px solid #185FA5"}}>
+                  <div style={{fontSize:12,fontWeight:600,color:"#185FA5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>
+                    {(selectedProject.quotations||[]).find(q=>q.id===quotationForm.id)?"Edit Quotation":"New Quotation"} -- {quotationForm.docNumber}
+                  </div>
+                  <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(180px,1fr))",gap:10,marginBottom:12}}>
+                    <div>
+                      <span style={S.lbl}>Salutation</span>
+                      <select style={S.inp} value={quotationForm.salutation} onChange={e=>setQuotationForm(f=>f?{...f,salutation:e.target.value as typeof f.salutation}:f)}>
+                        {(["Dear Sir,","Dear Ma'am,","Dear Sir/Ma'am,"] as const).map(s=><option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <span style={S.lbl}>Status</span>
+                      <select style={{...S.inp,background:QUOT_STATUS_C[quotationForm.status]?.bg,color:QUOT_STATUS_C[quotationForm.status]?.fg,fontWeight:600}} value={quotationForm.status} onChange={e=>setQuotationForm(f=>f?{...f,status:e.target.value as typeof f.status}:f)}>
+                        {(["Draft","Sent","Awarded","Lost","No Offer"] as const).map(s=><option key={s}>{s}</option>)}
+                      </select>
+                    </div>
+                    <div>
+                      <span style={S.lbl}>Validity</span>
+                      <input style={S.inp} value={quotationForm.validity} onChange={e=>setQuotationForm(f=>f?{...f,validity:e.target.value}:f)} placeholder="30 days from date of quotation"/>
+                    </div>
+                    <div>
+                      <span style={S.lbl}>Delivery</span>
+                      <input style={S.inp} value={quotationForm.delivery} onChange={e=>setQuotationForm(f=>f?{...f,delivery:e.target.value}:f)} placeholder="To be confirmed upon PO receipt"/>
+                    </div>
+                    <div>
+                      <span style={S.lbl}>Warranty</span>
+                      <input style={S.inp} value={quotationForm.warranty} onChange={e=>setQuotationForm(f=>f?{...f,warranty:e.target.value}:f)} placeholder="As per manufacturer's warranty"/>
+                    </div>
+                    <div>
+                      <span style={S.lbl}>Payment Terms</span>
+                      <input style={S.inp} value={quotationForm.paymentTerms} onChange={e=>setQuotationForm(f=>f?{...f,paymentTerms:e.target.value}:f)} placeholder="30 days from invoice date"/>
+                    </div>
+                  </div>
+
+                  {/* Line items */}
+                  <div style={{marginBottom:12}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                      <span style={S.lbl}>Line Items</span>
+                      <button onClick={()=>setQuotationForm(f=>f?{...f,lineItems:[...f.lineItems,{id:genId(),description:"",quantity:1,unit:"pc",unitPrice:0,total:0}]}:f)} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer"}}>+ Add Item</button>
+                    </div>
+                    {quotationForm.lineItems.length>0&&(
+                      <table style={{width:"100%",borderCollapse:"collapse",fontSize:12}}>
+                        <thead><tr style={{background:"#f8f9fb"}}>
+                          {["Description","Unit","Qty","Unit Price","Total",""].map(h=><th key={h} style={{padding:"5px 8px",textAlign:"left",fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.06em"}}>{h}</th>)}
+                        </tr></thead>
+                        <tbody>
+                          {quotationForm.lineItems.map((li,idx)=>(
+                            <tr key={li.id}>
+                              <td style={{padding:"3px 4px"}}><input style={{...S.inp,padding:"4px 6px"}} value={li.description} onChange={e=>setQuotationForm(f=>f?{...f,lineItems:liUpdate(f.lineItems,idx,"description",e.target.value)}:f)}/></td>
+                              <td style={{padding:"3px 4px",width:60}}><input style={{...S.inp,padding:"4px 6px"}} value={li.unit} onChange={e=>setQuotationForm(f=>f?{...f,lineItems:liUpdate(f.lineItems,idx,"unit",e.target.value)}:f)}/></td>
+                              <td style={{padding:"3px 4px",width:60}}><input style={{...S.inp,padding:"4px 6px"}} type="number" value={li.quantity} onChange={e=>setQuotationForm(f=>f?{...f,lineItems:liUpdate(f.lineItems,idx,"quantity",Number(e.target.value))}:f)}/></td>
+                              <td style={{padding:"3px 4px",width:110}}><input style={{...S.inp,padding:"4px 6px"}} type="number" value={li.unitPrice} onChange={e=>setQuotationForm(f=>f?{...f,lineItems:liUpdate(f.lineItems,idx,"unitPrice",Number(e.target.value))}:f)}/></td>
+                              <td style={{padding:"3px 4px",width:110,fontFamily:"'DM Mono',monospace",color:"#3B6D11",fontSize:12,paddingLeft:8}}>{fmt(li.total)}</td>
+                              <td style={{padding:"3px 4px",width:28}}><button onClick={()=>setQuotationForm(f=>f?{...f,lineItems:f.lineItems.filter((_,i)=>i!==idx)}:f)} style={{color:"#d0d8e0",background:"none",border:"none",cursor:"pointer",fontSize:14}}>✕</button></td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    )}
+                    {quotationForm.lineItems.length>0&&(
+                      <div style={{textAlign:"right",fontSize:12,fontFamily:"'DM Mono',monospace",color:"#1a2332",paddingTop:8}}>
+                        {selectedProject.vatType==="VAT Inclusive"&&<div style={{color:"#8a9ab0"}}>VAT (12%): {fmt(Math.round(quotationForm.lineItems.reduce((s,li)=>s+li.total,0)*0.12*100)/100)}</div>}
+                        <div style={{fontWeight:700,fontSize:14}}>Grand Total: {fmt(quotationForm.lineItems.reduce((s,li)=>s+li.total,0)+(selectedProject.vatType==="VAT Inclusive"?Math.round(quotationForm.lineItems.reduce((s,li)=>s+li.total,0)*0.12*100)/100:0))}</div>
+                      </div>
+                    )}
+                  </div>
+
+                  <div style={{marginBottom:12}}>
+                    <span style={S.lbl}>Notes</span>
+                    <textarea style={{...S.inp,minHeight:60,resize:"vertical" as const}} value={quotationForm.notes} onChange={e=>setQuotationForm(f=>f?{...f,notes:e.target.value}:f)} placeholder="Optional notes for the quotation..."/>
+                  </div>
+
+                  <div style={{display:"flex",gap:8}}>
+                    <button onClick={()=>{const html=generateQuotationHTML(quotationForm,selectedProject);const w=window.open("","_blank");if(w){w.document.write(html);w.document.close();}}} style={{...S.addBtn,background:"#f0faf5",color:"#3B6D11",borderColor:"#3B6D11"}}>Preview</button>
+                    <button onClick={()=>saveQuotationFn(quotationForm)} disabled={savingQuotation} style={{...S.addBtn,background:"#185FA5",color:"#fff",borderColor:"#185FA5",opacity:savingQuotation?0.6:1}}>
+                      {savingQuotation?<Spinner/>:<span>Save Quotation</span>}
+                    </button>
+                    <button onClick={()=>{setQuotationForm(null);setQuotationPreview(null);}} style={{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>Cancel</button>
+                  </div>
+                </div>
+              )}
+            </>}
 
             {/* OVERVIEW TAB */}
             {assetTab==="overview"&&<>
