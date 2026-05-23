@@ -272,6 +272,46 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 .currency-sel{display:flex;gap:6px}
 .cur-btn{padding:7px 12px;border-radius:var(--radius-sm);font-size:12px;font-weight:600;cursor:pointer;border:1.5px solid var(--up-border);background:var(--white);color:var(--up-gray);transition:all 0.15s;font-family:'DM Mono',monospace}
 .cur-btn.active{border-color:var(--up-blue);background:rgba(0,102,204,0.08);color:var(--up-blue)}
+
+/* ─── AUTOCOMPLETE ─── */
+.autocomplete-wrap{position:relative}
+.autocomplete-list{position:absolute;top:100%;left:0;right:0;background:var(--white);border:1.5px solid var(--up-blue);border-radius:var(--radius-sm);box-shadow:var(--shadow-md);z-index:200;max-height:220px;overflow-y:auto;margin-top:2px}
+.autocomplete-item{padding:10px 14px;font-size:13px;cursor:pointer;border-bottom:1px solid var(--up-border)}
+.autocomplete-item:last-child{border-bottom:none}
+.autocomplete-item:hover{background:var(--up-light)}
+.autocomplete-item .ac-company{font-weight:600;color:var(--up-dark)}
+.autocomplete-item .ac-meta{font-size:11px;color:var(--up-gray);margin-top:2px}
+
+/* ─── TEMPLATE CARDS ─── */
+.template-card{background:var(--white);border:1px solid var(--up-border);border-radius:var(--radius);padding:16px 20px;margin-bottom:12px;display:flex;align-items:center;gap:16px;box-shadow:var(--shadow-sm);transition:box-shadow 0.15s}
+.template-card:hover{box-shadow:var(--shadow-md)}
+.template-card-info{flex:1;min-width:0}
+.template-card-name{font-size:14px;font-weight:600;color:var(--up-dark)}
+.template-card-meta{font-size:12px;color:var(--up-gray);margin-top:3px;display:flex;align-items:center;gap:10px}
+.template-card-actions{display:flex;gap:8px;flex-shrink:0}
+.tpl-pill{display:inline-block;font-size:10px;font-weight:600;padding:2px 8px;border-radius:10px;letter-spacing:0.06em;text-transform:uppercase;background:#e0f2fe;color:#0369a1}
+.tpl-pill.po{background:#f3e8ff;color:#7e22ce}
+.tpl-pill.rfq{background:#fef9c3;color:#854d0e}
+.tpl-pill.invoice{background:#d1fae5;color:#0f7a4f}
+.tpl-pill.dr{background:#ffe4e6;color:#be123c}
+.save-tpl-bar{background:var(--up-light);border:1px solid var(--up-border);border-radius:var(--radius);padding:16px 20px;margin-bottom:20px;display:flex;align-items:center;gap:12px}
+.save-tpl-bar input{flex:1;min-width:0}
+
+/* ─── CLIENT PROFILE CARDS ─── */
+.client-profile-card{background:var(--white);border:1px solid var(--up-border);border-radius:var(--radius);margin-bottom:12px;box-shadow:var(--shadow-sm);overflow:hidden}
+.client-profile-header{padding:14px 20px;display:flex;align-items:center;gap:12px;cursor:pointer;user-select:none;transition:background 0.15s}
+.client-profile-header:hover{background:var(--up-light)}
+.client-profile-company{font-size:14px;font-weight:600;color:var(--up-dark);flex:1}
+.client-profile-toggle{font-size:16px;color:var(--up-gray);transition:transform 0.2s}
+.client-profile-body{display:none;padding:0 20px 18px;border-top:1px solid var(--up-border)}
+.client-profile-body.open{display:block}
+.client-profile-section{font-size:11px;font-weight:600;color:var(--up-gray);text-transform:uppercase;letter-spacing:0.06em;margin:14px 0 8px}
+.defaults-grid{display:grid;grid-template-columns:1fr 1fr;gap:10px}
+.defaults-grid .form-group{gap:4px}
+.defaults-grid .form-label{font-size:11px}
+.defaults-grid .form-input{padding:7px 10px;font-size:13px}
+.client-search-bar{margin-bottom:16px}
+.client-actions{display:flex;gap:8px;margin-top:14px}
 </style>
 </head>
 <body>
@@ -290,6 +330,8 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     <div class="nav-item active" onclick="showView('create')"><span class="nav-icon">✦</span> New Document</div>
     <div class="nav-section">Manage</div>
     <div class="nav-item" onclick="showView('tracker')"><span class="nav-icon">◈</span> Document Tracker <span class="nav-badge" id="doc-count">0</span></div>
+    <div class="nav-item" onclick="showView('templates')"><span class="nav-icon">⊡</span> Templates</div>
+    <div class="nav-item" onclick="showView('clients')"><span class="nav-icon">◎</span> Client Profiles</div>
     <div class="nav-section">Doc Types</div>
     <div class="nav-item" onclick="setDocType('quotation');showView('create')"><span class="nav-icon">◇</span> Quotation / Offer</div>
     <div class="nav-item" onclick="setDocType('po');showView('create')"><span class="nav-icon">◻</span> Purchase Order</div>
@@ -306,6 +348,7 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
     <div class="topbar-title">Document <span>Maker</span></div>
     <div class="topbar-actions">
       <button class="btn btn-outline" onclick="clearForm()">↺ Clear</button>
+      <button class="btn btn-outline" id="repeat-last-btn" onclick="repeatLast()" title="No previous document" disabled style="opacity:0.45">⟲ Repeat Last</button>
       <button class="btn btn-primary" onclick="openPreview()">⊞ Preview & Print</button>
       <button class="btn btn-outline" onclick="exportDocx()" id="docx-btn" style="margin-left:6px">📄 Export DOCX</button>
       <button class="btn btn-outline" onclick="showSaveToCRM()" style="margin-left:6px;background:#f0faf5;border-color:#3B6D11;color:#3B6D11">💾 Save to CRM</button>
@@ -380,7 +423,10 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
         <div class="form-grid">
           <div class="form-group">
             <label class="form-label">Company Name</label>
-            <input class="form-input" id="client-name" placeholder="e.g. Philippine Geothermal Production Co." />
+            <div class="autocomplete-wrap">
+              <input class="form-input" id="client-name" placeholder="e.g. Philippine Geothermal Production Co." oninput="onCompanyInput(this)" onblur="hideCompanyList()" autocomplete="off" />
+              <div class="autocomplete-list" id="company-ac-list" style="display:none"></div>
+            </div>
           </div>
           <div class="form-group">
             <label class="form-label">TIN (if applicable)</label>
@@ -610,6 +656,27 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
       </div>
     </div>
 
+    <!-- TEMPLATES VIEW -->
+    <div id="view-templates" style="display:none">
+      <div class="save-tpl-bar">
+        <input class="form-input" id="tpl-name-input" placeholder="Template name (e.g. Goodlite LED Quotation - EDC)" style="flex:1" />
+        <button class="btn btn-primary" onclick="saveTemplate()">Save Current Form as Template</button>
+      </div>
+      <div id="templates-body">
+        <div class="empty-state"><h3>No templates yet</h3><p>Fill out a form and save it as a template to reuse it later.</p></div>
+      </div>
+    </div>
+
+    <!-- CLIENT PROFILES VIEW -->
+    <div id="view-clients" style="display:none">
+      <div class="client-search-bar">
+        <input class="form-input" id="client-search-input" placeholder="Search clients..." oninput="renderClientsView()" style="max-width:360px" />
+      </div>
+      <div id="clients-body">
+        <div class="empty-state"><h3>No client profiles yet</h3><p>Client profiles are saved automatically when you preview a document.</p></div>
+      </div>
+    </div>
+
   </div>
 </main>
 </div>
@@ -741,7 +808,12 @@ document.addEventListener('DOMContentLoaded', function() {
 function showView(v) {
   document.getElementById('view-create').style.display = v==='create'?'block':'none';
   document.getElementById('view-tracker').style.display = v==='tracker'?'block':'none';
+  document.getElementById('view-templates').style.display = v==='templates'?'block':'none';
+  document.getElementById('view-clients').style.display = v==='clients'?'block':'none';
+  document.querySelectorAll('.nav-item').forEach(function(el){el.classList.remove('active');});
   if(v==='tracker') renderTracker();
+  if(v==='templates') renderTemplatesView();
+  if(v==='clients') renderClientsView();
 }
 
 // ─── DOC TYPE ───
@@ -805,6 +877,7 @@ function addItem() {
     '</td>' +
     '<td><button class="item-remove" onclick="removeItem(' + id + ')">×</button></td>';
   tbody.appendChild(tr);
+  return id;
 }
 
 function triggerPhotoUpload(id) {
@@ -916,6 +989,11 @@ function formatDate(d) {
 // ─── PREVIEW ───
 function openPreview() {
   recalc();
+  saveClientFromForm();
+  var _captured = captureFormData();
+  try { localStorage.setItem('docmaker:lastused', JSON.stringify(_captured)); } catch(e) {}
+  var rlBtn = document.getElementById('repeat-last-btn');
+  if (rlBtn) { rlBtn.disabled = false; rlBtn.style.opacity = '1'; rlBtn.title = 'Repeat last document'; }
   const items = getItems();
   const sig = SIGNATORIES[currentSignatory];
   const sym = CUR_SYMBOLS[currentCurrency]||currentCurrency;
@@ -1738,6 +1816,541 @@ async function saveToCRM() {
     showToast('Error saving to CRM: ' + e.message, 'error');
   }
 }
+
+// ═══════════════════════════════════════════════════════════════════
+// KV HELPERS
+// ═══════════════════════════════════════════════════════════════════
+var KV_BASE = 'https://ultrapower-executive-os-vgrr.vercel.app/api/kv';
+
+async function kvGetRaw(key) {
+  var res = await fetch(KV_BASE + '?key=' + encodeURIComponent(key));
+  var d = await res.json();
+  return d && d.value != null ? d.value : null;
+}
+async function kvSetRaw(key, value) {
+  await fetch(KV_BASE, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify({key:key, value:value}) });
+}
+
+// ─── CLIENTS KV ─────────────────────────────────────────────────────────────
+var _clients = [];
+
+async function kvLoadClients() {
+  try {
+    var raw = await kvGetRaw('docmaker:clients');
+    _clients = raw ? JSON.parse(raw) : [];
+  } catch(e) { _clients = []; }
+}
+
+async function kvSetClients(arr) {
+  _clients = arr;
+  try { await kvSetRaw('docmaker:clients', JSON.stringify(arr)); } catch(e) {}
+}
+
+// ─── SETTINGS (templates) KV ─────────────────────────────────────────────────
+var _templates = [];
+
+async function kvLoadSettings() {
+  try {
+    var raw = await kvGetRaw('docmaker:settings');
+    var s = raw ? JSON.parse(raw) : {};
+    _templates = Array.isArray(s.templates) ? s.templates : [];
+  } catch(e) { _templates = []; }
+}
+
+async function kvSaveSettings() {
+  var s = { templates: _templates };
+  try { await kvSetRaw('docmaker:settings', JSON.stringify(s)); } catch(e) {}
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CAPTURE / APPLY FORM DATA
+// ═══════════════════════════════════════════════════════════════════
+function captureFormData() {
+  var sal = document.querySelector('input[name="salutation"]:checked');
+  var items = getItems();
+  return {
+    docType: currentDocType,
+    clientName: document.getElementById('client-name').value || '',
+    clientAddress: document.getElementById('client-address').value || '',
+    clientAttn: document.getElementById('client-attn').value || '',
+    clientDept: document.getElementById('client-dept').value || '',
+    clientTin: document.getElementById('client-tin').value || '',
+    subject: document.getElementById('doc-subject').value || '',
+    salutation: sal ? sal.value : 'Dear Sir,',
+    delivery: document.getElementById('note-delivery').value || '',
+    validity: document.getElementById('note-validity').value || '',
+    warranty: document.getElementById('note-warranty').value || '',
+    paymentTerms: (document.getElementById('note-payment') ? document.getElementById('note-payment').value : '') || '',
+    currency: currentCurrency,
+    vat: currentVAT,
+    signatory: currentSignatory,
+    lineItems: items
+  };
+}
+
+function applyFormData(data) {
+  if (!data) return;
+
+  // Doc type
+  if (data.docType) {
+    var tabMap = {quotation:0, po:1, rfq:2, invoice:3, dr:4};
+    var tabs = document.querySelectorAll('.doc-tab');
+    var idx = tabMap[data.docType];
+    var docTabBtn = (idx !== undefined && tabs[idx]) ? tabs[idx] : null;
+    setDocType(data.docType, docTabBtn);
+  }
+
+  // Currency
+  if (data.currency) {
+    var curBtns = document.querySelectorAll('.cur-btn');
+    var curMap = {PHP:0, USD:1, EUR:2, SGD:3};
+    var ci = curMap[data.currency];
+    setCurrency(data.currency, (ci !== undefined && curBtns[ci]) ? curBtns[ci] : null);
+  }
+
+  // VAT
+  if (data.vat) {
+    var vatBtns = document.querySelectorAll('.vat-opt');
+    var vatMap = {zero:0, inclusive:1, exclusive:2};
+    var vi = vatMap[data.vat];
+    setVAT(data.vat, (vi !== undefined && vatBtns[vi]) ? vatBtns[vi] : null);
+  }
+
+  // Signatory
+  if (data.signatory) {
+    var sigBtns = document.querySelectorAll('.sig-tab');
+    var sigMap = {alexander:0, khalil:1};
+    var si = sigMap[data.signatory];
+    setSignatory(data.signatory, (si !== undefined && sigBtns[si]) ? sigBtns[si] : null);
+  }
+
+  // Text fields
+  var fmap = {
+    'client-name': data.clientName,
+    'client-address': data.clientAddress,
+    'client-attn': data.clientAttn,
+    'client-dept': data.clientDept,
+    'client-tin': data.clientTin,
+    'doc-subject': data.subject,
+    'note-delivery': data.delivery,
+    'note-validity': data.validity,
+    'note-warranty': data.warranty,
+    'note-payment': data.paymentTerms
+  };
+  Object.keys(fmap).forEach(function(id) {
+    var el = document.getElementById(id);
+    if (el && fmap[id] != null) el.value = fmap[id];
+  });
+
+  // Salutation
+  if (data.salutation) {
+    var radios = document.querySelectorAll('input[name="salutation"]');
+    radios.forEach(function(r) { if (r.value === data.salutation) r.checked = true; });
+    updateSalutation();
+  }
+
+  // Line items -- clear then add
+  var tbody = document.getElementById('items-body');
+  if (tbody) tbody.innerHTML = '';
+  itemCount = 0;
+  if (Array.isArray(data.lineItems) && data.lineItems.length > 0) {
+    data.lineItems.forEach(function(item) {
+      var newId = addItem();
+      var descEl = document.getElementById('item-desc-' + newId);
+      var unitEl = document.getElementById('item-unit-' + newId);
+      var qtyEl = document.getElementById('item-qty-' + newId);
+      var priceEl = document.getElementById('item-price-' + newId);
+      if (descEl) descEl.value = item.desc || '';
+      if (unitEl) unitEl.value = item.unit || 'PCS';
+      if (qtyEl) qtyEl.value = item.qty || 0;
+      if (priceEl) priceEl.value = item.price || 0;
+    });
+  } else {
+    addItem();
+  }
+  recalc();
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// TEMPLATES
+// ═══════════════════════════════════════════════════════════════════
+async function saveTemplate() {
+  var nameEl = document.getElementById('tpl-name-input');
+  var name = nameEl ? nameEl.value.trim() : '';
+  if (!name) { showToast('Enter a template name first.', 'error'); return; }
+
+  var tpl = captureFormData();
+  tpl.id = Date.now();
+  tpl.name = name;
+  tpl.createdAt = new Date().toISOString();
+  tpl.lastUsed = null;
+
+  _templates.push(tpl);
+  await kvSaveSettings();
+  if (nameEl) nameEl.value = '';
+  renderTemplatesView();
+  showToast('Template saved: ' + name, 'success');
+}
+
+async function loadTemplate(id) {
+  var tpl = _templates.find(function(t) { return t.id === id; });
+  if (!tpl) return;
+
+  applyFormData(tpl);
+  document.getElementById('doc-number').value = '';
+
+  tpl.lastUsed = Date.now();
+  await kvSaveSettings();
+
+  showView('create');
+  showToast('Template loaded: ' + tpl.name, 'success');
+}
+
+async function deleteTemplate(id) {
+  if (!confirm('Delete this template?')) return;
+  _templates = _templates.filter(function(t) { return t.id !== id; });
+  await kvSaveSettings();
+  renderTemplatesView();
+}
+
+function startRenameTemplate(id) {
+  var nameSpan = document.getElementById('tpl-name-' + id);
+  if (!nameSpan) return;
+  var currentName = nameSpan.textContent;
+  var inp = document.createElement('input');
+  inp.className = 'form-input';
+  inp.value = currentName;
+  inp.style.cssText = 'padding:4px 8px;font-size:13px;width:100%;max-width:280px';
+  nameSpan.replaceWith(inp);
+  inp.focus();
+  inp.select();
+  inp.addEventListener('keydown', function(e) {
+    if (e.key === 'Enter') finishRenameTemplate(id, inp.value.trim());
+    if (e.key === 'Escape') renderTemplatesView();
+  });
+  inp.addEventListener('blur', function() { finishRenameTemplate(id, inp.value.trim()); });
+}
+
+async function finishRenameTemplate(id, newName) {
+  if (!newName) { renderTemplatesView(); return; }
+  var tpl = _templates.find(function(t) { return t.id === id; });
+  if (tpl) {
+    tpl.name = newName;
+    await kvSaveSettings();
+  }
+  renderTemplatesView();
+}
+
+function renderTemplatesView() {
+  var body = document.getElementById('templates-body');
+  if (!body) return;
+  if (!_templates.length) {
+    body.innerHTML = '<div class="empty-state"><h3>No templates yet</h3><p>Fill out a form and save it as a template to reuse it later.</p></div>';
+    return;
+  }
+  var sorted = _templates.slice().sort(function(a,b){ return (b.lastUsed||0)-(a.lastUsed||0); });
+  var pillClass = {quotation:'',po:'po',rfq:'rfq',invoice:'invoice',dr:'dr'};
+  var docLabel = {quotation:'Quotation',po:'Purchase Order',rfq:'RFQ Response',invoice:'Invoice',dr:'Delivery Receipt'};
+  body.innerHTML = sorted.map(function(tpl) {
+    var pc = pillClass[tpl.docType] || '';
+    var dl = docLabel[tpl.docType] || tpl.docType;
+    var ic = Array.isArray(tpl.lineItems) ? tpl.lineItems.length : 0;
+    return '<div class="template-card">' +
+      '<div class="template-card-info">' +
+        '<div class="template-card-name"><span id="tpl-name-' + tpl.id + '">' + escHtml(tpl.name) + '</span></div>' +
+        '<div class="template-card-meta">' +
+          '<span class="tpl-pill ' + pc + '">' + dl + '</span>' +
+          (tpl.clientName ? '<span>' + escHtml(tpl.clientName) + '</span>' : '') +
+          '<span>' + ic + ' item' + (ic===1?'':'s') + '</span>' +
+        '</div>' +
+      '</div>' +
+      '<div class="template-card-actions">' +
+        '<button class="btn btn-primary" style="padding:6px 14px;font-size:12px" onclick="loadTemplate(' + tpl.id + ')">Load</button>' +
+        '<button class="btn btn-outline" style="padding:6px 14px;font-size:12px" onclick="startRenameTemplate(' + tpl.id + ')">Edit Name</button>' +
+        '<button class="btn btn-danger" style="padding:6px 14px;font-size:12px" onclick="deleteTemplate(' + tpl.id + ')">Delete</button>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+// ═══════════════════════════════════════════════════════════════════
+// CLIENT PROFILES
+// ═══════════════════════════════════════════════════════════════════
+
+// Task 5 -- autocomplete sorted by lastUsed
+var _acMatches = [];
+function onCompanyInput(input) {
+  var q = input.value.trim().toLowerCase();
+  var list = document.getElementById('company-ac-list');
+  if (!list) return;
+  if (!q || !_clients.length) { list.style.display = 'none'; return; }
+  _acMatches = _clients.filter(function(c) {
+    return c.company && c.company.toLowerCase().indexOf(q) !== -1;
+  }).sort(function(a,b){ return (b.lastUsed||0)-(a.lastUsed||0); }).slice(0,8);
+  if (!_acMatches.length) { list.style.display = 'none'; return; }
+  list.innerHTML = _acMatches.map(function(c, i) {
+    return '<div class="autocomplete-item" onmousedown="selectCompanyByIdx(' + i + ')">' +
+      '<div class="ac-company">' + escHtml(c.company) + '</div>' +
+      (c.address ? '<div class="ac-meta">' + escHtml(c.address.substring(0,60)) + '</div>' : '') +
+    '</div>';
+  }).join('');
+  list.style.display = 'block';
+}
+
+function hideCompanyList() {
+  setTimeout(function() {
+    var list = document.getElementById('company-ac-list');
+    if (list) list.style.display = 'none';
+  }, 200);
+}
+
+function selectCompanyByIdx(i) {
+  selectCompany(_acMatches[i]);
+}
+
+// Task 2 -- apply client defaults on selection
+function selectCompany(c) {
+  if (!c) return;
+
+  var nameEl = document.getElementById('client-name');
+  var addrEl = document.getElementById('client-address');
+  var tinEl = document.getElementById('client-tin');
+  var attnEl = document.getElementById('client-attn');
+  var deptEl = document.getElementById('client-dept');
+
+  if (nameEl) nameEl.value = c.company || '';
+  if (addrEl) addrEl.value = c.address || '';
+  if (tinEl) tinEl.value = c.tin || '';
+  if (Array.isArray(c.contacts) && c.contacts.length) {
+    if (attnEl && !attnEl.value) attnEl.value = c.contacts[0].name || '';
+    if (deptEl && !deptEl.value && c.contacts[0].title) deptEl.value = c.contacts[0].title;
+  }
+
+  var termsApplied = false;
+  var delivEl = document.getElementById('note-delivery');
+  var validEl = document.getElementById('note-validity');
+  var warEl = document.getElementById('note-warranty');
+  var payEl = document.getElementById('note-payment');
+
+  if (c.defaultDelivery && delivEl) { delivEl.value = c.defaultDelivery; termsApplied = true; }
+  if (c.defaultValidity && validEl) { validEl.value = c.defaultValidity; termsApplied = true; }
+  if (c.defaultWarranty && warEl) { warEl.value = c.defaultWarranty; termsApplied = true; }
+  if (c.defaultPaymentTerms && payEl) { payEl.value = c.defaultPaymentTerms; termsApplied = true; }
+
+  if (c.defaultVAT) {
+    var vatBtns = document.querySelectorAll('.vat-opt');
+    var vatMap = {zero:0, inclusive:1, exclusive:2};
+    var vi = vatMap[c.defaultVAT];
+    setVAT(c.defaultVAT, (vi !== undefined && vatBtns[vi]) ? vatBtns[vi] : null);
+    termsApplied = true;
+  }
+  if (c.defaultCurrency) {
+    var curBtns = document.querySelectorAll('.cur-btn');
+    var curMap = {PHP:0, USD:1, EUR:2, SGD:3};
+    var ci = curMap[c.defaultCurrency];
+    setCurrency(c.defaultCurrency, (ci !== undefined && curBtns[ci]) ? curBtns[ci] : null);
+    termsApplied = true;
+  }
+
+  if (termsApplied) showToast('Client defaults applied', 'success');
+
+  var idx = _clients.findIndex(function(cl) { return cl.company === c.company; });
+  if (idx !== -1) {
+    _clients[idx].lastUsed = Date.now();
+    kvSetClients(_clients);
+  }
+
+  var acList = document.getElementById('company-ac-list');
+  if (acList) acList.style.display = 'none';
+}
+
+// Task 4 -- auto-save client defaults on every Preview
+function saveClientFromForm() {
+  var name = (document.getElementById('client-name') ? document.getElementById('client-name').value : '').trim();
+  if (!name) return;
+
+  var addr = document.getElementById('client-address') ? document.getElementById('client-address').value : '';
+  var tin = document.getElementById('client-tin') ? document.getElementById('client-tin').value : '';
+  var attn = document.getElementById('client-attn') ? document.getElementById('client-attn').value : '';
+  var dept = document.getElementById('client-dept') ? document.getElementById('client-dept').value : '';
+  var delivery = document.getElementById('note-delivery') ? document.getElementById('note-delivery').value : '';
+  var validity = document.getElementById('note-validity') ? document.getElementById('note-validity').value : '';
+  var warranty = document.getElementById('note-warranty') ? document.getElementById('note-warranty').value : '';
+  var payment = document.getElementById('note-payment') ? document.getElementById('note-payment').value : '';
+
+  var idx = _clients.findIndex(function(c) { return c.company === name; });
+  if (idx === -1) {
+    var newClient = {
+      company: name,
+      address: addr,
+      altAddresses: [],
+      contacts: attn ? [{name:attn, title:dept}] : [],
+      tin: tin,
+      defaultDelivery: delivery,
+      defaultValidity: validity,
+      defaultWarranty: warranty,
+      defaultPaymentTerms: payment,
+      defaultVAT: currentVAT,
+      defaultCurrency: currentCurrency,
+      notes: '',
+      lastUsed: Date.now()
+    };
+    _clients.push(newClient);
+  } else {
+    var c = _clients[idx];
+    if (addr) c.address = addr;
+    if (tin) c.tin = tin;
+    if (delivery) c.defaultDelivery = delivery;
+    if (validity) c.defaultValidity = validity;
+    if (warranty) c.defaultWarranty = warranty;
+    if (payment) c.defaultPaymentTerms = payment;
+    if (currentVAT) c.defaultVAT = currentVAT;
+    if (currentCurrency) c.defaultCurrency = currentCurrency;
+    if (attn) {
+      if (!c.contacts) c.contacts = [];
+      var ci2 = c.contacts.findIndex(function(ct) { return ct.name === attn; });
+      if (ci2 === -1) c.contacts.push({name:attn, title:dept});
+    }
+    c.lastUsed = Date.now();
+  }
+  kvSetClients(_clients);
+}
+
+// Task 3 -- client profile editor
+function renderClientsView() {
+  var body = document.getElementById('clients-body');
+  if (!body) return;
+
+  var q = '';
+  var searchEl = document.getElementById('client-search-input');
+  if (searchEl) q = searchEl.value.trim().toLowerCase();
+
+  var filtered = _clients.filter(function(c) {
+    return !q || (c.company && c.company.toLowerCase().indexOf(q) !== -1);
+  }).sort(function(a,b){ return (b.lastUsed||0)-(a.lastUsed||0); });
+
+  if (!filtered.length) {
+    body.innerHTML = '<div class="empty-state"><h3>No client profiles yet</h3><p>Client profiles are saved automatically when you preview a document.</p></div>';
+    return;
+  }
+
+  body.innerHTML = filtered.map(function(c) {
+    var globalIdx = _clients.indexOf(c);
+    var contacts = (c.contacts || []).map(function(ct){ return escHtml(ct.name) + (ct.title ? ' (' + escHtml(ct.title) + ')' : ''); }).join(', ');
+    return '<div class="client-profile-card">' +
+      '<div class="client-profile-header" onclick="toggleClientCard(' + globalIdx + ')">' +
+        '<div class="client-profile-company">' + escHtml(c.company) + '</div>' +
+        (c.address ? '<div style="font-size:12px;color:#6b7280;flex:2;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' + escHtml(c.address.substring(0,60)) + '</div>' : '') +
+        '<div class="client-profile-toggle" id="cpt-' + globalIdx + '">&#9660;</div>' +
+      '</div>' +
+      '<div class="client-profile-body" id="cpb-' + globalIdx + '">' +
+        (contacts ? '<div style="font-size:12px;color:#4a4a5a;margin-top:12px"><strong>Contacts:</strong> ' + contacts + '</div>' : '') +
+        '<div class="client-profile-section">Default Terms</div>' +
+        '<div class="defaults-grid">' +
+          '<div class="form-group"><label class="form-label">Delivery</label>' +
+            '<input class="form-input" id="cd-delivery-' + globalIdx + '" value="' + escAttr(c.defaultDelivery||'') + '" placeholder="e.g. 30 Days" /></div>' +
+          '<div class="form-group"><label class="form-label">Validity</label>' +
+            '<input class="form-input" id="cd-validity-' + globalIdx + '" value="' + escAttr(c.defaultValidity||'') + '" placeholder="e.g. 90 Days" /></div>' +
+          '<div class="form-group"><label class="form-label">Warranty</label>' +
+            '<input class="form-input" id="cd-warranty-' + globalIdx + '" value="' + escAttr(c.defaultWarranty||'') + '" placeholder="e.g. 6 Months" /></div>' +
+          '<div class="form-group"><label class="form-label">Payment Terms</label>' +
+            '<input class="form-input" id="cd-payment-' + globalIdx + '" value="' + escAttr(c.defaultPaymentTerms||'') + '" placeholder="e.g. 30 Days upon receipt" /></div>' +
+          '<div class="form-group"><label class="form-label">VAT Type</label>' +
+            '<select class="form-input form-select" id="cd-vat-' + globalIdx + '">' +
+              '<option value="zero"' + (c.defaultVAT==='zero'?' selected':'') + '>Zero Rated</option>' +
+              '<option value="inclusive"' + (c.defaultVAT==='inclusive'?' selected':'') + '>VAT Inclusive 12%</option>' +
+              '<option value="exclusive"' + (c.defaultVAT==='exclusive'?' selected':'') + '>VAT Exclusive</option>' +
+              '<option value="exempt"' + (c.defaultVAT==='exempt'?' selected':'') + '>Exempt</option>' +
+            '</select></div>' +
+          '<div class="form-group"><label class="form-label">Currency</label>' +
+            '<select class="form-input form-select" id="cd-currency-' + globalIdx + '">' +
+              '<option value="PHP"' + (c.defaultCurrency==='PHP'?' selected':'') + '>PHP</option>' +
+              '<option value="USD"' + (c.defaultCurrency==='USD'?' selected':'') + '>USD</option>' +
+              '<option value="EUR"' + (c.defaultCurrency==='EUR'?' selected':'') + '>EUR</option>' +
+              '<option value="SGD"' + (c.defaultCurrency==='SGD'?' selected':'') + '>SGD</option>' +
+            '</select></div>' +
+        '</div>' +
+        '<div class="form-group" style="margin-top:10px"><label class="form-label">Notes</label>' +
+          '<textarea class="form-input" id="cd-notes-' + globalIdx + '" placeholder="Internal notes about this client...">' + escHtml(c.notes||'') + '</textarea></div>' +
+        '<div class="client-actions">' +
+          '<button class="btn btn-primary" style="font-size:12px;padding:7px 16px" onclick="saveClientProfile(' + globalIdx + ')">Save</button>' +
+          '<button class="btn btn-danger" style="font-size:12px;padding:7px 16px" onclick="deleteClientProfile(' + globalIdx + ')">Delete</button>' +
+        '</div>' +
+      '</div>' +
+    '</div>';
+  }).join('');
+}
+
+function toggleClientCard(idx) {
+  var body = document.getElementById('cpb-' + idx);
+  var icon = document.getElementById('cpt-' + idx);
+  if (!body) return;
+  var isOpen = body.classList.contains('open');
+  body.classList.toggle('open', !isOpen);
+  if (icon) icon.innerHTML = isOpen ? '&#9660;' : '&#9650;';
+}
+
+async function saveClientProfile(idx) {
+  var c = _clients[idx];
+  if (!c) return;
+  var get = function(id) { var el = document.getElementById(id); return el ? el.value : ''; };
+  c.defaultDelivery = get('cd-delivery-' + idx) || c.defaultDelivery || '';
+  c.defaultValidity = get('cd-validity-' + idx) || c.defaultValidity || '';
+  c.defaultWarranty = get('cd-warranty-' + idx) || c.defaultWarranty || '';
+  c.defaultPaymentTerms = get('cd-payment-' + idx) || c.defaultPaymentTerms || '';
+  c.defaultVAT = get('cd-vat-' + idx) || c.defaultVAT || 'zero';
+  c.defaultCurrency = get('cd-currency-' + idx) || c.defaultCurrency || 'PHP';
+  c.notes = get('cd-notes-' + idx);
+  await kvSetClients(_clients);
+  showToast('Client profile saved: ' + c.company, 'success');
+}
+
+async function deleteClientProfile(idx) {
+  var c = _clients[idx];
+  if (!c) return;
+  if (!confirm('Delete client profile for ' + c.company + '?')) return;
+  _clients.splice(idx, 1);
+  await kvSetClients(_clients);
+  renderClientsView();
+}
+
+// ─── QUICK REPEAT (Task 6) ───────────────────────────────────────────────────
+function repeatLast() {
+  var raw;
+  try { raw = localStorage.getItem('docmaker:lastused'); } catch(e) {}
+  if (!raw) { showToast('No previous document found.', 'error'); return; }
+  try {
+    var data = JSON.parse(raw);
+    applyFormData(data);
+    document.getElementById('doc-number').value = '';
+    showView('create');
+    showToast('Previous form loaded.', 'success');
+  } catch(e) {
+    showToast('Could not load previous form.', 'error');
+  }
+}
+
+// ─── ESCAPE HELPERS ──────────────────────────────────────────────────────────
+function escHtml(s) {
+  return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+}
+function escAttr(s) {
+  return String(s||'').replace(/"/g,'&quot;').replace(/'/g,'&#39;');
+}
+
+// ─── INIT KV DATA ON LOAD ───────────────────────────────────────────────────
+document.addEventListener('DOMContentLoaded', function() {
+  kvLoadClients().then(function() {
+    try {
+      var raw = localStorage.getItem('docmaker:lastused');
+      if (raw) {
+        var rlBtn = document.getElementById('repeat-last-btn');
+        if (rlBtn) { rlBtn.disabled = false; rlBtn.style.opacity = '1'; rlBtn.title = 'Repeat last document'; }
+      }
+    } catch(e) {}
+  });
+  kvLoadSettings();
+});
 </script>
 </body>
 </html>
