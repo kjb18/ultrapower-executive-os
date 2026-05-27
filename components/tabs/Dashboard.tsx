@@ -647,7 +647,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                       </div>
                     ))}
                   </div>
-                  {((crmData as any).projects||[]).filter((p:{stage:string})=>!["Closed","Lost"].includes(p.stage)).slice(0,10).map((p:{id:string;name:string;client:string;stage:string;paymentStatus?:string;grossProfit?:number},i:number)=>{
+                  {((crmData as any).projects||[]).filter((p:{stage:string;archived?:boolean})=>!p.archived&&["RFQ Submitted","Negotiation","PO Received","In Fulfillment"].includes(p.stage)).slice(0,10).map((p:{id:string;name:string;client:string;stage:string;paymentStatus?:string;grossProfit?:number},i:number)=>{
                     const sc = STAGE_C[p.stage]||{bg:"#f0f2f5",fg:"#8a9ab0"};
                     return(
                       <div key={p.id}
