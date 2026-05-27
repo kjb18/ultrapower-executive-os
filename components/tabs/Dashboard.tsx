@@ -97,6 +97,10 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const [dragIdx, setDragIdx] = useState<number|null>(null);
   const [dragOverIdx, setDragOverIdx] = useState<number|null>(null);
 
+  // Panel item drag (OKR, Vitals, Crosshairs, Brewing)
+  const panelDragSrc = useRef<{panel:string;idx:number}|null>(null);
+  const [panelDragOver, setPanelDragOver] = useState<{panel:string;idx:number}|null>(null);
+
   const [newMIT, setNewMIT] = useState("");
   const [editOKR, setEditOKR] = useState<number|null>(null);
   const [editKPI, setEditKPI] = useState<number|null>(null);
@@ -358,6 +362,28 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
 
   const addBrew = () => { if(!newBrew.what.trim())return; const id=os.nid||100; setOS({brewing:[...(os.brewing||[]),{...newBrew,id}],nid:id+1}); setNewBrew({what:"",who:"",since:"",category:"Client"}); setShowBrewForm(false); };
   const addCH = () => { if(!newCH.company.trim())return; const id=os.nid||100; setOS({crosshairs:[...(os.crosshairs||[]),{...newCH,id}],nid:id+1}); setNewCH({company:"",sector:"",estDeal:"",priority:"Medium",lastAction:"",nextMove:""}); setShowCHForm(false); };
+
+  function reorderArr<T>(arr: T[], from: number, to: number): T[] {
+    const out = [...arr]; const [item] = out.splice(from, 1); out.splice(to, 0, item); return out;
+  }
+  const panelDragHandlers = (panel: string, idx: number, isEditing: boolean) => isEditing ? {} : {
+    draggable: true as const,
+    onDragStart: () => { panelDragSrc.current = {panel, idx}; },
+    onDragOver: (e: React.DragEvent) => { e.preventDefault(); setPanelDragOver({panel, idx}); },
+    onDragLeave: () => setPanelDragOver(null),
+    onDrop: (e: React.DragEvent) => {
+      e.preventDefault();
+      const src = panelDragSrc.current;
+      if (!src || src.panel !== panel || src.idx === idx) { panelDragSrc.current = null; setPanelDragOver(null); return; }
+      if (panel==="okr") setOS({okrs: reorderArr(os.okrs, src.idx, idx)});
+      else if (panel==="kpi") setOS({kpis: reorderArr(os.kpis, src.idx, idx)});
+      else if (panel==="ch") setOS({crosshairs: reorderArr(os.crosshairs||[], src.idx, idx)});
+      else if (panel==="brew") setOS({brewing: reorderArr(os.brewing||[], src.idx, idx)});
+      panelDragSrc.current = null; setPanelDragOver(null);
+    },
+  };
+  const dragOverStyle = (panel: string, idx: number): React.CSSProperties =>
+    panelDragOver?.panel===panel && panelDragOver?.idx===idx ? {background:"#EBF3FC", borderLeft:"2px solid #185FA5", paddingLeft:6} : {};
 
   const P:React.CSSProperties = {background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,padding:"16px 18px"};
   const PL:React.CSSProperties = {fontSize:11,fontWeight:600,letterSpacing:"0.12em",textTransform:"uppercase",color:"#b0bec8",marginBottom:10,fontFamily:"'DM Mono',monospace",display:"flex",alignItems:"center",justifyContent:"space-between"};
@@ -721,10 +747,10 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             <span>OKR Tracker</span>
             <button onClick={()=>{const id=os.nid||100;setOS({okrs:[...os.okrs,{id,objective:"New Objective",keyResult:"Key result",current:0,target:10,unit:""}],nid:id+1});setEditOKR(id);}} style={SBTN}>+ Add</button>
           </div>
-          {os.okrs.map(o=>{
+          {os.okrs.map((o,oi)=>{
             const pct = o.target>0 ? Math.min(100, Math.round((o.current/o.target)*100)) : 0;
             return (
-              <div key={o.id} className="okr-item" onDoubleClick={()=>setEditOKR(o.id)}>
+              <div key={o.id} className="okr-item" onDoubleClick={()=>setEditOKR(o.id)} {...panelDragHandlers("okr",oi,editOKR===o.id)} style={{cursor:editOKR===o.id?"default":"grab",...dragOverStyle("okr",oi)}}>
                 {editOKR===o.id ? (
                   <div style={{display:"flex",flexDirection:"column",gap:5}}>
                     <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:12}} defaultValue={o.objective} placeholder="Objective" onBlur={e=>setOS({okrs:os.okrs.map(x=>x.id===o.id?{...x,objective:e.target.value}:x)})} autoFocus/>
@@ -780,8 +806,8 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             <button onClick={()=>{const id=os.nid||100;setOS({kpis:[...os.kpis,{id,label:"New Vital",value:"--",delta:"0%",up:null}],nid:id+1});setEditKPI(id);}} style={SBTN}>+ Add</button>
           </div>
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6}}>
-            {os.kpis.map(k=>(
-              <div key={k.id} className="kpi-c" onDoubleClick={()=>setEditKPI(k.id)}>
+            {os.kpis.map((k,ki)=>(
+              <div key={k.id} className="kpi-c" onDoubleClick={()=>setEditKPI(k.id)} {...panelDragHandlers("kpi",ki,editKPI===k.id)} style={{cursor:editKPI===k.id?"default":"grab",...dragOverStyle("kpi",ki)}}>
                 {editKPI===k.id?(
                   <div style={{display:"flex",flexDirection:"column",gap:5}}>
                     <input style={{...INP,width:"100%",border:"1px solid #185FA5",fontSize:12}} defaultValue={k.label} placeholder="Label" onBlur={e=>setOS({kpis:os.kpis.map(x=>x.id===k.id?{...x,label:e.target.value}:x)})} autoFocus/>
@@ -843,7 +869,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
           )}
           {crosshairs.length===0&&!showCHForm&&<div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"12px 0"}}>No targets yet.</div>}
           {crosshairs.map((t,i)=>(
-            <div key={t.id} className="ch-row" style={{padding:"7px 0",borderBottom:i===crosshairs.length-1?"none":"0.5px solid #f0f2f5",cursor:"pointer"}} onDoubleClick={()=>setEditCH(t.id)}>
+            <div key={t.id} className="ch-row" onDoubleClick={()=>setEditCH(t.id)} {...panelDragHandlers("ch",i,editCH===t.id)} style={{padding:"7px 0",borderBottom:i===crosshairs.length-1?"none":"0.5px solid #f0f2f5",cursor:editCH===t.id?"default":"grab",...dragOverStyle("ch",i)}}>
               {editCH===t.id?(
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,alignItems:"end"}}>
                   <input style={{...INP,border:"1px solid #185FA5",fontSize:12}} defaultValue={t.company} onBlur={e=>setOS({crosshairs:crosshairs.map(x=>x.id===t.id?{...x,company:e.target.value}:x)})} autoFocus/>
@@ -901,7 +927,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
           )}
           {brewing.length===0&&!showBrewForm&&<div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"12px 0"}}>Nothing brewing.</div>}
           {brewing.map((b,i)=>(
-            <div key={b.id} className="brew-row" style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 0",borderBottom:i===brewing.length-1?"none":"0.5px solid #f0f2f5",cursor:"pointer"}} onDoubleClick={()=>setEditBrewing(b.id)}>
+            <div key={b.id} className="brew-row" onDoubleClick={()=>setEditBrewing(b.id)} {...panelDragHandlers("brew",i,editBrewing===b.id)} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 0",borderBottom:i===brewing.length-1?"none":"0.5px solid #f0f2f5",cursor:editBrewing===b.id?"default":"grab",...dragOverStyle("brew",i)}}>
               {editBrewing===b.id?(
                 <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,flex:1,alignItems:"end"}}>
                   <input style={{...INP,border:"1px solid #185FA5",fontSize:12}} defaultValue={b.what} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,what:e.target.value}:x)})} autoFocus/>
