@@ -125,6 +125,10 @@ export default function Projects() {
   const [showQuotationOverlay, setShowQuotationOverlay] = useState(false);
   const [quotationOverlayUrl, setQuotationOverlayUrl] = useState("");
 
+  // Inline project name edit
+  const [editingName, setEditingName] = useState(false);
+  const [nameInput, setNameInput] = useState("");
+
   // Local editable fields
   const [migrationBanner, setMigrationBanner] = useState(0);
   const [localNotes, setLocalNotes] = useState("");
@@ -688,7 +692,21 @@ export default function Projects() {
             {/* Header */}
             <div style={{display:"flex",alignItems:"center",gap:10,marginBottom:14}}>
               <button onClick={()=>{setView("list");setSelectedPreview(null);}} style={{fontSize:12,padding:"5px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>← Back</button>
-              <div style={{fontSize:16,fontWeight:600,color:"#1a2332",flex:1}}>{selectedProject.name}</div>
+              {editingName
+                ? <input
+                    autoFocus
+                    value={nameInput}
+                    onChange={e=>setNameInput(e.target.value)}
+                    onBlur={()=>{if(nameInput.trim()&&nameInput.trim()!==selectedProject.name)saveProject({...selectedProject,name:nameInput.trim()});setEditingName(false);}}
+                    onKeyDown={e=>{if(e.key==="Enter"){if(nameInput.trim()&&nameInput.trim()!==selectedProject.name)saveProject({...selectedProject,name:nameInput.trim()});setEditingName(false);}if(e.key==="Escape")setEditingName(false);}}
+                    style={{fontSize:16,fontWeight:600,color:"#1a2332",flex:1,border:"none",borderBottom:"1.5px solid #185FA5",outline:"none",background:"transparent",fontFamily:"'Plus Jakarta Sans',sans-serif",width:"100%",minWidth:0}}
+                  />
+                : <div
+                    onClick={()=>{setNameInput(selectedProject.name);setEditingName(true);}}
+                    title="Click to rename"
+                    style={{fontSize:16,fontWeight:600,color:"#1a2332",flex:1,cursor:"text",borderBottom:"1.5px solid transparent"}}
+                  >{selectedProject.name}</div>
+              }
               <span style={S.pill(STAGE_C[selectedProject.stage]?.bg||"#f0f2f5",STAGE_C[selectedProject.stage]?.fg||"#8a9ab0")}>{selectedProject.stage}</span>
               {saving&&<Spinner/>}
             </div>
