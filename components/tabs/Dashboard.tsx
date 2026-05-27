@@ -637,7 +637,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                   {/* Mini stats */}
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
                     {[
-                      ["Open Projects",((crmData as any).projects||[]).filter((p:{stage:string})=>!["Closed","Lost"].includes(p.stage)).length,"#185FA5","#EBF3FC"],
+                      ["Open Projects",((crmData as any).projects||[]).filter((p:{stage:string;archived?:boolean})=>!p.archived&&["RFQ Submitted","Negotiation","PO Received","In Fulfillment"].includes(p.stage)).length,"#185FA5","#EBF3FC"],
                       ["Overdue Pay",((crmData as any).projects||[]).filter((p:{paymentStatus:string})=>p.paymentStatus==="Overdue").length,"#A32D2D","#FEF0F0"],
                       ["Follow Up",((crmData as any).projects||[]).filter((p:{stage:string;rfqDate:string})=>{const d=Math.floor((Date.now()-new Date(p.rfqDate).getTime())/86400000);return p.stage==="RFQ Submitted"&&d>=15&&d<=30;}).length,"#854F0B","#FFF8EC"],
                     ].map(([lbl,val,fg,bg])=>(
