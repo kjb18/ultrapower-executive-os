@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
 import {
   MOMENTUM, TB_COLORS, PW, PB,
@@ -10,6 +10,25 @@ import {
 } from "@/lib/constants";
 import Calendar from "@/components/Calendar";
 import type { TabId } from "@/components/Sidebar";
+
+// ── Session cache helpers ────────────────────────────────────────────────────
+const CACHE_TTL = 5 * 60 * 1000;
+
+function readCache<T>(key: string): T | null {
+  try {
+    const raw = sessionStorage.getItem(`up_cache_${key}`);
+    if (!raw) return null;
+    const { data, ts } = JSON.parse(raw);
+    if (Date.now() - ts > CACHE_TTL) return null;
+    return data as T;
+  } catch { return null; }
+}
+
+function writeCache(key: string, data: unknown) {
+  try {
+    sessionStorage.setItem(`up_cache_${key}`, JSON.stringify({ data, ts: Date.now() }));
+  } catch {}
+}
 
 // ── Pomodoro modes ──────────────────────────────────────────────────────────
 const POMO_MODES = [
@@ -78,6 +97,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const [os, setOSRaw] = useState<OSData>(DEFAULT_OS);
   const [mfp, setMFPRaw] = useState<MFPDay>(DEFAULT_MFP);
   const [loaded, setLoaded] = useState(false);
+  const [heavyLoaded, setHeavyLoaded] = useState(false);
   const [now, setNow] = useState(new Date());
 
   // Pomodoro
@@ -127,32 +147,58 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const [tbDragOverId, setTbDragOverId] = useState<number|null>(null);
 
   useEffect(() => {
-    (async () => {
-      const [osData, mfpData, pomoData, archiveData, crmRaw, projectsRaw] = await Promise.all([
-        kvGet<OSData>("dashboard"),
-        kvGet<MFPDay>(`mfp:${getTodayKey()}`),
-        kvGet<{sessions:number}>("pomo:sessions"),
-        kvGet<MITArchiveEntry[]>("mit:archive"),
-        kvGet<CRMData>("crm"),
-        fetch("/api/projects").then(r=>r.json()).catch(()=>({projects:[]})),
-      ]);
+    // Instant render from cache
+    const cachedOS = readCache<OSData>("dashboard");
+    const cachedMFP = readCache<MFPDay>(`mfp:${tk}`);
+    const cachedProjects = readCache<object[]>("projects");
+    if (cachedOS) setOSRaw({...DEFAULT_OS, ...cachedOS, brewing:cachedOS.brewing||[], crosshairs:cachedOS.crosshairs||[]});
+    if (cachedMFP) setMFPRaw(cachedMFP);
+    if (cachedProjects) setCrmData(prev => ({...prev, projects: cachedProjects}));
+    if (cachedOS || cachedMFP || cachedProjects) setLoaded(true);
+
+    // Fetch fresh data in background
+    Promise.all([
+      kvGet<OSData>("dashboard"),
+      kvGet<MFPDay>(`mfp:${getTodayKey()}`),
+      kvGet<{sessions:number}>("pomo:sessions"),
+      kvGet<MITArchiveEntry[]>("mit:archive"),
+      kvGet<CRMData>("crm"),
+      fetch("/api/projects").then(r=>r.json()).catch(()=>({projects:[]})),
+    ]).then(([osData, mfpData, pomoData, archiveRaw, crmRaw, projectsRaw]) => {
       if (osData !== null) {
         const mits = (osData.mits || DEFAULT_OS.mits).map((m: MIT) => ({
           ...m, doneAt: m.doneAt ?? (m.done ? Date.now() : undefined),
         }));
-        setOSRaw({...DEFAULT_OS,...osData, mits, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]});
+        const normalized = {...DEFAULT_OS,...osData, mits, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]};
+        setOSRaw(normalized);
+        writeCache("dashboard", normalized);
       }
-      if (mfpData) setMFPRaw(mfpData);
+      if (mfpData) { setMFPRaw(mfpData); writeCache(`mfp:${tk}`, mfpData); }
       if (pomoData) setPomoSessions(pomoData.sessions||0);
-      if (archiveData) setMitArchive(archiveData);
-      if (crmRaw) setCrmData({...crmRaw, projects: projectsRaw?.projects||[]});
+      if (archiveRaw) setMitArchive(archiveRaw);
+      if (crmRaw) {
+        const merged = {...crmRaw, projects: projectsRaw?.projects||[]};
+        setCrmData(merged);
+        writeCache("projects", projectsRaw?.projects||[]);
+      }
       setLoaded(true);
-    })();
+    });
   }, [tk]);
 
   const setOS = useCallback((patch: Partial<OSData>) => {
-    setOSRaw(prev => { const next = {...prev,...patch}; kvSet("dashboard",next); return next; });
+    setOSRaw(prev => {
+      const next = {...prev, ...patch};
+      const hasChanged = JSON.stringify(patch) !== JSON.stringify(
+        Object.fromEntries(Object.keys(patch).map(k => [k, prev[k as keyof OSData]]))
+      );
+      if (hasChanged) kvSet("dashboard", next);
+      return next;
+    });
   }, []);
+
+  useEffect(() => {
+    if (loaded) { setTimeout(() => setHeavyLoaded(true), 100); }
+  }, [loaded]);
 
   const toggleCollapse = (key:string) => setCollapsed(c => ({...c,[key]:!c[key]}));
   const isCollapsed = (key:string) => !!collapsed[key];
@@ -193,11 +239,13 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
     setPomoSecs(key==="deepwork" ? deepWorkMins*60 : cfg.workMins*60);
   };
 
-  const mitsDone = os.mits.filter(m=>m.done).length;
-  const mitsTotal = os.mits.length;
-  const pts = mitsDone*2+(mfp.mood?1:0)+(mfp.mitDone?1:0)+(mfp.winDone?1:0)+(mfp.reflDone?1:0)+pomoSessions;
-  const mom = [...MOMENTUM].reverse().find(s=>pts>=s.min)||MOMENTUM[0];
-  const activeMIT = os.mits.find(m=>!m.done)||os.mits[0];
+  const mitsDone = useMemo(() => os.mits.filter(m=>m.done).length, [os.mits]);
+  const mitsTotal = useMemo(() => os.mits.length, [os.mits]);
+  const activeMIT = useMemo(() => os.mits.find(m=>!m.done)||os.mits[0], [os.mits]);
+  const mom = useMemo(() => {
+    const pts = mitsDone*2+(mfp.mood?1:0)+(mfp.mitDone?1:0)+(mfp.winDone?1:0)+(mfp.reflDone?1:0)+pomoSessions;
+    return [...MOMENTUM].reverse().find(s=>pts>=s.min)||MOMENTUM[0];
+  }, [mitsDone, mfp.mood, mfp.mitDone, mfp.winDone, mfp.reflDone, pomoSessions]);
   const nowHH = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const curBlock = os.tbs.reduce((c,tb)=>tb.time<=nowHH?tb:c, null as TimeBlock|null);
   const dayStr = now.toLocaleDateString("en-PH",{weekday:"short",year:"numeric",month:"short",day:"numeric"}).toUpperCase();
@@ -236,7 +284,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
         }
       } catch {}
     };
-    const id = setInterval(poll, 120000);
+    const id = setInterval(poll, 300000);
     return () => clearInterval(id);
   }, [cuEnabled, os.mits]);
 
@@ -390,6 +438,32 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const INP:React.CSSProperties = {fontSize:14,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332"};
   const ABTN:React.CSSProperties = {fontSize:13,padding:"8px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600,whiteSpace:"nowrap"};
   const SBTN:React.CSSProperties = {fontSize:11,padding:"3px 9px",borderRadius:20,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",fontWeight:500};
+
+  const activeProjects = useMemo(() =>
+    ((crmData as any).projects || []).filter((p: {stage:string; archived?:boolean}) =>
+      !["Closed","Lost","No Offer"].includes(p.stage) && !p.archived
+    ),
+  [(crmData as any).projects]);
+
+  const archiveData = useMemo(() => {
+    const dayMap: Record<string,string[]> = {};
+    mitArchive.forEach(e => { if(!dayMap[e.dayKey])dayMap[e.dayKey]=[];dayMap[e.dayKey].push(e.text); });
+    const days = Object.keys(dayMap).sort().reverse();
+    let longestStreak=0,streak=0,currentStreak=0;
+    const allDays=new Set(Object.keys(dayMap));
+    const checkDate=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
+    for(let i=0;i<90;i++){
+      const k=`${checkDate.getFullYear()}-${String(checkDate.getMonth()+1).padStart(2,"0")}-${String(checkDate.getDate()).padStart(2,"0")}`;
+      if(allDays.has(k)){streak++;if(i===0||currentStreak>0)currentStreak=streak;}
+      else{longestStreak=Math.max(longestStreak,streak);streak=0;if(currentStreak>0&&i>0)currentStreak=0;}
+      checkDate.setDate(checkDate.getDate()-1);
+    }
+    longestStreak=Math.max(longestStreak,streak);
+    const grid:{key:string;count:number}[]=[];
+    const gStart=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
+    for(let i=89;i>=0;i--){const d=new Date(gStart);d.setDate(d.getDate()-i);const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;grid.push({key:k,count:(dayMap[k]||[]).length});}
+    return { dayMap, days, currentStreak, longestStreak, grid };
+  }, [mitArchive]);
 
   if (!loaded) return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#b0bec8",fontSize:14,fontFamily:"'DM Mono',monospace"}}>Loading dashboard...</div>;
 
@@ -663,7 +737,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                   {/* Mini stats */}
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
                     {[
-                      ["Open Projects",((crmData as any).projects||[]).filter((p:{stage:string;archived?:boolean})=>!p.archived&&!["Closed","Lost","No Offer"].includes(p.stage)).length,"#185FA5","#EBF3FC"],
+                      ["Open Projects",activeProjects.length,"#185FA5","#EBF3FC"],
                       ["Overdue Pay",((crmData as any).projects||[]).filter((p:{paymentStatus:string})=>p.paymentStatus==="Overdue").length,"#A32D2D","#FEF0F0"],
                       ["Follow Up",((crmData as any).projects||[]).filter((p:{stage:string;rfqDate:string})=>{const d=Math.floor((Date.now()-new Date(p.rfqDate).getTime())/86400000);return p.stage==="RFQ Submitted"&&d>=15&&d<=30;}).length,"#854F0B","#FFF8EC"],
                     ].map(([lbl,val,fg,bg])=>(
@@ -673,7 +747,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                       </div>
                     ))}
                   </div>
-                  {((crmData as any).projects||[]).filter((p:{stage:string;archived?:boolean})=>!p.archived&&!["Closed","Lost","No Offer"].includes(p.stage)).slice(0,10).map((p:{id:string;name:string;client:string;stage:string;paymentStatus?:string;grossProfit?:number},i:number)=>{
+                  {activeProjects.slice(0,10).map((p:{id:string;name:string;client:string;stage:string;paymentStatus?:string;grossProfit?:number},i:number)=>{
                     const sc = STAGE_C[p.stage]||{bg:"#f0f2f5",fg:"#8a9ab0"};
                     return(
                       <div key={p.id}
@@ -959,41 +1033,26 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
 
         {/* Calendar */}
         <div>
-          <Calendar timeBlocks={os.tbs}/>
+          {heavyLoaded && <Calendar timeBlocks={os.tbs}/>}
         </div>
 
         {/* AI Insight */}
-        <div style={P}>
+        {heavyLoaded && <div style={P}>
           <div style={PL}><span>AI Insight</span><span style={{fontSize:10}}>Claude</span></div>
           <button className="ai-b" onClick={getInsight} disabled={iLoad}>
             {iLoad?<Spinner/>:<span>✦</span>}
             <span>{iLoad?"Analyzing...":insight?"Refresh":"Generate Insight"}</span>
           </button>
           {insight&&<div style={{marginTop:10,padding:"12px 14px",borderRadius:9,background:"#f8f9fb",border:"0.5px solid #e2e6ea",fontSize:13,color:"#1a2332",lineHeight:1.75,borderLeft:"3px solid #185FA5"}}>{insight}</div>}
-        </div>
+        </div>}
 
         </div>{/* end Row 3 */}
 
       </div>
 
       {/* Wins Archive */}
-      {showArchive&&(()=>{
-        const dayMap: Record<string,string[]> = {};
-        mitArchive.forEach(e => { if(!dayMap[e.dayKey])dayMap[e.dayKey]=[];dayMap[e.dayKey].push(e.text); });
-        const days = Object.keys(dayMap).sort().reverse();
-        let longestStreak=0,streak=0,currentStreak=0;
-        const allDays=new Set(Object.keys(dayMap));
-        const checkDate=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
-        for(let i=0;i<90;i++){
-          const k=`${checkDate.getFullYear()}-${String(checkDate.getMonth()+1).padStart(2,"0")}-${String(checkDate.getDate()).padStart(2,"0")}`;
-          if(allDays.has(k)){streak++;if(i===0||currentStreak>0)currentStreak=streak;}
-          else{longestStreak=Math.max(longestStreak,streak);streak=0;if(currentStreak>0&&i>0)currentStreak=0;}
-          checkDate.setDate(checkDate.getDate()-1);
-        }
-        longestStreak=Math.max(longestStreak,streak);
-        const grid:{key:string;count:number}[]=[];
-        const gStart=new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
-        for(let i=89;i>=0;i--){const d=new Date(gStart);d.setDate(d.getDate()-i);const k=`${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,"0")}-${String(d.getDate()).padStart(2,"0")}`;grid.push({key:k,count:(dayMap[k]||[]).length});}
+      {showArchive && heavyLoaded && (()=>{
+        const { dayMap, days, currentStreak, longestStreak, grid } = archiveData;
         const dotColor=(n:number)=>n===0?"#f0f2f5":n===1?"#B5D4F4":n===2?"#378ADD":"#185FA5";
         const today=getTodayKey();
         return(

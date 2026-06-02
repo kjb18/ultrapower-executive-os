@@ -1,5 +1,5 @@
 "use client";
-import { useState, useEffect, useCallback, useRef } from "react";
+import { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { kvGet, kvSet } from "@/lib/kv";
 import type { Quotation } from "@/lib/constants";
 
@@ -86,6 +86,7 @@ export default function Projects() {
   const [selectedPreview, setSelectedPreview] = useState<Project|null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
+  const [isSaving, setIsSaving] = useState(false);
   const [showNewProject, setShowNewProject] = useState(false);
   const [showNewExpense, setShowNewExpense] = useState(false);
   const [filterStage, setFilterStage] = useState("All");
@@ -128,6 +129,9 @@ export default function Projects() {
   // Inline project name edit
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
+
+  // Inline notes edit in project list
+  const [notesEditId, setNotesEditId] = useState<string | null>(null);
 
   // Local editable fields
   const [migrationBanner, setMigrationBanner] = useState(0);
@@ -218,6 +222,7 @@ export default function Projects() {
 
   const saveProject = useCallback(async (proj: Project) => {
     setSaving(true);
+    setIsSaving(true);
     const updated = {...proj, updatedAt: new Date().toISOString()};
     try {
       const res = await fetch("/api/projects", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"saveProject",project:updated}) });
@@ -226,6 +231,7 @@ export default function Projects() {
       if (selectedProject?.id===updated.id) setSelectedProject(updated);
     } catch(e) { console.error(e); }
     setSaving(false);
+    setIsSaving(false);
   }, [selectedProject]);
 
   const createProject = async () => {
@@ -398,7 +404,7 @@ export default function Projects() {
   const debouncedSaveNotes = useDebounce((notes: string) => {
     if (!selectedProject) return;
     saveProject({ ...selectedProject, notes });
-  }, 800);
+  }, 1200);
 
   const exportQuickSourceCSV = () => {
     if(!quickSourceResults.length) return;
@@ -422,20 +428,24 @@ export default function Projects() {
 
 
   // Filtered projects
-  const filtered = projects.filter(p => {
-    if (showArchived ? !p.archived : p.archived) return false;
-    if (filterStage!=="All" && p.stage!==filterStage) return false;
-    if (filterClient && !p.client.toLowerCase().includes(filterClient.toLowerCase())) return false;
-    return true;
-  });
+  const filteredProjects = useMemo(() => {
+    return projects.filter(p => {
+      if (showArchived ? !p.archived : p.archived) return false;
+      if (filterStage !== "All" && p.stage !== filterStage) return false;
+      if (filterClient && !p.client.toLowerCase().includes(filterClient.toLowerCase())) return false;
+      return true;
+    });
+  }, [projects, showArchived, filterStage, filterClient]);
 
   // Stats
-  const openProjects = projects.filter(p=>!["Closed","Lost","No Offer"].includes(p.stage)&&!p.archived).length;
-  const overduePayments = projects.filter(p=>p.paymentStatus==="Overdue").length;
-  const followUpAlert = projects.filter(p=>["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage)&&daysSince(p.rfqDate)>=15&&daysSince(p.rfqDate)<=30).length;
   const thisMonth = new Date().toISOString().slice(0,7);
-  const monthlyRevenue = projects.filter(p=>p.invoiceDate?.startsWith(thisMonth)).reduce((s,p)=>s+(p.invoiceAmount||0),0);
-  const monthlyGP = projects.filter(p=>p.invoiceDate?.startsWith(thisMonth)).reduce((s,p)=>s+(p.grossProfit||0),0);
+  const projectStats = useMemo(() => ({
+    openProjects: projects.filter(p=>!["Closed","Lost","No Offer"].includes(p.stage)&&!p.archived).length,
+    overduePayments: projects.filter(p=>p.paymentStatus==="Overdue").length,
+    followUpAlert: projects.filter(p=>["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage)&&daysSince(p.rfqDate||p.rfqDeadline||p.createdAt)>=15&&daysSince(p.rfqDate||p.rfqDeadline||p.createdAt)<=30).length,
+    monthlyRevenue: projects.filter(p=>p.invoiceDate?.startsWith(thisMonth)).reduce((s,p)=>s+(p.invoiceAmount||0),0),
+    monthlyGP: projects.filter(p=>p.invoiceDate?.startsWith(thisMonth)).reduce((s,p)=>s+(p.grossProfit||0),0),
+  }), [projects, thisMonth]);
 
   const S = {
     card:{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:12,overflow:"hidden"} as React.CSSProperties,
@@ -484,7 +494,7 @@ export default function Projects() {
 
   return (
     <div style={{flex:1,overflow:"auto"}}>
-      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
 
       {/* Header */}
       <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",height:56,position:"sticky",top:0,zIndex:5}}>
@@ -518,11 +528,11 @@ export default function Projects() {
           {/* Stats row */}
           <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
             {[
-              ["Open Projects",String(openProjects),"#185FA5","#EBF3FC"],
-              ["Follow Up Alerts",String(followUpAlert),"#854F0B","#FFF8EC"],
-              ["Overdue Payments",String(overduePayments),"#A32D2D","#FEF0F0"],
-              ["Month Revenue",fmt(monthlyRevenue),"#3B6D11","#f0faf5"],
-              ["Month Gross Profit",fmt(monthlyGP),monthlyGP>=0?"#3B6D11":"#A32D2D",monthlyGP>=0?"#f0faf5":"#FEF0F0"],
+              ["Open Projects",String(projectStats.openProjects),"#185FA5","#EBF3FC"],
+              ["Follow Up Alerts",String(projectStats.followUpAlert),"#854F0B","#FFF8EC"],
+              ["Overdue Payments",String(projectStats.overduePayments),"#A32D2D","#FEF0F0"],
+              ["Month Revenue",fmt(projectStats.monthlyRevenue),"#3B6D11","#f0faf5"],
+              ["Month Gross Profit",fmt(projectStats.monthlyGP),projectStats.monthlyGP>=0?"#3B6D11":"#A32D2D",projectStats.monthlyGP>=0?"#f0faf5":"#FEF0F0"],
             ].map(([lbl,val,fg,bg])=>(
               <div key={lbl} style={{background:bg as string,border:`0.5px solid ${fg as string}33`,borderRadius:10,padding:"12px 14px"}}>
                 <div style={{fontSize:18,fontWeight:600,color:fg as string,fontFamily:"'DM Mono',monospace"}}>{val}</div>
@@ -559,7 +569,7 @@ export default function Projects() {
                     <input style={S.inp} placeholder="e.g. PGPC" value={np.client} onChange={e=>setNP(n=>({...n,client:e.target.value}))}/>
                   </div>
                   <div>
-                    <span style={S.lbl}>RFQ Date</span>
+                    <span style={S.lbl}>Deadline</span>
                     <input style={S.inp} type="date" value={np.rfqDate} onChange={e=>setNP(n=>({...n,rfqDate:e.target.value}))}/>
                   </div>
                   <div>
@@ -579,21 +589,33 @@ export default function Projects() {
               </div>
             )}
 
-            {loading?<div style={{textAlign:"center",padding:40,color:"#b0bec8"}}><Spinner/></div>:(
+            {loading?(
+              <div style={{...S.card}}>
+                {[1,2,3,4,5].map(i=>(
+                  <div key={i} style={{display:"flex",gap:12,padding:"12px 16px",borderBottom:"0.5px solid #f0f2f5",alignItems:"center"}}>
+                    <div style={{height:12,borderRadius:6,background:"#f0f2f5",width:`${140+i*20}px`,animation:"pulse 1.5s ease-in-out infinite"}}/>
+                    <div style={{height:12,borderRadius:6,background:"#f0f2f5",width:"80px",animation:"pulse 1.5s ease-in-out infinite"}}/>
+                    <div style={{height:20,borderRadius:10,background:"#f0f2f5",width:"90px",animation:"pulse 1.5s ease-in-out infinite"}}/>
+                    <div style={{flex:1}}/>
+                    <div style={{height:12,borderRadius:6,background:"#f0f2f5",width:"60px",animation:"pulse 1.5s ease-in-out infinite"}}/>
+                  </div>
+                ))}
+              </div>
+            ):(
               <div style={{display:"flex",gap:12,alignItems:"flex-start"}}>
                 <div style={{...S.card,flex:1,minWidth:0}}>
                   <div style={{overflowX:"auto"}}>
                   <table style={{width:"100%",borderCollapse:"collapse"}}>
                     <thead>
                       <tr style={{background:"#fafbfc"}}>
-                        {["Project Name","Client","Stage","RFQ Date","Invoice","Payment","Gross Profit","Margin","Actions"].map(h=>(
+                        {["Project Name","Client","Stage","Deadline","Notes","Invoice","Payment","Gross Profit","Margin","Actions"].map(h=>(
                           <th key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"9px 13px",textAlign:"left",borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap"}}>{h}</th>
                         ))}
                       </tr>
                     </thead>
                     <tbody>
-                      {filtered.length===0&&<tr><td colSpan={9} style={{textAlign:"center",padding:28,color:"#b0bec8",fontSize:13}}>{showArchived?"No archived projects.":"No projects yet."}</td></tr>}
-                      {filtered.map((p,i)=>{
+                      {filteredProjects.length===0&&<tr><td colSpan={10} style={{textAlign:"center",padding:28,color:"#b0bec8",fontSize:13}}>{showArchived?"No archived projects.":"No projects yet."}</td></tr>}
+                      {filteredProjects.map((p,i)=>{
                         const rfqDays = daysSince(p.rfqDate);
                         const needsFollowUp = ["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage) && rfqDays>=15 && rfqDays<=30;
                         return(
@@ -605,6 +627,25 @@ export default function Projects() {
                             <td style={{padding:"10px 13px",fontSize:13,color:"#4a6a8a"}}>{p.client}</td>
                             <td style={{padding:"10px 13px"}}><span style={S.pill(STAGE_C[p.stage]?.bg||"#f0f2f5",STAGE_C[p.stage]?.fg||"#8a9ab0")}>{p.stage}</span></td>
                             <td style={{padding:"10px 13px",fontSize:12,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{p.rfqDate}</td>
+                            <td style={{padding:"6px 13px",maxWidth:180}} onClick={e=>e.stopPropagation()}>
+                              {notesEditId===p.id?(
+                                <textarea
+                                  style={{fontSize:12,padding:"4px 6px",borderRadius:6,border:"1px solid #185FA5",background:"#fff",color:"#1a2332",width:"100%",minHeight:60,resize:"vertical"}}
+                                  defaultValue={p.notes||""}
+                                  autoFocus
+                                  onBlur={e=>{saveProject({...p,notes:e.target.value});setNotesEditId(null);}}
+                                  onKeyDown={e=>{if(e.key==="Escape")setNotesEditId(null);}}
+                                />
+                              ):(
+                                <div
+                                  onClick={()=>setNotesEditId(p.id)}
+                                  style={{fontSize:12,color:p.notes?"#4a6a8a":"#b0bec8",cursor:"pointer",maxWidth:180,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}
+                                  title={p.notes||"Click to add notes"}
+                                >
+                                  {p.notes?(p.notes.length>40?p.notes.slice(0,40)+"...":p.notes):"--"}
+                                </div>
+                              )}
+                            </td>
                             <td style={{padding:"10px 13px",fontSize:13,fontFamily:"'DM Mono',monospace",color:"#3B6D11"}}>{fmt(p.invoiceAmount)}</td>
                             <td style={{padding:"10px 13px"}}>
                               {p.paymentStatus?<span style={S.pill(PAY_C[p.paymentStatus]?.bg||"#f0f2f5",PAY_C[p.paymentStatus]?.fg||"#8a9ab0")}>{p.paymentStatus}</span>:"—"}
@@ -614,7 +655,7 @@ export default function Projects() {
                             <td style={{padding:"10px 13px",fontSize:12,fontFamily:"'DM Mono',monospace",color:(p.grossMarginPct||0)>=0?"#3B6D11":"#A32D2D"}}>{p.grossMarginPct!==undefined?`${p.grossMarginPct}%`:"—"}</td>
                             <td style={{padding:"10px 13px"}} onClick={e=>e.stopPropagation()}>
                               <button onClick={()=>{setSelectedProject(p);setSelectedPreview(null);setView("detail" as any);}} style={{fontSize:11,padding:"4px 9px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginRight:4}}>Open</button>
-                              <button onClick={()=>saveProject({...p,archived:!p.archived})} style={{fontSize:11,padding:"4px 9px",borderRadius:6,border:`0.5px solid ${p.archived?"#3B6D11":"#d0d8e0"}`,background:p.archived?"#f0faf5":"#f8f9fb",color:p.archived?"#3B6D11":"#8a9ab0",cursor:"pointer"}}>
+                              <button disabled={isSaving} onClick={()=>saveProject({...p,archived:!p.archived})} style={{fontSize:11,padding:"4px 9px",borderRadius:6,border:`0.5px solid ${p.archived?"#3B6D11":"#d0d8e0"}`,background:p.archived?"#f0faf5":"#f8f9fb",color:p.archived?"#3B6D11":"#8a9ab0",cursor:"pointer",opacity:isSaving?0.5:1}}>
                                 {p.archived?"Restore":"Archive"}
                               </button>
                             </td>
@@ -639,7 +680,7 @@ export default function Projects() {
                       </div>
                       <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:8,marginBottom:12}}>
                         <div>
-                          <span style={S.lbl}>RFQ Deadline</span>
+                          <span style={S.lbl}>Deadline</span>
                           <div style={{fontSize:12,fontFamily:"'DM Mono',monospace",color:"#8a9ab0"}}>{selectedPreview.rfqDeadline||selectedPreview.rfqDate||"--"}</div>
                         </div>
                         <div>
@@ -676,7 +717,7 @@ export default function Projects() {
                         <button onClick={()=>{setSelectedProject(selectedPreview);setSelectedPreview(null);setView("detail" as any);}} style={{...S.addBtn,flex:1,background:"#1a2332",color:"#fff",borderColor:"#1a2332"}}>
                           Open Project →
                         </button>
-                        <button onClick={()=>saveProject({...selectedPreview,archived:!selectedPreview.archived})} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:`0.5px solid ${selectedPreview.archived?"#854F0B":"#e2e6ea"}`,background:selectedPreview.archived?"#FFF8EC":"#f8f9fb",color:selectedPreview.archived?"#854F0B":"#4a6a8a",cursor:"pointer"}}>
+                        <button disabled={isSaving} onClick={()=>saveProject({...selectedPreview,archived:!selectedPreview.archived})} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:`0.5px solid ${selectedPreview.archived?"#854F0B":"#e2e6ea"}`,background:selectedPreview.archived?"#FFF8EC":"#f8f9fb",color:selectedPreview.archived?"#854F0B":"#4a6a8a",cursor:"pointer",opacity:isSaving?0.5:1}}>
                           {selectedPreview.archived?"Restore":"Archive"}
                         </button>
                       </div>
@@ -1032,7 +1073,7 @@ export default function Projects() {
                   {[
                     ["Client",selectedProject.client,"client"],
                     ["VAT Type",selectedProject.vatType,"vatType"],
-                    ["RFQ Date",selectedProject.rfqDate,"rfqDate"],
+                    ["Deadline",selectedProject.rfqDate,"rfqDate"],
                     ["PO Date",selectedProject.poDate||"","poDate"],
                     ["Invoice Date",selectedProject.invoiceDate||"","invoiceDate"],
                     ["Payment Terms",selectedProject.paymentTerms||"","paymentTerms"],

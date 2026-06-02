@@ -63,6 +63,7 @@ async function syncToSheets(action: string, data: object) {
     await fetch(`${process.env.NEXT_PUBLIC_APP_URL || "https://ultrapower-executive-os-vgrr.vercel.app"}/api/sheets`, {
       method: "POST", headers: { "Content-Type": "application/json" },
       body: JSON.stringify(data),
+      signal: AbortSignal.timeout(8000),
     });
   } catch (e) { console.error("Sheets sync error:", e); }
 }
@@ -100,7 +101,7 @@ export async function POST(req: NextRequest) {
         project.totalCogs||0, project.totalShipping||0, project.totalProjectExpenses||0,
         project.grossProfit||0, project.grossMarginPct||0, project.createdAt,
         project.rfqDeadline||"", project.finalDeliveryDate||"", project.rfqNumber||"", project.rfqSubject||""];
-      await syncToSheets("updateProject", { action:"updateProject", sheet:"Projects", rows:[row], projectId:project.id });
+      syncToSheets("updateProject", { action:"updateProject", sheet:"Projects", rows:[row], projectId:project.id }).catch(e => console.error("Sheets sync failed:", e));
       return NextResponse.json({ ok: true, projects: updated }, { headers: CORS });
     }
 
@@ -133,7 +134,7 @@ export async function POST(req: NextRequest) {
             updatedProj.paymentTerms||"", updatedProj.paymentDueDate||"", updatedProj.paymentStatus||"",
             cogs, shipping, projExp, gp, gm, updatedProj.createdAt,
             updatedProj.rfqDeadline||"", updatedProj.finalDeliveryDate||"", updatedProj.rfqNumber||"", updatedProj.rfqSubject||""];
-          await syncToSheets("updateProject", { action:"updateProject", sheet:"Projects", rows:[row], projectId:updatedProj.id });
+          syncToSheets("updateProject", { action:"updateProject", sheet:"Projects", rows:[row], projectId:updatedProj.id }).catch(e => console.error("Sheets sync failed:", e));
         }
       }
 
@@ -142,7 +143,7 @@ export async function POST(req: NextRequest) {
       const txRow = [expense.date, month, expense.projectId||"", expense.projectName||"General OpEx",
         "", expense.type, expense.category, expense.description,
         expense.amount, expense.vatApplicable?"Yes":"No", expense.vatAmount, expense.netAmount];
-      await syncToSheets("append", { action:"append", sheet:"Transactions", rows:[txRow] });
+      syncToSheets("append", { action:"append", sheet:"Transactions", rows:[txRow] }).catch(e => console.error("Sheets sync failed:", e));
       return NextResponse.json({ ok: true, expenses: updated }, { headers: CORS });
     }
 
@@ -184,7 +185,7 @@ export async function POST(req: NextRequest) {
       // Sync to Sheets Documents tab
       const docRow = [finalQuotation.dateCreated, proj.id, proj.name, proj.client,
         "Quotation", finalQuotation.docNumber, finalQuotation.grandTotal, finalQuotation.status];
-      await syncToSheets("append", { action: "append", sheet: "Documents", rows: [docRow] });
+      syncToSheets("append", { action: "append", sheet: "Documents", rows: [docRow] }).catch(e => console.error("Sheets sync failed:", e));
       return NextResponse.json({ ok: true, project: updatedProj }, { headers: CORS });
     }
 
