@@ -736,16 +736,24 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                 <>
                   {/* Mini stats */}
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
-                    {[
-                      ["Open Projects",activeProjects.length,"#185FA5","#EBF3FC"],
-                      ["Overdue Pay",((crmData as any).projects||[]).filter((p:{paymentStatus:string})=>p.paymentStatus==="Overdue").length,"#A32D2D","#FEF0F0"],
-                      ["Follow Up",((crmData as any).projects||[]).filter((p:{stage:string;rfqDate:string})=>{const d=Math.floor((Date.now()-new Date(p.rfqDate).getTime())/86400000);return p.stage==="RFQ Submitted"&&d>=15&&d<=30;}).length,"#854F0B","#FFF8EC"],
-                    ].map(([lbl,val,fg,bg])=>(
-                      <div key={lbl as string} style={{background:bg as string,borderRadius:7,padding:"6px 10px",textAlign:"center"}}>
-                        <div style={{fontSize:15,fontWeight:600,color:fg as string,fontFamily:"'DM Mono',monospace"}}>{val as number}</div>
-                        <div style={{fontSize:9,color:fg as string,opacity:0.7,textTransform:"uppercase",letterSpacing:"0.06em"}}>{lbl as string}</div>
-                      </div>
-                    ))}
+                    <div style={{background:"#EBF3FC",borderRadius:7,padding:"6px 10px",textAlign:"center"}}>
+                      <div style={{fontSize:15,fontWeight:600,color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{activeProjects.length}</div>
+                      <div style={{fontSize:9,color:"#185FA5",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.06em"}}>Open Projects</div>
+                    </div>
+                    <div
+                      onClick={()=>{sessionStorage.setItem("openProjectFilter","Overdue Payment");onNavigate?.("projects");}}
+                      style={{background:"#FEF0F0",borderRadius:7,padding:"6px 10px",textAlign:"center",cursor:"pointer"}}
+                    >
+                      <div style={{fontSize:15,fontWeight:600,color:"#A32D2D",fontFamily:"'DM Mono',monospace"}}>{((crmData as any).projects||[]).filter((p:{paymentStatus:string})=>p.paymentStatus==="Overdue").length}</div>
+                      <div style={{fontSize:9,color:"#A32D2D",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.06em"}}>Overdue Pay</div>
+                    </div>
+                    <div
+                      onClick={()=>{sessionStorage.setItem("openProjectFilter","Follow Up");onNavigate?.("projects");}}
+                      style={{background:"#FFF8EC",borderRadius:7,padding:"6px 10px",textAlign:"center",cursor:"pointer"}}
+                    >
+                      <div style={{fontSize:15,fontWeight:600,color:"#854F0B",fontFamily:"'DM Mono',monospace"}}>{((crmData as any).projects||[]).filter((p:{stage:string;rfqDate?:string;rfqDeadline?:string;createdAt:string})=>{const ref=p.rfqDeadline||p.rfqDate||p.createdAt;const d=Math.floor((Date.now()-new Date(ref).getTime())/86400000);return ["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage)&&d>=15&&d<=30;}).length}</div>
+                      <div style={{fontSize:9,color:"#854F0B",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.06em"}}>Follow Up</div>
+                    </div>
                   </div>
                   {activeProjects.slice(0,10).map((p:{id:string;name:string;client:string;stage:string;paymentStatus?:string;grossProfit?:number},i:number)=>{
                     const sc = STAGE_C[p.stage]||{bg:"#f0f2f5",fg:"#8a9ab0"};

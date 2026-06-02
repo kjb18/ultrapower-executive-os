@@ -203,9 +203,11 @@ export default function Projects() {
     try {
       const res = await fetch("/api/projects");
       const data = await res.json();
+      const _gracePeriod = new Date();
+      _gracePeriod.setDate(_gracePeriod.getDate() - 7);
       const updated = (data.projects||[]).map((p:Project) => {
         if (["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage) && daysSince(p.rfqDate)>30) return {...p, stage:"Lost" as Stage};
-        if (p.paymentDueDate && new Date(p.paymentDueDate)<new Date() && p.paymentStatus==="Unpaid") return {...p, paymentStatus:"Overdue" as PaymentStatus};
+        if (p.paymentDueDate && p.paymentStatus==="Unpaid" && new Date(p.paymentDueDate) < _gracePeriod) return {...p, paymentStatus:"Overdue" as PaymentStatus};
         return p;
       });
       setProjects(updated);
@@ -215,6 +217,11 @@ export default function Projects() {
         sessionStorage.removeItem("openProjectId");
         const found = updated.find((p:Project) => p.id === autoOpenId);
         if (found) { setSelectedProject(found); setView("detail" as const); }
+      }
+      const autoFilter = sessionStorage.getItem("openProjectFilter");
+      if (autoFilter) {
+        sessionStorage.removeItem("openProjectFilter");
+        setFilterStage(autoFilter);
       }
     } catch(e) { console.error(e); }
     setLoading(false);
@@ -429,6 +436,22 @@ export default function Projects() {
 
   // Filtered projects
   const filteredProjects = useMemo(() => {
+    if (filterStage === "Follow Up") {
+      return projects.filter(p => {
+        if (p.archived) return false;
+        const days = daysSince(p.rfqDeadline || p.rfqDate || p.createdAt);
+        return ["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage) && days >= 15 && days <= 30;
+      });
+    }
+    if (filterStage === "Overdue Payment") {
+      const gracePeriod = new Date();
+      gracePeriod.setDate(gracePeriod.getDate() - 7);
+      return projects.filter(p => {
+        if (p.archived) return false;
+        return p.paymentStatus === "Overdue" ||
+          (p.paymentDueDate && new Date(p.paymentDueDate) < gracePeriod && p.paymentStatus === "Unpaid");
+      });
+    }
     return projects.filter(p => {
       if (showArchived ? !p.archived : p.archived) return false;
       if (filterStage !== "All" && p.stage !== filterStage) return false;
@@ -526,19 +549,51 @@ export default function Projects() {
           )}
 
           {/* Stats row */}
-          <div style={{display:"grid",gridTemplateColumns:"repeat(5,1fr)",gap:10,marginBottom:16}}>
-            {[
-              ["Open Projects",String(projectStats.openProjects),"#185FA5","#EBF3FC"],
-              ["Follow Up Alerts",String(projectStats.followUpAlert),"#854F0B","#FFF8EC"],
-              ["Overdue Payments",String(projectStats.overduePayments),"#A32D2D","#FEF0F0"],
-              ["Month Revenue",fmt(projectStats.monthlyRevenue),"#3B6D11","#f0faf5"],
-              ["Month Gross Profit",fmt(projectStats.monthlyGP),projectStats.monthlyGP>=0?"#3B6D11":"#A32D2D",projectStats.monthlyGP>=0?"#f0faf5":"#FEF0F0"],
-            ].map(([lbl,val,fg,bg])=>(
-              <div key={lbl} style={{background:bg as string,border:`0.5px solid ${fg as string}33`,borderRadius:10,padding:"12px 14px"}}>
-                <div style={{fontSize:18,fontWeight:600,color:fg as string,fontFamily:"'DM Mono',monospace"}}>{val}</div>
-                <div style={{fontSize:10,color:fg as string,opacity:0.7,textTransform:"uppercase",letterSpacing:"0.08em",marginTop:2}}>{lbl}</div>
-              </div>
-            ))}
+          <div style={{display:"grid",gridTemplateColumns:"repeat(6,1fr)",gap:10,marginBottom:16}}>
+            <div style={{background:"#EBF3FC",border:"0.5px solid #185FA533",borderRadius:10,padding:"12px 14px"}}>
+              <div style={{fontSize:18,fontWeight:600,color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{String(projectStats.openProjects)}</div>
+              <div style={{fontSize:10,color:"#185FA5",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.08em",marginTop:2}}>Open Projects</div>
+            </div>
+            <div
+              title="RFQs 15-30 days old with no response"
+              onClick={()=>{setFilterStage("Follow Up");setShowArchived(false);setSelectedPreview(null);}}
+              onMouseEnter={e=>{(e.currentTarget as HTMLDivElement).style.borderColor="#854F0B";}}
+              onMouseLeave={e=>{(e.currentTarget as HTMLDivElement).style.borderColor="#854F0B33";}}
+              style={{background:"#FFF8EC",border:"0.5px solid #854F0B33",borderRadius:10,padding:"12px 14px",cursor:"pointer"}}
+            >
+              <div style={{fontSize:18,fontWeight:600,color:"#854F0B",fontFamily:"'DM Mono',monospace"}}>{String(projectStats.followUpAlert)}</div>
+              <div style={{fontSize:10,color:"#854F0B",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.08em",marginTop:2}}>Follow Up Alerts</div>
+              <div style={{fontSize:9,color:"#854F0B",opacity:0.6,marginTop:1}}>click to filter</div>
+            </div>
+            <div
+              title="Payments more than 7 days past due date"
+              onClick={()=>{setFilterStage("Overdue Payment");setShowArchived(false);setSelectedPreview(null);}}
+              onMouseEnter={e=>{(e.currentTarget as HTMLDivElement).style.borderColor="#A32D2D";}}
+              onMouseLeave={e=>{(e.currentTarget as HTMLDivElement).style.borderColor="#A32D2D33";}}
+              style={{background:"#FEF0F0",border:"0.5px solid #A32D2D33",borderRadius:10,padding:"12px 14px",cursor:"pointer"}}
+            >
+              <div style={{fontSize:18,fontWeight:600,color:"#A32D2D",fontFamily:"'DM Mono',monospace"}}>{String(projectStats.overduePayments)}</div>
+              <div style={{fontSize:10,color:"#A32D2D",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.08em",marginTop:2}}>Overdue Payments</div>
+              <div style={{fontSize:9,color:"#A32D2D",opacity:0.6,marginTop:1}}>click to filter</div>
+            </div>
+            <div style={{background:"#f0faf5",border:"0.5px solid #3B6D1133",borderRadius:10,padding:"12px 14px"}}>
+              <div style={{fontSize:18,fontWeight:600,color:"#3B6D11",fontFamily:"'DM Mono',monospace"}}>{fmt(projectStats.monthlyRevenue)}</div>
+              <div style={{fontSize:10,color:"#3B6D11",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.08em",marginTop:2}}>Month Revenue</div>
+            </div>
+            <div style={{background:projectStats.monthlyGP>=0?"#f0faf5":"#FEF0F0",border:`0.5px solid ${projectStats.monthlyGP>=0?"#3B6D11":"#A32D2D"}33`,borderRadius:10,padding:"12px 14px"}}>
+              <div style={{fontSize:18,fontWeight:600,color:projectStats.monthlyGP>=0?"#3B6D11":"#A32D2D",fontFamily:"'DM Mono',monospace"}}>{fmt(projectStats.monthlyGP)}</div>
+              <div style={{fontSize:10,color:projectStats.monthlyGP>=0?"#3B6D11":"#A32D2D",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.08em",marginTop:2}}>Month Gross Profit</div>
+            </div>
+            <div
+              onClick={()=>{setShowArchived(true);setFilterStage("All");setSelectedPreview(null);}}
+              onMouseEnter={e=>{(e.currentTarget as HTMLDivElement).style.borderColor="#8a9ab0";}}
+              onMouseLeave={e=>{(e.currentTarget as HTMLDivElement).style.borderColor="#8a9ab033";}}
+              style={{background:"#f0f2f5",border:"0.5px solid #8a9ab033",borderRadius:10,padding:"12px 14px",cursor:"pointer"}}
+            >
+              <div style={{fontSize:18,fontWeight:600,color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{String(projects.filter(p=>p.archived).length)}</div>
+              <div style={{fontSize:10,color:"#8a9ab0",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.08em",marginTop:2}}>Archived</div>
+              <div style={{fontSize:9,color:"#8a9ab0",opacity:0.6,marginTop:1}}>click to view</div>
+            </div>
           </div>
 
           {/* PROJECTS LIST VIEW */}
@@ -554,6 +609,11 @@ export default function Projects() {
                 {showArchived?"← Active":"Show Archived"}{!showArchived&&` (${projects.filter(p=>p.archived).length})`}
               </button>
               <button onClick={loadData} style={{fontSize:13,padding:"7px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>↺ Refresh</button>
+              {(filterStage==="Follow Up"||filterStage==="Overdue Payment")&&(
+                <button onClick={()=>setFilterStage("All")} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600}}>
+                  × Clear filter: {filterStage}
+                </button>
+              )}
             </div>
 
             {showNewProject&&(
@@ -616,13 +676,13 @@ export default function Projects() {
                     <tbody>
                       {filteredProjects.length===0&&<tr><td colSpan={10} style={{textAlign:"center",padding:28,color:"#b0bec8",fontSize:13}}>{showArchived?"No archived projects.":"No projects yet."}</td></tr>}
                       {filteredProjects.map((p,i)=>{
-                        const rfqDays = daysSince(p.rfqDate);
+                        const rfqDays = daysSince(p.rfqDeadline||p.rfqDate||p.createdAt);
                         const needsFollowUp = ["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage) && rfqDays>=15 && rfqDays<=30;
                         return(
                           <tr key={p.id} style={{background:selectedPreview?.id===p.id?"#EBF3FC":i%2===0?"#fff":"#fafbfc",cursor:"pointer"}} onClick={()=>setSelectedPreview(p)}>
                             <td style={{padding:"10px 13px",fontSize:13}}>
                               <div style={{fontWeight:500,color:"#1a2332"}}>{p.name}</div>
-                              {needsFollowUp&&<div style={{fontSize:10,color:"#854F0B",fontFamily:"'DM Mono',monospace",marginTop:2}}>⚠ Follow up ({rfqDays}d)</div>}
+                              {needsFollowUp&&<span style={{...S.pill("#FFF8EC","#854F0B"),fontSize:9,marginTop:3,display:"inline-block"}}>⚠ Follow up {rfqDays}d</span>}
                             </td>
                             <td style={{padding:"10px 13px",fontSize:13,color:"#4a6a8a"}}>{p.client}</td>
                             <td style={{padding:"10px 13px"}}><span style={S.pill(STAGE_C[p.stage]?.bg||"#f0f2f5",STAGE_C[p.stage]?.fg||"#8a9ab0")}>{p.stage}</span></td>
@@ -650,6 +710,7 @@ export default function Projects() {
                             <td style={{padding:"10px 13px"}}>
                               {p.paymentStatus?<span style={S.pill(PAY_C[p.paymentStatus]?.bg||"#f0f2f5",PAY_C[p.paymentStatus]?.fg||"#8a9ab0")}>{p.paymentStatus}</span>:"—"}
                               {p.paymentDueDate&&<div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginTop:2}}>Due: {p.paymentDueDate}</div>}
+                              {p.paymentStatus==="Overdue"&&<span style={{...S.pill("#FEF0F0","#A32D2D"),fontSize:9,marginTop:3,display:"inline-block"}}>Payment overdue</span>}
                             </td>
                             <td style={{padding:"10px 13px",fontSize:13,fontFamily:"'DM Mono',monospace",color:(p.grossProfit||0)>=0?"#3B6D11":"#A32D2D",fontWeight:600}}>{fmt(p.grossProfit)}</td>
                             <td style={{padding:"10px 13px",fontSize:12,fontFamily:"'DM Mono',monospace",color:(p.grossMarginPct||0)>=0?"#3B6D11":"#A32D2D"}}>{p.grossMarginPct!==undefined?`${p.grossMarginPct}%`:"—"}</td>
@@ -674,7 +735,17 @@ export default function Projects() {
                       <div style={{display:"flex",alignItems:"flex-start",justifyContent:"space-between",marginBottom:12}}>
                         <div style={{flex:1,minWidth:0,paddingRight:8}}>
                           <div style={{fontSize:14,fontWeight:600,color:"#1a2332",marginBottom:6,lineHeight:1.3}}>{selectedPreview.name}</div>
-                          <span style={S.pill(STAGE_C[selectedPreview.stage]?.bg||"#f0f2f5",STAGE_C[selectedPreview.stage]?.fg||"#8a9ab0")}>{selectedPreview.stage}</span>
+                          <select
+                            value={selectedPreview.stage}
+                            onChange={e=>{const updated={...selectedPreview,stage:e.target.value as Stage};setSelectedPreview(updated);saveProject(updated);}}
+                            onClick={e=>e.stopPropagation()}
+                            style={{fontSize:11,padding:"3px 8px",borderRadius:20,border:`0.5px solid ${STAGE_C[selectedPreview.stage]?.fg||"#8a9ab0"}`,background:STAGE_C[selectedPreview.stage]?.bg||"#f0f2f5",color:STAGE_C[selectedPreview.stage]?.fg||"#8a9ab0",fontWeight:600,fontFamily:"'DM Mono',monospace",cursor:"pointer",appearance:"none" as const,WebkitAppearance:"none" as const}}
+                          >
+                            {STAGES.map(s=><option key={s} value={s}>{s}</option>)}
+                          </select>
+                          {["RFQ Received","Sourcing","RFQ Submitted"].includes(selectedPreview.stage)&&daysSince(selectedPreview.rfqDeadline||selectedPreview.rfqDate||selectedPreview.createdAt)>=15&&daysSince(selectedPreview.rfqDeadline||selectedPreview.rfqDate||selectedPreview.createdAt)<=30&&(
+                            <div style={{fontSize:10,color:"#854F0B",fontFamily:"'DM Mono',monospace",marginTop:4}}>⚠ Follow up required -- {daysSince(selectedPreview.rfqDeadline||selectedPreview.rfqDate||selectedPreview.createdAt)}d since RFQ</div>
+                          )}
                         </div>
                         <button onClick={()=>setSelectedPreview(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:16,color:"#b0bec8",padding:0,lineHeight:1,flexShrink:0}}>×</button>
                       </div>
