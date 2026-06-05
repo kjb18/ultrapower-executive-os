@@ -191,7 +191,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
       const hasChanged = JSON.stringify(patch) !== JSON.stringify(
         Object.fromEntries(Object.keys(patch).map(k => [k, prev[k as keyof OSData]]))
       );
-      if (hasChanged) kvSet("dashboard", next);
+      if (hasChanged) { kvSet("dashboard", next); writeCache("dashboard", next); }
       return next;
     });
   }, []);

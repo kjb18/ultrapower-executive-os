@@ -3,6 +3,9 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
+<meta http-equiv="Cache-Control" content="no-cache, no-store, must-revalidate">
+<meta http-equiv="Pragma" content="no-cache">
+<meta http-equiv="Expires" content="0">
 <title>Ultra Power — Document Maker</title>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@400;600;700&family=DM+Sans:wght@300;400;500;600&family=DM+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
@@ -1850,6 +1853,7 @@ async function kvSetClients(arr) {
 var _templates = [];
 
 async function kvLoadSettings() {
+  console.log('[DocMaker] loadSettings called, clients:', _clients?.length, 'templates:', _templates?.length);
   try {
     var raw = await kvGetRaw('docmaker:settings');
     var s = raw ? JSON.parse(raw) : {};
