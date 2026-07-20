@@ -96,6 +96,19 @@ export const pctColor = (p: number) =>
 
 export interface MIT { id: number; text: string; done: boolean; doneAt?: number; clickupId?: string; dueDate?: string; }
 export interface MITArchiveEntry { text: string; doneAt: number; dayKey: string; }
+export interface TaskItem {
+  id: string;
+  text: string;
+  done: boolean;
+  doneAt?: number;
+  clickupId?: string;
+  scheduledDate?: string;
+  timeBlockId?: number;
+  projectId?: string;
+  priority?: "high"|"medium"|"low";
+  createdAt: number;
+  carriedOver?: boolean;
+}
 export interface OKR { id: number; objective: string; keyResult: string; current: number; target: number; unit: string; }
 export interface KPI { id: number; label: string; value: string; delta: string; up: boolean | null; } // displayed as "Vitals" in UI
 export interface TimeBlock { id: number; time: string; label: string; sub: string; type: string; mitId?: number; }
@@ -133,6 +146,7 @@ export interface OSData {
   brewing: BrewingItem[];
   crosshairs: CrosshairsTarget[];
   nid: number;
+  tasks?: TaskItem[];
 }
 
 export const BREWING_CATEGORIES = ["Client","Gov","Supplier","Internal","Other"] as const;

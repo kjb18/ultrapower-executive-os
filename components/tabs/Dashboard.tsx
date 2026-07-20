@@ -4,7 +4,7 @@ import { kvGet, kvSet } from "@/lib/kv";
 import {
   MOMENTUM, TB_COLORS, PW, PB,
   pad, getTodayKey, getResetMs, fmtCountdown, pctColor,
-  DEFAULT_OS, DEFAULT_MFP, OSData, MFPDay, TimeBlock, MIT,
+  DEFAULT_OS, DEFAULT_MFP, OSData, MFPDay, TimeBlock, MIT, TaskItem,
   BREWING_CATEGORIES, BREWING_COLORS, CROSSHAIRS_PRIORITY_COLORS,
   BrewingItem, CrosshairsTarget, MITArchiveEntry,
 } from "@/lib/constants";
@@ -13,7 +13,6 @@ import type { TabId } from "@/components/Sidebar";
 
 // ── Session cache helpers ────────────────────────────────────────────────────
 const CACHE_TTL = 5 * 60 * 1000;
-
 function readCache<T>(key: string): T | null {
   try {
     const raw = sessionStorage.getItem(`up_cache_${key}`);
@@ -23,14 +22,11 @@ function readCache<T>(key: string): T | null {
     return data as T;
   } catch { return null; }
 }
-
 function writeCache(key: string, data: unknown) {
-  try {
-    sessionStorage.setItem(`up_cache_${key}`, JSON.stringify({ data, ts: Date.now() }));
-  } catch {}
+  try { sessionStorage.setItem(`up_cache_${key}`, JSON.stringify({ data, ts: Date.now() })); } catch {}
 }
 
-// ── Pomodoro modes ──────────────────────────────────────────────────────────
+// ── Pomodoro modes ───────────────────────────────────────────────────────────
 const POMO_MODES = [
   { key:"standard", label:"Pomodoro", workMins:25, breakMins:5 },
   { key:"extended", label:"Extended", workMins:50, breakMins:10 },
@@ -68,6 +64,28 @@ function playChime(type: "start"|"end") {
 
 const Spinner = () => <span style={{width:14,height:14,border:"2px solid #e2e6ea",borderTopColor:"#185FA5",borderRadius:"50%",animation:"spin 0.7s linear infinite",display:"inline-block"}}/>;
 
+// ── Week date helper ─────────────────────────────────────────────────────────
+function getWeekDates(offset: number) {
+  const todayUTC = new Date().toISOString().split("T")[0];
+  const base = new Date(todayUTC + "T00:00:00Z");
+  const day = base.getUTCDay();
+  const monday = new Date(base);
+  monday.setUTCDate(base.getUTCDate() - (day === 0 ? 6 : day - 1) + offset * 7);
+  return Array.from({length: 7}, (_, i) => {
+    const d = new Date(monday);
+    d.setUTCDate(monday.getUTCDate() + i);
+    const dateStr = d.toISOString().split("T")[0];
+    return {
+      dayName: ["Mon","Tue","Wed","Thu","Fri","Sat","Sun"][i],
+      date: dateStr,
+      dateNum: d.getUTCDate(),
+      isToday: dateStr === todayUTC,
+      isPast: dateStr < todayUTC,
+    };
+  });
+}
+
+// ── Local types ──────────────────────────────────────────────────────────────
 interface PendingPO { id:number;poNumber:string;client:string;items:string;value:string;dateReceived:string;expectedDelivery:string;supplierStatus:string;status:string;notes:string; }
 interface PendingRFQ { id:number;rfqNumber:string;client:string;subject:string;dateSubmitted:string;deadline:string;status:string;notes:string; }
 interface CRMData { pendingPOs?:PendingPO[]; pendingRFQs?:PendingRFQ[]; [key:string]:unknown; }
@@ -92,8 +110,11 @@ const STAGE_C: Record<string,{bg:string;fg:string}> = {
   "Lost":{bg:"#FEF0F0",fg:"#A32D2D"},
 };
 
+// ── Component ────────────────────────────────────────────────────────────────
 export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) => void }) {
   const tk = getTodayKey();
+  const today = new Date().toISOString().split("T")[0];
+
   const [os, setOSRaw] = useState<OSData>(DEFAULT_OS);
   const [mfp, setMFPRaw] = useState<MFPDay>(DEFAULT_MFP);
   const [loaded, setLoaded] = useState(false);
@@ -107,21 +128,21 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const [pomoSecs, setPomoSecs] = useState(PW);
   const [pomoMode, setPomoMode] = useState<"work"|"break">("work");
   const [pomoSessions, setPomoSessions] = useState(0);
-  const [pomoMIT, setPomoMIT] = useState<number|null>(null);
+  const [pomoTaskId, setPomoTaskId] = useState<string|null>(null);
   const pomoRef = useRef<ReturnType<typeof setInterval>|null>(null);
   const osTbsRef = useRef<TimeBlock[]>([]);
   const pomoActiveRef = useRef(false);
-  const touchMITRef = useRef<{mitId:number;mitText:string}|null>(null);
-
-  // MIT drag
-  const [dragIdx, setDragIdx] = useState<number|null>(null);
-  const [dragOverIdx, setDragOverIdx] = useState<number|null>(null);
 
   // Panel item drag (OKR, Vitals, Crosshairs, Brewing)
   const panelDragSrc = useRef<{panel:string;idx:number}|null>(null);
   const [panelDragOver, setPanelDragOver] = useState<{panel:string;idx:number}|null>(null);
 
-  const [newMIT, setNewMIT] = useState("");
+  // New task system state
+  const [weekOffset, setWeekOffset] = useState(0);
+  const [dragOverZone, setDragOverZone] = useState<string|null>(null);
+  const [newTask, setNewTask] = useState("");
+  const [newBacklogTask, setNewBacklogTask] = useState("");
+
   const [editOKR, setEditOKR] = useState<number|null>(null);
   const [editKPI, setEditKPI] = useState<number|null>(null);
   const [editTB, setEditTB] = useState<number|null>(null);
@@ -134,20 +155,25 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const [archiveView, setArchiveView] = useState<"streak"|"feed">("streak");
   const [mitArchive, setMitArchive] = useState<MITArchiveEntry[]>([]);
 
-  // Operations panel
   const [opsTab, setOpsTab] = useState<"projects"|"rfqs"|"pos">("projects");
   const [crmData, setCrmData] = useState<CRMData>({});
 
-  // Brewing / Crosshairs forms
   const [newBrew, setNewBrew] = useState({what:"",who:"",since:"",category:"Client" as BrewingItem["category"]});
   const [showBrewForm, setShowBrewForm] = useState(false);
   const [newCH, setNewCH] = useState({company:"",sector:"",estDeal:"",priority:"Medium" as CrosshairsTarget["priority"],lastAction:"",nextMove:""});
   const [showCHForm, setShowCHForm] = useState(false);
   const [activeBlockId, setActiveBlockId] = useState<number|null>(null);
-  const [tbDragOverId, setTbDragOverId] = useState<number|null>(null);
 
+  // ClickUp
+  const [cuEnabled, setCuEnabled] = useState(false);
+  const [cuPicker, setCuPicker] = useState(false);
+  const [cuTasks, setCuTasks] = useState<{id:string;name:string;dueDate?:string|null;listName?:string}[]>([]);
+  const [cuLoading, setCuLoading] = useState(false);
+
+  // ── Data loading ─────────────────────────────────────────────────────────
   useEffect(() => {
-    // Instant render from cache
+    const todayStr = new Date().toISOString().split("T")[0];
+
     const cachedOS = readCache<OSData>("dashboard");
     const cachedMFP = readCache<MFPDay>(`mfp:${tk}`);
     const cachedProjects = readCache<object[]>("projects");
@@ -156,7 +182,6 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
     if (cachedProjects) setCrmData(prev => ({...prev, projects: cachedProjects}));
     if (cachedOS || cachedMFP || cachedProjects) setLoaded(true);
 
-    // Fetch fresh data in background
     Promise.all([
       kvGet<OSData>("dashboard"),
       kvGet<MFPDay>(`mfp:${getTodayKey()}`),
@@ -169,9 +194,45 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
         const mits = (osData.mits || DEFAULT_OS.mits).map((m: MIT) => ({
           ...m, doneAt: m.doneAt ?? (m.done ? Date.now() : undefined),
         }));
-        const normalized = {...DEFAULT_OS,...osData, mits, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]};
+        let normalized: OSData = {...DEFAULT_OS, ...osData, mits, brewing:osData.brewing||[], crosshairs:osData.crosshairs||[]};
+
+        // Migrate old MITs to new task system if no tasks exist
+        if ((!normalized.tasks || normalized.tasks.length === 0) && normalized.mits.length > 0) {
+          const migrated: TaskItem[] = normalized.mits.map((m: MIT) => ({
+            id: String(m.id),
+            text: m.text,
+            done: m.done,
+            doneAt: m.doneAt,
+            clickupId: m.clickupId,
+            scheduledDate: m.done ? undefined : todayStr,
+            createdAt: m.doneAt || Date.now(),
+          }));
+          normalized = {...normalized, tasks: migrated};
+        }
+
+        // Auto carry-over: move past undone tasks to backlog
+        if (normalized.tasks && normalized.tasks.length > 0) {
+          const hasStale = normalized.tasks.some((t: TaskItem) =>
+            t.scheduledDate && t.scheduledDate < todayStr && !t.done
+          );
+          if (hasStale) {
+            normalized = {
+              ...normalized,
+              tasks: normalized.tasks.map((t: TaskItem) =>
+                t.scheduledDate && t.scheduledDate < todayStr && !t.done
+                  ? {...t, scheduledDate: undefined, carriedOver: true}
+                  : t
+              ),
+            };
+          }
+        }
+
         setOSRaw(normalized);
         writeCache("dashboard", normalized);
+        // Persist migration/carry-over if tasks changed
+        if (!osData.tasks || osData.tasks.length === 0) {
+          kvSet("dashboard", normalized);
+        }
       }
       if (mfpData) { setMFPRaw(mfpData); writeCache(`mfp:${tk}`, mfpData); }
       if (pomoData) setPomoSessions(pomoData.sessions||0);
@@ -203,7 +264,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const toggleCollapse = (key:string) => setCollapsed(c => ({...c,[key]:!c[key]}));
   const isCollapsed = (key:string) => !!collapsed[key];
 
-  // Current pomo mode config
+  // Pomodoro config
   const pomoModeConfig = POMO_MODES.find(m=>m.key===pomoModeKey) || POMO_MODES[0];
   const pomoWorkSecs = pomoModeKey==="deepwork" ? deepWorkMins*60 : pomoModeConfig.workMins*60;
   const pomoBreakSecs = pomoModeConfig.breakMins*60;
@@ -239,27 +300,27 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
     setPomoSecs(key==="deepwork" ? deepWorkMins*60 : cfg.workMins*60);
   };
 
-  const mitsDone = useMemo(() => os.mits.filter(m=>m.done).length, [os.mits]);
-  const mitsTotal = useMemo(() => os.mits.length, [os.mits]);
-  const activeMIT = useMemo(() => os.mits.find(m=>!m.done)||os.mits[0], [os.mits]);
+  osTbsRef.current = os.tbs;
+  pomoActiveRef.current = pomoActive;
+
+  // ── Computed values ──────────────────────────────────────────────────────
+  const weekDates = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
+  const tasks = useMemo(() => os.tasks || [], [os.tasks]);
+  const backlogTasks = useMemo(() => tasks.filter(t => !t.scheduledDate && !t.done), [tasks]);
+  const todayTasks = useMemo(() => tasks.filter(t => t.scheduledDate === today), [tasks, today]);
+
   const mom = useMemo(() => {
-    const pts = mitsDone*2+(mfp.mood?1:0)+(mfp.mitDone?1:0)+(mfp.winDone?1:0)+(mfp.reflDone?1:0)+pomoSessions;
+    const doneTasks = tasks.filter(t=>t.done).length;
+    const pts = doneTasks*2+(mfp.mood?1:0)+(mfp.mitDone?1:0)+(mfp.winDone?1:0)+(mfp.reflDone?1:0)+pomoSessions;
     return [...MOMENTUM].reverse().find(s=>pts>=s.min)||MOMENTUM[0];
-  }, [mitsDone, mfp.mood, mfp.mitDone, mfp.winDone, mfp.reflDone, pomoSessions]);
+  }, [tasks, mfp.mood, mfp.mitDone, mfp.winDone, mfp.reflDone, pomoSessions]);
+
   const nowHH = `${pad(now.getHours())}:${pad(now.getMinutes())}`;
   const curBlock = os.tbs.reduce((c,tb)=>tb.time<=nowHH?tb:c, null as TimeBlock|null);
   const dayStr = now.toLocaleDateString("en-PH",{weekday:"short",year:"numeric",month:"short",day:"numeric"}).toUpperCase();
   const timeStr = now.toLocaleTimeString("en-PH",{hour:"2-digit",minute:"2-digit"});
-  osTbsRef.current = os.tbs;
-  pomoActiveRef.current = pomoActive;
 
-  // ClickUp MIT sync state
-  const [cuEnabled, setCuEnabled] = useState(false);
-  const [cuPicker, setCuPicker] = useState(false);
-  const [cuTasks, setCuTasks] = useState<{id:string;name:string;dueDate?:string|null;listName?:string}[]>([]);
-  const [cuLoading, setCuLoading] = useState(false);
-
-  // Check if ClickUp token is available on mount
+  // ── ClickUp ──────────────────────────────────────────────────────────────
   useEffect(() => {
     fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"fetch"}) })
       .then(r => r.json())
@@ -267,147 +328,119 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
       .catch(() => {});
   }, []);
 
-  // Poll ClickUp every 2 minutes to sync completion status
   useEffect(() => {
     if (!cuEnabled) return;
     const poll = async () => {
-      const linked = os.mits.filter(m => m.clickupId && !m.done);
+      const allTasks = os.tasks || [];
+      const linked = allTasks.filter(t => t.clickupId && !t.done);
       if (!linked.length) return;
-      const ids = linked.map(m => m.clickupId).join(",");
+      const ids = linked.map(t => t.clickupId).join(",");
       try {
         const res = await fetch(`/api/clickup-mit?ids=${ids}`);
         const data = await res.json();
         const statuses = data.statuses || {};
-        const nowDone = linked.filter(m => statuses[m.clickupId!]);
+        const nowDone = linked.filter(t => statuses[t.clickupId!]);
         if (nowDone.length > 0) {
-          setOS({ mits: os.mits.map(m => nowDone.find(d => d.id === m.id) ? {...m, done:true, doneAt:Date.now()} : m) });
+          setOS({ tasks: allTasks.map(t => nowDone.find(d => d.id === t.id) ? {...t, done:true, doneAt:Date.now()} : t) });
         }
       } catch {}
     };
     const id = setInterval(poll, 300000);
     return () => clearInterval(id);
-  }, [cuEnabled, os.mits]);
-
-  const addMIT = async () => {
-    if (!newMIT.trim()) return;
-    const id = os.nid || 100;
-    const mit: MIT = {id, text:newMIT.trim(), done:false};
-    // Create in ClickUp if enabled
-    if (cuEnabled) {
-      try {
-        const res = await fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"create", name:newMIT.trim()}) });
-        const data = await res.json();
-        if (data.taskId) mit.clickupId = data.taskId;
-      } catch {}
-    }
-    setOS({mits:[...os.mits, mit], nid:id+1});
-    setNewMIT("");
-  };
+  }, [cuEnabled, os.tasks]);
 
   const openCuPicker = async () => {
     setCuPicker(true); setCuLoading(true);
     try {
       const res = await fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"fetchAll"}) });
       const data = await res.json();
-      // Filter out tasks already in MITs
-      const existingIds = new Set(os.mits.map(m => m.clickupId).filter(Boolean));
+      const existingIds = new Set((os.tasks||[]).map(t => t.clickupId).filter(Boolean));
       setCuTasks((data.tasks||[]).filter((t:{id:string}) => !existingIds.has(t.id)));
     } catch { setCuTasks([]); }
     setCuLoading(false);
   };
 
   const addFromClickUp = (task: {id:string;name:string;dueDate?:string|null}) => {
-    const id = os.nid || 100;
-    setOS({mits:[...os.mits, {id, text:task.name, done:false, clickupId:task.id, dueDate:task.dueDate||undefined}], nid:id+1});
+    const taskItem: TaskItem = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      text: task.name,
+      done: false,
+      clickupId: task.id,
+      createdAt: Date.now(),
+    };
+    setOS({tasks: [...(os.tasks||[]), taskItem]});
     setCuPicker(false);
   };
 
-  const toggleMITDone = async (m: MIT) => {
-    const nowDone = !m.done;
-    setOS({mits: os.mits.map(x => x.id===m.id ? {...x, done:nowDone, doneAt:nowDone?Date.now():undefined} : x)});
-    if (m.clickupId && cuEnabled) {
+  // ── Task functions ───────────────────────────────────────────────────────
+  const addTask = (text: string, date?: string) => {
+    const task: TaskItem = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      text,
+      done: false,
+      scheduledDate: date,
+      createdAt: Date.now(),
+    };
+    setOS({ tasks: [...tasks, task] });
+  };
+
+  const addBacklogTask = async () => {
+    if (!newBacklogTask.trim()) return;
+    const taskItem: TaskItem = {
+      id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
+      text: newBacklogTask.trim(),
+      done: false,
+      createdAt: Date.now(),
+    };
+    if (cuEnabled) {
       try {
-        await fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"},
-          body: JSON.stringify({action: nowDone?"complete":"reopen", taskId:m.clickupId}) });
+        const res = await fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"create", name:newBacklogTask.trim()}) });
+        const data = await res.json();
+        if (data.taskId) taskItem.clickupId = data.taskId;
       } catch {}
     }
+    setOS({tasks: [...(os.tasks||[]), taskItem]});
+    setNewBacklogTask("");
   };
 
-  // MIT drag handlers
-  const onDragStart = (e: React.DragEvent, idx: number, mit: MIT) => {
-    setDragIdx(idx);
-    e.dataTransfer.setData("mitId", String(mit.id));
-    e.dataTransfer.setData("mitText", mit.text);
-  };
-  const onDragOver = (e:React.DragEvent, idx:number) => { e.preventDefault(); setDragOverIdx(idx); };
-  const onDrop = (idx:number) => {
-    if (dragIdx===null||dragIdx===idx) { setDragIdx(null); setDragOverIdx(null); return; }
-    const reordered = [...os.mits];
-    const [moved] = reordered.splice(dragIdx, 1);
-    reordered.splice(idx, 0, moved);
-    setOS({mits:reordered});
-    setDragIdx(null); setDragOverIdx(null);
+  const toggleTaskDone = (t: TaskItem) => {
+    setOS({ tasks: tasks.map(x => x.id===t.id ? {...x, done:!x.done, doneAt:!x.done?Date.now():undefined} : x) });
   };
 
-  // Time block MIT drop handlers
-  const onTBDragOver = (e: React.DragEvent, tbId: number) => { e.preventDefault(); setTbDragOverId(tbId); };
-  const onTBDrop = (e: React.DragEvent, tbId: number) => {
-    e.preventDefault();
-    const mitId = Number(e.dataTransfer.getData("mitId"));
-    if (!mitId) { setTbDragOverId(null); return; }
-    setOS({ tbs: os.tbs.map(x => x.id === tbId ? {...x, mitId} : x) });
-    setTbDragOverId(null);
-    setActiveBlockId(tbId);
-    if (pomoActive) setPomoMIT(mitId);
+  const deleteTask = (id: string) => {
+    setOS({ tasks: tasks.filter(t => t.id !== id) });
   };
 
-  // Touch drag for MIT to Time Block
-  useEffect(() => {
-    let ghost: HTMLDivElement | null = null;
-    const onMove = (e: PointerEvent) => {
-      if (!touchMITRef.current) return;
-      if (!ghost) {
-        ghost = document.createElement("div");
-        ghost.style.cssText = "position:fixed;z-index:1000;pointer-events:none;background:#EBF3FC;border:1.5px solid #185FA5;border-radius:8px;padding:6px 10px;font-size:12px;color:#185FA5;font-weight:600;max-width:200px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;font-family:Plus Jakarta Sans,sans-serif;";
-        document.body.appendChild(ghost);
-      }
-      const t = touchMITRef.current.mitText;
-      ghost.textContent = t.length > 30 ? t.slice(0,30)+"..." : t;
-      ghost.style.left = (e.clientX + 12) + "px";
-      ghost.style.top = (e.clientY - 20) + "px";
-    };
-    const onUp = (e: PointerEvent) => {
-      if (ghost) { document.body.removeChild(ghost); ghost = null; }
-      if (!touchMITRef.current) return;
-      const el = document.elementFromPoint(e.clientX, e.clientY);
-      const tbEl = el?.closest("[data-tbid]") as HTMLElement | null;
-      if (tbEl) {
-        const tbId = Number(tbEl.dataset.tbid);
-        const mitId = touchMITRef.current.mitId;
-        setOS({ tbs: osTbsRef.current.map(x => x.id === tbId ? {...x, mitId} : x) });
-        setActiveBlockId(tbId);
-        if (pomoActiveRef.current) setPomoMIT(mitId);
-      }
-      touchMITRef.current = null;
-    };
-    document.addEventListener("pointermove", onMove);
-    document.addEventListener("pointerup", onUp);
-    return () => { document.removeEventListener("pointermove", onMove); document.removeEventListener("pointerup", onUp); };
-  }, []);
-
-  const callAPI = async (system:string,user:string) => { const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system,user,max_tokens:400})}); const d=await res.json(); return d?.text||null; };
-  const getInsight = async () => { setILoad(true); setInsight(""); const ctx=`MITs: ${os.mits.map(m=>`${m.done?"[done]":"[open]"} ${m.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.objective}: ${o.current}/${o.target} ${o.unit}`).join(", ")}. Vitals: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`; try { const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx); setInsight(txt||"Could not generate insight."); } catch { setInsight("Connection error."); } setILoad(false); };
-
-  const archiveMIT = async (mit: MIT) => {
-    const ph = new Date(new Date().toLocaleString("en-US", {timeZone:"Asia/Manila"}));
+  const archiveTask = async (t: TaskItem) => {
+    const ph = new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
     const dayKey = `${ph.getFullYear()}-${String(ph.getMonth()+1).padStart(2,"0")}-${String(ph.getDate()).padStart(2,"0")}`;
-    const newEntry: MITArchiveEntry = {text:mit.text, doneAt:mit.doneAt||Date.now(), dayKey};
+    const newEntry: MITArchiveEntry = {text:t.text, doneAt:t.doneAt||Date.now(), dayKey};
     const updatedArchive = [newEntry,...mitArchive].slice(0,900);
     setMitArchive(updatedArchive);
     await kvSet("mit:archive", updatedArchive);
-    setOS({mits:os.mits.filter(m=>m.id!==mit.id)});
+    setOS({ tasks: tasks.filter(x => x.id !== t.id) });
   };
 
+  const moveTask = (taskId: string, newDate?: string) => {
+    setOS({ tasks: tasks.map(t => t.id===taskId ? {...t, scheduledDate:newDate, carriedOver:false} : t) });
+  };
+
+  // ── AI Insight ───────────────────────────────────────────────────────────
+  const callAPI = async (system:string,user:string) => {
+    const res=await fetch("/api/claude",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({system,user,max_tokens:400})});
+    const d=await res.json(); return d?.text||null;
+  };
+  const getInsight = async () => {
+    setILoad(true); setInsight("");
+    const ctx=`Tasks: ${tasks.slice(0,6).map(t=>`${t.done?"[done]":"[open]"} ${t.text}`).join("; ")}. OKRs: ${os.okrs.map(o=>`${o.objective}: ${o.current}/${o.target} ${o.unit}`).join(", ")}. Vitals: ${os.kpis.map(k=>`${k.label} ${k.value}`).join(", ")}.`;
+    try {
+      const txt=await callAPI(`Executive AI advisor for Khalil Banares, Ultra Power Industrial Resources, Makati PH. 2-3 sharp actionable insights. Direct. Under 100 words.`,ctx);
+      setInsight(txt||"Could not generate insight.");
+    } catch { setInsight("Connection error."); }
+    setILoad(false);
+  };
+
+  // ── Panel functions ──────────────────────────────────────────────────────
   const addBrew = () => { if(!newBrew.what.trim())return; const id=os.nid||100; setOS({brewing:[...(os.brewing||[]),{...newBrew,id}],nid:id+1}); setNewBrew({what:"",who:"",since:"",category:"Client"}); setShowBrewForm(false); };
   const addCH = () => { if(!newCH.company.trim())return; const id=os.nid||100; setOS({crosshairs:[...(os.crosshairs||[]),{...newCH,id}],nid:id+1}); setNewCH({company:"",sector:"",estDeal:"",priority:"Medium",lastAction:"",nextMove:""}); setShowCHForm(false); };
 
@@ -433,6 +466,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const dragOverStyle = (panel: string, idx: number): React.CSSProperties =>
     panelDragOver?.panel===panel && panelDragOver?.idx===idx ? {background:"#EBF3FC", borderLeft:"2px solid #185FA5", paddingLeft:6} : {};
 
+  // ── Style constants ──────────────────────────────────────────────────────
   const P:React.CSSProperties = {background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,padding:"16px 18px"};
   const PL:React.CSSProperties = {fontSize:11,fontWeight:600,letterSpacing:"0.12em",textTransform:"uppercase",color:"#b0bec8",marginBottom:10,fontFamily:"'DM Mono',monospace",display:"flex",alignItems:"center",justifyContent:"space-between"};
   const INP:React.CSSProperties = {fontSize:14,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332"};
@@ -465,12 +499,12 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
     return { dayMap, days, currentStreak, longestStreak, grid };
   }, [mitArchive]);
 
-  if (!loaded) return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#b0bec8",fontSize:14,fontFamily:"'DM Mono',monospace"}}>Loading dashboard...</div>;
-
-  const brewing = os.brewing||[];
-  const crosshairs = os.crosshairs||[];
   const rfqs = crmData.pendingRFQs||[];
   const pos = crmData.pendingPOs||[];
+  const brewing = os.brewing||[];
+  const crosshairs = os.crosshairs||[];
+
+  if (!loaded) return <div style={{flex:1,display:"flex",alignItems:"center",justifyContent:"center",color:"#b0bec8",fontSize:14,fontFamily:"'DM Mono',monospace"}}>Loading dashboard...</div>;
 
   return (
     <div style={{flex:1,overflow:"auto"}}>
@@ -481,17 +515,13 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
         .okr-item{padding:7px 0;border-bottom:0.5px solid #f0f2f5;cursor:pointer}
         .okr-item:last-child{border-bottom:none}
         .kpi-c{background:#f8f9fb;border:0.5px solid #eaecef;border-radius:10px;padding:10px 12px;cursor:pointer}
-        .tb-r{display:flex;align-items:center;gap:10px;padding:6px 0;border-bottom:0.5px solid #f0f2f5}
-        .tb-r:last-child{border-bottom:none}
         .ai-b{width:100%;padding:12px;border-radius:10px;border:0.5px solid #e2e6ea;background:#f8f9fb;color:#1a2332;font-size:14px;font-weight:600;cursor:pointer;display:flex;align-items:center;justify-content:center;gap:8px}
         .ai-b:hover:not(:disabled){background:#EBF3FC;border-color:#c5ddf5;color:#185FA5}
         .ai-b:disabled{opacity:0.6;cursor:not-allowed}
         .brew-row:hover{background:#fafbfc}
         .ch-row:hover{background:#fafbfc}
-        .mit-drag{cursor:grab;color:#d0d8e0;padding:0 4px;font-size:12px}
-        .mit-drag:active{cursor:grabbing}
-        .mit-dragging{opacity:0.4}
-        .mit-dragover{border-top:2px solid #185FA5}
+        .task-row:hover .task-del{opacity:1}
+        .task-del{opacity:0;transition:opacity 0.1s}
       `}</style>
 
       {/* Topbar */}
@@ -508,19 +538,15 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
               <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",letterSpacing:"0.06em",textTransform:"uppercase"}}>Daily Momentum</div>
             </div>
           </div>
-          {/* Mental Fitness Pulse Dot */}
           {(() => {
             const mfpDone = !!(mfp.mood && mfp.mitDone && mfp.winDone && mfp.reflDone);
             const mfpPartial = !!(mfp.mood || mfp.mitDone || mfp.winDone || mfp.reflDone);
             const dotColor = mfpDone ? "#3B6D11" : mfpPartial ? "#854F0B" : "#d0d8e0";
-            const dotLabel = mfpDone ? "Mental check done" : mfpPartial ? "Mental check partial" : "Mental check pending";
             return (
-              <div title={dotLabel} onClick={()=>onNavigate?.("mental")}
+              <div title={mfpDone?"Mental check done":mfpPartial?"Mental check partial":"Mental check pending"} onClick={()=>onNavigate?.("mental")}
                 style={{display:"flex",alignItems:"center",gap:6,cursor:"pointer",padding:"4px 8px",borderRadius:20,background:mfpDone?"#f0faf5":mfpPartial?"#FFF8EC":"#f0f2f5",border:`0.5px solid ${dotColor}44`}}>
                 <div style={{width:9,height:9,borderRadius:"50%",background:dotColor,flexShrink:0,boxShadow:mfpDone?`0 0 5px ${dotColor}88`:"none"}}/>
-                <div style={{fontSize:10,color:dotColor,fontFamily:"'DM Mono',monospace",fontWeight:600}}>
-                  {mfpDone?"✓ MFP":mfpPartial?"MFP":"MFP"}
-                </div>
+                <div style={{fontSize:10,color:dotColor,fontFamily:"'DM Mono',monospace",fontWeight:600}}>{mfpDone?"✓ MFP":"MFP"}</div>
               </div>
             );
           })()}
@@ -533,47 +559,159 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
 
       <div style={{padding:"14px 16px",display:"flex",flexDirection:"column",gap:12}}>
 
-        {/* ── ROW 1: MITs, Pomodoro+TimeBlocks, Operations, OKR ── */}
-        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+        {/* ── TASK STRIP ── */}
+        <div style={{background:"#fff",border:"0.5px solid #e2e6ea",borderRadius:13,display:"flex",maxHeight:300,overflow:"hidden"}}>
 
-        {/* MITs */}
-        <div style={P}>
-          <div style={PL}><span>MITs</span>
-            <div style={{display:"flex",alignItems:"center",gap:6}}>
-              <span style={{color:mitsDone===mitsTotal?"#3B6D11":"#854F0B",fontSize:11}}>{mitsDone}/{mitsTotal}</span>
-              {cuEnabled&&<button onClick={openCuPicker} style={{...SBTN,color:"#534AB7",borderColor:"#AFA9EC",background:"#F4F3FE",fontSize:10}}>↓ ClickUp</button>}
-              <button style={{...SBTN,color:"#534AB7",borderColor:"#534AB744",background:"#F4F3FE"}} onClick={()=>setShowArchive(a=>!a)}>Wins</button>
-              <button style={SBTN} onClick={()=>toggleCollapse("mits")}>{isCollapsed("mits")?"▼":"▲"}</button>
+          {/* LEFT: TODAY */}
+          <div style={{width:"35%",borderRight:"0.5px solid #e2e6ea",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            {/* Today header */}
+            <div style={{padding:"10px 14px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+              <div>
+                <div style={{fontSize:11,fontWeight:600,letterSpacing:"0.12em",textTransform:"uppercase",color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Today</div>
+                <div style={{fontSize:12,color:"#4a6a8a"}}>{now.toLocaleDateString("en-PH",{weekday:"short",month:"short",day:"numeric"})}</div>
+              </div>
+              <span style={{fontSize:11,color:todayTasks.length===0?"#b0bec8":todayTasks.filter(t=>t.done).length===todayTasks.length?"#3B6D11":"#854F0B",fontFamily:"'DM Mono',monospace"}}>
+                {todayTasks.filter(t=>t.done).length}/{todayTasks.length}
+              </span>
             </div>
-          </div>
-          {!isCollapsed("mits")&&<>
-            {os.mits.map((m,i)=>(
-              <div key={m.id}
-                draggable onDragStart={e=>onDragStart(e,i,m)} onDragOver={e=>onDragOver(e,i)} onDrop={()=>onDrop(i)} onDragEnd={()=>{setDragIdx(null);setDragOverIdx(null);}}
-                onPointerDown={e=>{if(e.pointerType!=="mouse")touchMITRef.current={mitId:m.id,mitText:m.text};}}
-                className={`${dragIdx===i?"mit-dragging":""} ${dragOverIdx===i&&dragIdx!==i?"mit-dragover":""}`}
-                style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 0",borderBottom:i===os.mits.length-1?"none":"0.5px solid #f0f2f5"}}>
-                <span className="mit-drag">⠿</span>
-                <div onClick={()=>toggleMITDone(m)}
-                  style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${m.done?"#185FA5":"#d0d8e0"}`,background:m.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:10,color:"#fff"}}>
-                  {m.done?"✓":""}
+
+            {/* Today tasks */}
+            <div style={{flex:1,overflowY:"auto",padding:"4px 10px"}}>
+              {todayTasks.length===0&&<div style={{fontSize:11,color:"#d0d8e0",textAlign:"center",padding:"12px 0"}}>No tasks today</div>}
+              {todayTasks.map(t=>(
+                <div key={t.id} className="task-row" style={{display:"flex",alignItems:"flex-start",gap:6,padding:"4px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                  <div onClick={()=>toggleTaskDone(t)}
+                    style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${t.done?"#185FA5":"#d0d8e0"}`,background:t.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:8,color:"#fff"}}>
+                    {t.done?"✓":""}
+                  </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:12,color:t.done?"#b0bec8":"#1a2332",textDecoration:t.done?"line-through":"none",lineHeight:1.3}}>{t.text}</div>
+                    {t.carriedOver&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:10,background:"#FFF8EC",color:"#854F0B",fontFamily:"'DM Mono',monospace"}}>Carried</span>}
+                  </div>
+                  {t.done&&<button onClick={()=>archiveTask(t)} style={{fontSize:9,padding:"1px 5px",borderRadius:5,border:"0.5px solid #AFA9EC",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",flexShrink:0}}>Archive</button>}
+                  <div className="task-del del-btn" onClick={()=>deleteTask(t.id)}>✕</div>
                 </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,color:m.done?"#b0bec8":m.id===activeMIT?.id?"#185FA5":"#3a4a5a",lineHeight:1.4,textDecoration:m.done?"line-through":"none"}}>{m.text}</div>
-                  {(m.dueDate||m.clickupId)&&(
-                    <div style={{display:"flex",alignItems:"center",gap:5,marginTop:2}}>
-                      {m.clickupId&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"#F4F3FE",color:"#534AB7",fontFamily:"'DM Mono',monospace",fontWeight:600}}>CU</span>}
-                      {m.dueDate&&<span style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>{m.dueDate}</span>}
+              ))}
+              <div style={{marginTop:6}}>
+                <input style={{...INP,width:"100%",fontSize:11,padding:"5px 8px",boxSizing:"border-box"}} placeholder="+ Add to today..."
+                  value={newTask} onChange={e=>setNewTask(e.target.value)}
+                  onKeyDown={e=>{if(e.key==="Enter"&&newTask.trim()){addTask(newTask.trim(),today);setNewTask("");}}}/>
+              </div>
+            </div>
+
+            {/* Time Blocks */}
+            <div style={{borderTop:"0.5px solid #e2e6ea",maxHeight:130,overflowY:"auto",flexShrink:0}}>
+              <div style={{padding:"5px 10px 2px",fontSize:9,fontWeight:600,letterSpacing:"0.12em",textTransform:"uppercase",color:"#b0bec8",fontFamily:"'DM Mono',monospace",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+                <span>Time Blocks</span>
+                {curBlock&&<span style={{fontSize:9,background:"#EBF3FC",color:"#185FA5",padding:"1px 6px",borderRadius:20,fontFamily:"'DM Mono',monospace"}}>NOW: {curBlock.label}</span>}
+              </div>
+              {os.tbs.map(tb=>(
+                <div key={tb.id} data-tbid={tb.id}
+                  onClick={()=>setActiveBlockId(b=>b===tb.id?null:tb.id)}
+                  style={{display:"flex",alignItems:"center",gap:6,padding:"4px 10px",borderBottom:"0.5px solid #f0f2f5",background:activeBlockId===tb.id?"#EBF3FC":"transparent",cursor:"pointer"}}>
+                  {editTB===tb.id?(
+                    <div style={{display:"flex",gap:4,flex:1,flexWrap:"wrap"}}>
+                      <input style={{...INP,width:46,border:"1px solid #185FA5",fontSize:10,padding:"3px 5px"}} defaultValue={tb.time} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,time:e.target.value}:x)})} placeholder="08:00"/>
+                      <input style={{...INP,flex:1,border:"1px solid #185FA5",fontSize:10,padding:"3px 5px"}} defaultValue={tb.label} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,label:e.target.value}:x)})} placeholder="Label"/>
+                      <button onClick={e=>{e.stopPropagation();setEditTB(null);}} style={{fontSize:9,padding:"2px 6px",borderRadius:5,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer"}}>Done</button>
+                      <button onClick={e=>{e.stopPropagation();setOS({tbs:os.tbs.filter(x=>x.id!==tb.id)});setEditTB(null);}} style={{fontSize:9,padding:"2px 4px",borderRadius:5,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>✕</button>
                     </div>
+                  ):(
+                    <>
+                      <div style={{width:3,height:16,borderRadius:2,flexShrink:0,background:TB_COLORS[tb.type]||"#b0bec8"}}/>
+                      <div style={{fontSize:9,color:"#b0bec8",fontFamily:"'DM Mono',monospace",width:28,flexShrink:0}}>{tb.time}</div>
+                      <div style={{fontSize:11,color:activeBlockId===tb.id?"#185FA5":"#3a4a5a",fontWeight:500,flex:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>
+                        {tb.label}
+                        {curBlock?.id===tb.id&&<span style={{fontSize:8,padding:"1px 3px",borderRadius:3,background:"#EBF3FC",color:"#185FA5",marginLeft:4,fontFamily:"'DM Mono',monospace"}}>NOW</span>}
+                      </div>
+                      <button onClick={e=>{e.stopPropagation();setEditTB(tb.id);}} style={{fontSize:9,color:"#c0c8d0",background:"none",border:"none",cursor:"pointer",padding:"0 2px",flexShrink:0}}>✎</button>
+                    </>
                   )}
                 </div>
-                {m.done&&<button onClick={()=>archiveMIT(m)} style={{fontSize:10,padding:"1px 6px",borderRadius:6,border:"0.5px solid #AFA9EC",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",flexShrink:0}}>Archive</button>}
-                <div className="del-btn" onClick={()=>setOS({mits:os.mits.filter(x=>x.id!==m.id)})}>✕</div>
+              ))}
+              <div style={{padding:"4px 10px"}}>
+                <button onClick={()=>{const id=os.nid||100;setOS({tbs:[...os.tbs,{id,time:"09:00",label:"New Block",sub:"",type:"Deep Work"}],nid:id+1});}} style={{...SBTN,fontSize:9,width:"100%"}}>+ Add block</button>
+              </div>
+            </div>
+          </div>
+
+          {/* RIGHT: THIS WEEK */}
+          <div style={{width:"65%",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+            {/* Week header */}
+            <div style={{padding:"10px 14px",borderBottom:"0.5px solid #f0f2f5",display:"flex",alignItems:"center",justifyContent:"space-between",flexShrink:0}}>
+              <button onClick={()=>setWeekOffset(w=>w-1)} style={{...SBTN,fontSize:11,padding:"3px 10px"}}>&#8592;</button>
+              <div style={{fontSize:12,fontWeight:600,color:"#1a2332",fontFamily:"'DM Mono',monospace"}}>
+                {weekDates[0]?.dayName} {weekDates[0]?.dateNum} -- {weekDates[6]?.dayName} {weekDates[6]?.dateNum}
+              </div>
+              {weekOffset!==0&&<button onClick={()=>setWeekOffset(0)} style={{...SBTN,fontSize:10}}>Today</button>}
+              <button onClick={()=>setWeekOffset(w=>w+1)} style={{...SBTN,fontSize:11,padding:"3px 10px"}}>&#8594;</button>
+            </div>
+
+            {/* Day columns */}
+            <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",flex:1,overflow:"hidden"}}>
+              {weekDates.map(day=>{
+                const dayTasks = tasks.filter(t=>t.scheduledDate===day.date);
+                return (
+                  <div key={day.date} style={{borderRight:"0.5px solid #f0f2f5",display:"flex",flexDirection:"column",overflow:"hidden"}}>
+                    <div style={{padding:"5px 4px",textAlign:"center",background:day.isToday?"#EBF3FC":"transparent",borderBottom:"0.5px solid #f0f2f5",flexShrink:0}}>
+                      <div style={{fontSize:9,fontWeight:600,color:day.isToday?"#185FA5":day.isPast?"#b0bec8":"#8a9ab0",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.04em"}}>{day.dayName}</div>
+                      <div style={{fontSize:14,fontWeight:day.isToday?700:400,color:day.isToday?"#185FA5":day.isPast?"#b0bec8":"#1a2332",lineHeight:1.2}}>{day.dateNum}</div>
+                    </div>
+                    <div style={{flex:1,overflowY:"auto",padding:"3px 3px"}}>
+                      {dayTasks.map(t=>(
+                        <div key={t.id}
+                          onClick={()=>toggleTaskDone(t)}
+                          style={{fontSize:10,padding:"3px 5px",borderRadius:5,background:t.done?"#f0f2f5":"#f8f9fb",border:"0.5px solid #e2e6ea",marginBottom:2,color:t.done?"#b0bec8":"#1a2332",textDecoration:t.done?"line-through":"none",borderLeft:t.carriedOver?"2px solid #854F0B":"none",cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1.4}}>
+                          {t.text.length>24?t.text.slice(0,24)+"...":t.text}
+                        </div>
+                      ))}
+                      {dayTasks.length===0&&<div style={{fontSize:9,color:"#e2e6ea",textAlign:"center",padding:"8px 0"}}>--</div>}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* ── ROW 1: Backlog | Pomodoro | Operations | OKR ── */}
+        <div style={{display:"grid",gridTemplateColumns:"repeat(4,1fr)",gap:12}}>
+
+        {/* Backlog */}
+        <div style={P}>
+          <div style={PL}>
+            <span>Backlog</span>
+            <div style={{display:"flex",alignItems:"center",gap:6}}>
+              <span style={{color:"#8a9ab0",fontSize:11}}>{backlogTasks.length}</span>
+              {cuEnabled&&<button onClick={openCuPicker} style={{...SBTN,color:"#534AB7",borderColor:"#AFA9EC",background:"#F4F3FE",fontSize:10}}>&#8595; ClickUp</button>}
+              <button style={{...SBTN,color:"#534AB7",borderColor:"#534AB744",background:"#F4F3FE"}} onClick={()=>setShowArchive(a=>!a)}>Wins</button>
+              <button style={SBTN} onClick={()=>toggleCollapse("backlog")}>{isCollapsed("backlog")?"▼":"▲"}</button>
+            </div>
+          </div>
+          {!isCollapsed("backlog")&&<>
+            {backlogTasks.length===0&&<div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"12px 0"}}>No backlog tasks.</div>}
+            {backlogTasks.map(t=>(
+              <div key={t.id} className="task-row" style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+                <div onClick={()=>toggleTaskDone(t)}
+                  style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${t.done?"#185FA5":"#d0d8e0"}`,background:t.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:10,color:"#fff"}}>
+                  {t.done?"✓":""}
+                </div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontSize:13,color:t.done?"#b0bec8":"#3a4a5a",lineHeight:1.4,textDecoration:t.done?"line-through":"none"}}>{t.text}</div>
+                  <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
+                    {t.carriedOver&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:10,background:"#FFF8EC",color:"#854F0B",fontFamily:"'DM Mono',monospace"}}>Carried</span>}
+                    {t.clickupId&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"#F4F3FE",color:"#534AB7",fontFamily:"'DM Mono',monospace",fontWeight:600}}>CU</span>}
+                  </div>
+                </div>
+                {t.done&&<button onClick={()=>archiveTask(t)} style={{fontSize:10,padding:"1px 6px",borderRadius:6,border:"0.5px solid #AFA9EC",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",flexShrink:0}}>Archive</button>}
+                <div className="task-del del-btn" onClick={()=>deleteTask(t.id)}>✕</div>
               </div>
             ))}
             <div style={{display:"flex",gap:6,marginTop:8}}>
-              <input style={{...INP,flex:1,fontSize:13}} placeholder="Add task..." value={newMIT} onChange={e=>setNewMIT(e.target.value)} onKeyDown={e=>e.key==="Enter"&&addMIT()}/>
-              <button style={{...ABTN,fontSize:12,padding:"6px 10px"}} onClick={addMIT}>+</button>
+              <input style={{...INP,flex:1,fontSize:13}} placeholder="Add task..." value={newBacklogTask}
+                onChange={e=>setNewBacklogTask(e.target.value)}
+                onKeyDown={e=>e.key==="Enter"&&addBacklogTask()}/>
+              <button style={{...ABTN,fontSize:12,padding:"6px 10px"}} onClick={addBacklogTask}>+</button>
             </div>
           </>}
         </div>
@@ -603,7 +741,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                   </div>
                 ))}
               </div>
-              <div style={{padding:"10px 14px",borderTop:"0.5px solid #f0f2f5",fontSize:11,color:"#b0bec8",textAlign:"center"}}>Click any task to add it as an MIT</div>
+              <div style={{padding:"10px 14px",borderTop:"0.5px solid #f0f2f5",fontSize:11,color:"#b0bec8",textAlign:"center"}}>Click any task to add it to Backlog</div>
             </div>
           </div>
         )}
@@ -612,7 +750,6 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
         <div style={{...P,display:"flex",flexDirection:"column",alignItems:"center"}}>
           <div style={{...PL,width:"100%"}}><span>Pomodoro</span><span style={{color:"#8a9ab0",fontSize:11}}>{pomoSessions} sessions</span></div>
 
-          {/* Mode selector */}
           <div style={{display:"flex",gap:4,marginBottom:10,width:"100%"}}>
             {POMO_MODES.map(m=>(
               <button key={m.key} onClick={()=>switchPomoMode(m.key)}
@@ -622,7 +759,6 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             ))}
           </div>
 
-          {/* Deep work slider */}
           {pomoModeKey==="deepwork"&&(
             <div style={{width:"100%",marginBottom:10}}>
               <div style={{display:"flex",justifyContent:"space-between",fontSize:11,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",marginBottom:4}}>
@@ -637,11 +773,11 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             </div>
           )}
 
-          <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:6,alignSelf:"flex-start",textTransform:"uppercase",letterSpacing:"0.08em"}}>Linked MIT</div>
+          <div style={{fontSize:11,color:"#b0bec8",fontFamily:"'DM Mono',monospace",marginBottom:6,alignSelf:"flex-start",textTransform:"uppercase",letterSpacing:"0.08em"}}>Linked Task</div>
           <select style={{width:"100%",fontSize:12,padding:"6px 8px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",marginBottom:12}}
-            value={pomoMIT||""} onChange={e=>setPomoMIT(e.target.value?Number(e.target.value):null)}>
-            <option value="">— Select MIT —</option>
-            {os.mits.filter(m=>!m.done).map(m=><option key={m.id} value={m.id}>{m.text.slice(0,36)}{m.text.length>36?"…":""}</option>)}
+            value={pomoTaskId||""} onChange={e=>setPomoTaskId(e.target.value||null)}>
+            <option value="">-- Select task --</option>
+            {todayTasks.filter(t=>!t.done).map(t=><option key={t.id} value={t.id}>{t.text.slice(0,36)}{t.text.length>36?"...":""}</option>)}
           </select>
 
           <div style={{position:"relative",width:110,height:110,display:"flex",alignItems:"center",justifyContent:"center",marginBottom:10}}>
@@ -661,58 +797,13 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
               {pomoActive?"⏸":"▶"}
             </button>
             <button style={{...ABTN,fontSize:12,padding:"6px 12px",background:"#f8f9fb",color:"#6a8aaa",borderColor:"#e2e6ea"}}
-              onClick={()=>{setPomoActive(false);setPomoMode("work");setPomoSecs(pomoModeKey==="deepwork"?deepWorkMins*60:pomoModeConfig.workMins*60);}}>↺</button>
+              onClick={()=>{setPomoActive(false);setPomoMode("work");setPomoSecs(pomoModeKey==="deepwork"?deepWorkMins*60:pomoModeConfig.workMins*60);}}>&#8635;</button>
           </div>
-
-          {/* Time Blocks section */}
-          <div style={{width:"100%",marginTop:12,borderTop:"0.5px solid #e2e6ea",paddingTop:10}}>
-            <div style={{display:"flex",alignItems:"center",gap:6,marginBottom:8}}>
-              <div style={{flex:1,fontSize:10,fontWeight:600,letterSpacing:"0.12em",textTransform:"uppercase",color:"#b0bec8",fontFamily:"'DM Mono',monospace"}}>Time Blocks</div>
-              {curBlock&&<span style={{fontSize:9,background:"#EBF3FC",color:"#185FA5",padding:"2px 7px",borderRadius:20,fontFamily:"'DM Mono',monospace",flexShrink:0}}>NOW: {curBlock.label}</span>}
-              <button style={{...SBTN,fontSize:10,flexShrink:0}} onClick={()=>{const id=os.nid||100;setOS({tbs:[...os.tbs,{id,time:"09:00",label:"New Block",sub:"",type:"Deep Work"}],nid:id+1});}}>+</button>
-            </div>
-            <div style={{maxHeight:240,overflowY:"auto"}}>
-              {os.tbs.map(tb=>(
-                <div key={tb.id}
-                  data-tbid={tb.id}
-                  onDragOver={e=>onTBDragOver(e,tb.id)}
-                  onDrop={e=>onTBDrop(e,tb.id)}
-                  onDragLeave={()=>setTbDragOverId(null)}
-                  onClick={()=>{setActiveBlockId(tb.id);setPomoMIT(tb.mitId||null);}}
-                  style={{display:"flex",alignItems:"flex-start",gap:7,padding:"5px 8px",borderRadius:7,marginBottom:3,cursor:"pointer",background:activeBlockId===tb.id?"#EBF3FC":tbDragOverId===tb.id?"#f0f7ff":"#f8f9fb",border:`0.5px solid ${activeBlockId===tb.id?"#185FA5":tbDragOverId===tb.id?"#c5ddf5":"#e2e6ea"}`,transition:"background 0.12s"}}>
-                  {editTB===tb.id?(
-                    <div style={{display:"flex",gap:4,flex:1,flexWrap:"wrap"}}>
-                      <input style={{...INP,width:52,border:"1px solid #185FA5",fontSize:11}} defaultValue={tb.time} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,time:e.target.value}:x)})} placeholder="08:00"/>
-                      <input style={{...INP,flex:1,border:"1px solid #185FA5",fontSize:11}} defaultValue={tb.label} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,label:e.target.value}:x)})} placeholder="Label"/>
-                      <input style={{...INP,flex:2,border:"1px solid #185FA5",fontSize:11}} defaultValue={tb.sub} onBlur={e=>setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,sub:e.target.value}:x)})} placeholder="Description"/>
-                      <button onClick={e=>{e.stopPropagation();setEditTB(null);}} style={{fontSize:10,padding:"3px 7px",borderRadius:6,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer"}}>Done</button>
-                      <button onClick={e=>{e.stopPropagation();setOS({tbs:os.tbs.filter(x=>x.id!==tb.id)});setEditTB(null);}} style={{fontSize:10,padding:"3px 5px",borderRadius:6,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>✕</button>
-                    </div>
-                  ):(
-                    <>
-                      <div style={{width:3,minHeight:22,borderRadius:2,flexShrink:0,background:TB_COLORS[tb.type]||"#b0bec8",alignSelf:"stretch"}}/>
-                      <div style={{fontSize:10,color:"#b0bec8",fontFamily:"'DM Mono',monospace",width:30,flexShrink:0,paddingTop:2}}>{tb.time}</div>
-                      <div style={{flex:1,minWidth:0}}>
-                        <div style={{fontSize:12,color:activeBlockId===tb.id?"#185FA5":"#3a4a5a",fontWeight:500,lineHeight:1.3}}>
-                          {tb.label}
-                          {curBlock?.id===tb.id&&<span style={{fontSize:9,padding:"1px 4px",borderRadius:3,background:"#EBF3FC",color:"#185FA5",fontFamily:"'DM Mono',monospace",marginLeft:4}}>NOW</span>}
-                        </div>
-                        {tb.sub&&<div style={{fontSize:10,color:"#b0bec8",marginTop:1,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{tb.sub}</div>}
-                        {tb.mitId&&(()=>{
-                          const lm=os.mits.find(x=>x.id===tb.mitId);
-                          return lm?(<div style={{fontSize:10,color:lm.done?"#3B6D11":"#185FA5",marginTop:2,display:"flex",alignItems:"center",gap:3}}>
-                            {lm.done&&<span>✓</span>}
-                            <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",flex:1}}>{lm.text.slice(0,26)}{lm.text.length>26?"...":""}</span>
-                            <span onClick={e=>{e.stopPropagation();setOS({tbs:os.tbs.map(x=>x.id===tb.id?{...x,mitId:undefined}:x)});}} style={{cursor:"pointer",color:"#b0bec8",fontSize:11,flexShrink:0}}>×</span>
-                          </div>):null;
-                        })()}
-                      </div>
-                      <button onClick={e=>{e.stopPropagation();setEditTB(tb.id);}} style={{fontSize:10,color:"#c0c8d0",background:"none",border:"none",cursor:"pointer",padding:"0 2px",flexShrink:0}}>✎</button>
-                    </>
-                  )}
-                </div>
-              ))}
-            </div>
+          <div style={{display:"flex",gap:8,marginTop:8,fontSize:10,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",flexWrap:"wrap",justifyContent:"center"}}>
+            <span>{pomoSessions} sessions</span>
+            <span>·</span>
+            <span>{Math.floor(pomoSessions*(pomoModeKey==="deepwork"?deepWorkMins:pomoModeConfig.workMins)/60)}h {(pomoSessions*(pomoModeKey==="deepwork"?deepWorkMins:pomoModeConfig.workMins))%60}m</span>
+            {pomoSessions>2&&<span>· 🔥</span>}
           </div>
         </div>
 
@@ -734,32 +825,26 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
               {(crmData as any).projects?.length===0&&<div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"16px 0"}}>No projects yet. Go to Projects tab to create one.</div>}
               {!((crmData as any).projects?.length===0)&&(
                 <>
-                  {/* Mini stats */}
                   <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:6,marginBottom:10}}>
                     <div style={{background:"#EBF3FC",borderRadius:7,padding:"6px 10px",textAlign:"center"}}>
                       <div style={{fontSize:15,fontWeight:600,color:"#185FA5",fontFamily:"'DM Mono',monospace"}}>{activeProjects.length}</div>
                       <div style={{fontSize:9,color:"#185FA5",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.06em"}}>Open Projects</div>
                     </div>
-                    <div
-                      onClick={()=>{sessionStorage.setItem("openProjectFilter","Overdue Payment");onNavigate?.("projects");}}
-                      style={{background:"#FEF0F0",borderRadius:7,padding:"6px 10px",textAlign:"center",cursor:"pointer"}}
-                    >
+                    <div onClick={()=>{sessionStorage.setItem("openProjectFilter","Overdue Payment");onNavigate?.("projects");}}
+                      style={{background:"#FEF0F0",borderRadius:7,padding:"6px 10px",textAlign:"center",cursor:"pointer"}}>
                       <div style={{fontSize:15,fontWeight:600,color:"#A32D2D",fontFamily:"'DM Mono',monospace"}}>{((crmData as any).projects||[]).filter((p:{paymentStatus:string})=>p.paymentStatus==="Overdue").length}</div>
                       <div style={{fontSize:9,color:"#A32D2D",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.06em"}}>Overdue Pay</div>
                     </div>
-                    <div
-                      onClick={()=>{sessionStorage.setItem("openProjectFilter","Follow Up");onNavigate?.("projects");}}
-                      style={{background:"#FFF8EC",borderRadius:7,padding:"6px 10px",textAlign:"center",cursor:"pointer"}}
-                    >
+                    <div onClick={()=>{sessionStorage.setItem("openProjectFilter","Follow Up");onNavigate?.("projects");}}
+                      style={{background:"#FFF8EC",borderRadius:7,padding:"6px 10px",textAlign:"center",cursor:"pointer"}}>
                       <div style={{fontSize:15,fontWeight:600,color:"#854F0B",fontFamily:"'DM Mono',monospace"}}>{((crmData as any).projects||[]).filter((p:{stage:string;rfqDate?:string;rfqDeadline?:string;createdAt:string})=>{const ref=p.rfqDeadline||p.rfqDate||p.createdAt;const d=Math.floor((Date.now()-new Date(ref).getTime())/86400000);return ["RFQ Received","Sourcing","RFQ Submitted"].includes(p.stage)&&d>=15&&d<=30;}).length}</div>
                       <div style={{fontSize:9,color:"#854F0B",opacity:0.7,textTransform:"uppercase" as const,letterSpacing:"0.06em"}}>Follow Up</div>
                     </div>
                   </div>
-                  {activeProjects.slice(0,10).map((p:{id:string;name:string;client:string;stage:string;paymentStatus?:string;grossProfit?:number},i:number)=>{
+                  {activeProjects.slice(0,10).map((p:{id:string;name:string;client:string;stage:string;paymentStatus?:string;grossProfit?:number})=>{
                     const sc = STAGE_C[p.stage]||{bg:"#f0f2f5",fg:"#8a9ab0"};
                     return(
-                      <div key={p.id}
-                        style={{padding:"6px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"pointer"}}
+                      <div key={p.id} style={{padding:"6px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"pointer"}}
                         onMouseEnter={e=>(e.currentTarget.style.background="#f0f4ff")}
                         onMouseLeave={e=>(e.currentTarget.style.background="")}
                         onClick={()=>{sessionStorage.setItem("openProjectId",p.id);onNavigate?.("projects");}}>
@@ -818,7 +903,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
           )}
           <div style={{marginTop:8,textAlign:"right"}}>
             <button onClick={()=>onNavigate?.(opsTab==="projects"?"projects":"crm")} style={{fontSize:10,color:"#185FA5",background:"none",border:"none",cursor:"pointer",fontFamily:"'DM Mono',monospace"}}>
-              → Go to {opsTab==="projects"?"Projects":"CRM"}
+              &#8594; Go to {opsTab==="projects"?"Projects":"CRM"}
             </button>
           </div>
         </div>
@@ -878,7 +963,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
 
         </div>{/* end Row 1 */}
 
-        {/* ── ROW 2: Vitals, Brewing, Crosshairs ── */}
+        {/* ── ROW 2: Vitals | Brewing | Crosshairs ── */}
         <div style={{display:"grid",gridTemplateColumns:"repeat(3,1fr)",gap:12}}>
 
         {/* Vitals */}
@@ -919,6 +1004,61 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             ))}
           </div>
           <div style={{fontSize:10,color:"#b0bec8",marginTop:6,textAlign:"right"}}>double-tap to edit</div>
+        </div>
+
+        {/* Brewing */}
+        <div style={P}>
+          <div style={PL}>
+            <span>Brewing</span>
+            <div style={{display:"flex",alignItems:"center",gap:5}}>
+              <span style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:"#f0f2f5",color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{brewing.length}</span>
+              <button style={SBTN} onClick={()=>setShowBrewForm(s=>!s)}>{showBrewForm?"Cancel":"+"}</button>
+            </div>
+          </div>
+          {showBrewForm&&(
+            <div style={{background:"#f8f9fb",borderRadius:9,padding:"10px",marginBottom:10,border:"0.5px solid #e2e6ea"}}>
+              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
+                {([["What","what","What are you waiting on?"],["Who","who","Who is responsible?"],["Since","since","e.g. Apr 3"]] as [string,string,string][]).map(([lbl,k,ph])=>(
+                  <div key={k}>
+                    <div style={{fontSize:9,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2,fontFamily:"'DM Mono',monospace"}}>{lbl}</div>
+                    <input style={{...INP,width:"100%",fontSize:12}} placeholder={ph} value={(newBrew as Record<string,string>)[k]} onChange={e=>setNewBrew(b=>({...b,[k]:e.target.value}))}/>
+                  </div>
+                ))}
+                <div>
+                  <div style={{fontSize:9,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2,fontFamily:"'DM Mono',monospace"}}>Category</div>
+                  <select style={{...INP,width:"100%",fontSize:12}} value={newBrew.category} onChange={e=>setNewBrew(b=>({...b,category:e.target.value as BrewingItem["category"]}))}>
+                    {BREWING_CATEGORIES.map(c=><option key={c}>{c}</option>)}
+                  </select>
+                </div>
+              </div>
+              <button onClick={addBrew} style={{...ABTN,fontSize:12,padding:"6px 10px"}}>Save</button>
+            </div>
+          )}
+          {brewing.length===0&&!showBrewForm&&<div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"12px 0"}}>Nothing brewing.</div>}
+          {brewing.map((b,i)=>(
+            <div key={b.id} className="brew-row" onDoubleClick={()=>setEditBrewing(b.id)} {...panelDragHandlers("brew",i,editBrewing===b.id)} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 0",borderBottom:i===brewing.length-1?"none":"0.5px solid #f0f2f5",cursor:editBrewing===b.id?"default":"grab",...dragOverStyle("brew",i)}}>
+              {editBrewing===b.id?(
+                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,flex:1,alignItems:"end"}}>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:12}} defaultValue={b.what} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,what:e.target.value}:x)})} autoFocus/>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:12}} defaultValue={b.who} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,who:e.target.value}:x)})}/>
+                  <input style={{...INP,border:"1px solid #185FA5",fontSize:12}} defaultValue={b.since} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,since:e.target.value}:x)})}/>
+                  <div style={{display:"flex",gap:4}}>
+                    <button onClick={()=>setEditBrewing(null)} style={{flex:1,padding:"5px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>Done</button>
+                    <button onClick={()=>{setOS({brewing:brewing.filter(x=>x.id!==b.id)});setEditBrewing(null);}} style={{padding:"5px 8px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:12}}>✕</button>
+                  </div>
+                </div>
+              ):(
+                <>
+                  <div style={{width:8,height:8,borderRadius:"50%",background:BREWING_COLORS[b.category]?.fg||"#b0bec8",flexShrink:0,marginTop:4}}/>
+                  <div style={{flex:1}}>
+                    <div style={{fontSize:12,color:"#1a2332",fontWeight:500,lineHeight:1.3}}>{b.what}</div>
+                    <div style={{fontSize:10,color:"#8a9ab0",marginTop:2,fontFamily:"'DM Mono',monospace"}}>{b.who}{b.since?` · Since ${b.since}`:""}</div>
+                  </div>
+                  <span style={{fontSize:9,padding:"2px 6px",borderRadius:20,background:BREWING_COLORS[b.category]?.bg,color:BREWING_COLORS[b.category]?.fg,fontFamily:"'DM Mono',monospace",fontWeight:600,flexShrink:0}}>{b.category}</span>
+                </>
+              )}
+            </div>
+          ))}
         </div>
 
         {/* Crosshairs */}
@@ -979,82 +1119,20 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
           ))}
         </div>
 
-        {/* Brewing */}
-        <div style={P}>
-          <div style={PL}>
-            <span>Brewing</span>
-            <div style={{display:"flex",alignItems:"center",gap:5}}>
-              <span style={{fontSize:10,padding:"2px 7px",borderRadius:20,background:"#f0f2f5",color:"#8a9ab0",fontFamily:"'DM Mono',monospace"}}>{brewing.length}</span>
-              <button style={SBTN} onClick={()=>setShowBrewForm(s=>!s)}>{showBrewForm?"Cancel":"+"}</button>
-            </div>
-          </div>
-          {showBrewForm&&(
-            <div style={{background:"#f8f9fb",borderRadius:9,padding:"10px",marginBottom:10,border:"0.5px solid #e2e6ea"}}>
-              <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,marginBottom:6}}>
-                {([["What","what","What are you waiting on?"],["Who","who","Who is responsible?"],["Since","since","e.g. Apr 3"]] as [string,string,string][]).map(([lbl,k,ph])=>(
-                  <div key={k}>
-                    <div style={{fontSize:9,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2,fontFamily:"'DM Mono',monospace"}}>{lbl}</div>
-                    <input style={{...INP,width:"100%",fontSize:12}} placeholder={ph} value={(newBrew as Record<string,string>)[k]} onChange={e=>setNewBrew(b=>({...b,[k]:e.target.value}))}/>
-                  </div>
-                ))}
-                <div>
-                  <div style={{fontSize:9,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.08em",marginBottom:2,fontFamily:"'DM Mono',monospace"}}>Category</div>
-                  <select style={{...INP,width:"100%",fontSize:12}} value={newBrew.category} onChange={e=>setNewBrew(b=>({...b,category:e.target.value as BrewingItem["category"]}))}>
-                    {BREWING_CATEGORIES.map(c=><option key={c}>{c}</option>)}
-                  </select>
-                </div>
-              </div>
-              <button onClick={addBrew} style={{...ABTN,fontSize:12,padding:"6px 10px"}}>Save</button>
-            </div>
-          )}
-          {brewing.length===0&&!showBrewForm&&<div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"12px 0"}}>Nothing brewing.</div>}
-          {brewing.map((b,i)=>(
-            <div key={b.id} className="brew-row" onDoubleClick={()=>setEditBrewing(b.id)} {...panelDragHandlers("brew",i,editBrewing===b.id)} style={{display:"flex",alignItems:"flex-start",gap:8,padding:"7px 0",borderBottom:i===brewing.length-1?"none":"0.5px solid #f0f2f5",cursor:editBrewing===b.id?"default":"grab",...dragOverStyle("brew",i)}}>
-              {editBrewing===b.id?(
-                <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:5,flex:1,alignItems:"end"}}>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:12}} defaultValue={b.what} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,what:e.target.value}:x)})} autoFocus/>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:12}} defaultValue={b.who} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,who:e.target.value}:x)})}/>
-                  <input style={{...INP,border:"1px solid #185FA5",fontSize:12}} defaultValue={b.since} onBlur={e=>setOS({brewing:brewing.map(x=>x.id===b.id?{...x,since:e.target.value}:x)})}/>
-                  <div style={{display:"flex",gap:4}}>
-                    <button onClick={()=>setEditBrewing(null)} style={{flex:1,padding:"5px",borderRadius:7,border:"none",background:"#185FA5",color:"#fff",cursor:"pointer",fontSize:12,fontWeight:600}}>Done</button>
-                    <button onClick={()=>{setOS({brewing:brewing.filter(x=>x.id!==b.id)});setEditBrewing(null);}} style={{padding:"5px 8px",borderRadius:7,border:"0.5px solid #f5c6c6",background:"#FEF0F0",color:"#A32D2D",cursor:"pointer",fontSize:12}}>✕</button>
-                  </div>
-                </div>
-              ):(
-                <>
-                  <div style={{width:8,height:8,borderRadius:"50%",background:BREWING_COLORS[b.category]?.fg||"#b0bec8",flexShrink:0,marginTop:4}}/>
-                  <div style={{flex:1}}>
-                    <div style={{fontSize:12,color:"#1a2332",fontWeight:500,lineHeight:1.3}}>{b.what}</div>
-                    <div style={{fontSize:10,color:"#8a9ab0",marginTop:2,fontFamily:"'DM Mono',monospace"}}>{b.who}{b.since?` · Since ${b.since}`:""}</div>
-                  </div>
-                  <span style={{fontSize:9,padding:"2px 6px",borderRadius:20,background:BREWING_COLORS[b.category]?.bg,color:BREWING_COLORS[b.category]?.fg,fontFamily:"'DM Mono',monospace",fontWeight:600,flexShrink:0}}>{b.category}</span>
-                </>
-              )}
-            </div>
-          ))}
-        </div>
-
         </div>{/* end Row 2 */}
 
-        {/* ── ROW 3: Calendar, AI Insight ── */}
+        {/* ── ROW 3: Calendar | AI Insight ── */}
         <div style={{display:"grid",gridTemplateColumns:"2fr 1fr",gap:12}}>
-
-        {/* Calendar */}
-        <div>
-          {heavyLoaded && <Calendar timeBlocks={os.tbs}/>}
+          <div>{heavyLoaded && <Calendar timeBlocks={os.tbs}/>}</div>
+          {heavyLoaded && <div style={P}>
+            <div style={PL}><span>AI Insight</span><span style={{fontSize:10}}>Claude</span></div>
+            <button className="ai-b" onClick={getInsight} disabled={iLoad}>
+              {iLoad?<Spinner/>:<span>&#10022;</span>}
+              <span>{iLoad?"Analyzing...":insight?"Refresh":"Generate Insight"}</span>
+            </button>
+            {insight&&<div style={{marginTop:10,padding:"12px 14px",borderRadius:9,background:"#f8f9fb",border:"0.5px solid #e2e6ea",fontSize:13,color:"#1a2332",lineHeight:1.75,borderLeft:"3px solid #185FA5"}}>{insight}</div>}
+          </div>}
         </div>
-
-        {/* AI Insight */}
-        {heavyLoaded && <div style={P}>
-          <div style={PL}><span>AI Insight</span><span style={{fontSize:10}}>Claude</span></div>
-          <button className="ai-b" onClick={getInsight} disabled={iLoad}>
-            {iLoad?<Spinner/>:<span>✦</span>}
-            <span>{iLoad?"Analyzing...":insight?"Refresh":"Generate Insight"}</span>
-          </button>
-          {insight&&<div style={{marginTop:10,padding:"12px 14px",borderRadius:9,background:"#f8f9fb",border:"0.5px solid #e2e6ea",fontSize:13,color:"#1a2332",lineHeight:1.75,borderLeft:"3px solid #185FA5"}}>{insight}</div>}
-        </div>}
-
-        </div>{/* end Row 3 */}
 
       </div>
 
@@ -1062,7 +1140,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
       {showArchive && heavyLoaded && (()=>{
         const { dayMap, days, currentStreak, longestStreak, grid } = archiveData;
         const dotColor=(n:number)=>n===0?"#f0f2f5":n===1?"#B5D4F4":n===2?"#378ADD":"#185FA5";
-        const today=getTodayKey();
+        const todayKey=getTodayKey();
         return(
           <div style={{margin:"0 16px 16px",background:"#FAFAFF",border:"0.5px solid #AFA9EC",borderRadius:13,padding:"16px 18px"}}>
             <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12}}>
@@ -1082,7 +1160,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             </div>
             {archiveView==="streak"&&(<>
               <div style={{display:"flex",flexWrap:"wrap",gap:3,marginBottom:8}}>
-                {grid.map(d=><div key={d.key} title={`${d.key}: ${d.count} MITs`} style={{width:13,height:13,borderRadius:3,background:dotColor(d.count),flexShrink:0,border:d.key===today?"1.5px solid #534AB7":"none"}}/>)}
+                {grid.map(d=><div key={d.key} title={`${d.key}: ${d.count} tasks`} style={{width:13,height:13,borderRadius:3,background:dotColor(d.count),flexShrink:0,border:d.key===todayKey?"1.5px solid #534AB7":"none"}}/>)}
               </div>
               <div style={{display:"flex",alignItems:"center",gap:6,fontSize:11,color:"#b0bec8"}}>
                 <span>Less</span>{[0,1,2,3].map(n=><div key={n} style={{width:10,height:10,borderRadius:2,background:dotColor(n)}}/>)}<span>More</span>
@@ -1091,22 +1169,22 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             </>)}
             {archiveView==="feed"&&(
               <div style={{maxHeight:280,overflowY:"auto"}}>
-                {days.length===0&&<div style={{textAlign:"center",padding:16,color:"#b0bec8",fontSize:12}}>Archive MITs using the Archive button after completing them.</div>}
+                {days.length===0&&<div style={{textAlign:"center",padding:16,color:"#b0bec8",fontSize:12}}>Archive tasks using the Archive button after completing them.</div>}
                 {days.slice(0,30).map(day=>{
-                  const tasks=dayMap[day];
-                  const isStrong=tasks.length>=3;
+                  const dayTasks=dayMap[day];
+                  const isStrong=dayTasks.length>=3;
                   const dateLabel=new Date(day+"T12:00:00").toLocaleDateString("en-PH",{weekday:"short",month:"short",day:"numeric"});
                   return(
                     <div key={day} style={{marginBottom:12}}>
                       <div style={{display:"flex",alignItems:"center",gap:7,marginBottom:5}}>
                         <div style={{fontSize:10,fontWeight:600,color:"#8a9ab0",fontFamily:"'DM Mono',monospace",textTransform:"uppercase"}}>{dateLabel}</div>
                         <span style={{fontSize:9,padding:"1px 6px",borderRadius:20,background:isStrong?"#f0faf5":"#f0f2f5",color:isStrong?"#3B6D11":"#b0bec8",fontFamily:"'DM Mono',monospace",fontWeight:600}}>
-                          {tasks.length} MIT{tasks.length!==1?"s":""}{isStrong?" · Strong Day":""}
+                          {dayTasks.length} task{dayTasks.length!==1?"s":""}{isStrong?" · Strong Day":""}
                         </span>
                       </div>
-                      {tasks.map((t,i)=>(
-                        <div key={i} style={{display:"flex",alignItems:"flex-start",gap:7,padding:"4px 0",borderBottom:i===tasks.length-1?"none":"0.5px solid #f0f2f5"}}>
-                          <div style={{width:14,height:14,borderRadius:3,background:"#185FA5",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:"#fff",flexShrink:0,marginTop:1}}>✓</div>
+                      {dayTasks.map((t,i)=>(
+                        <div key={i} style={{display:"flex",alignItems:"flex-start",gap:7,padding:"4px 0",borderBottom:i===dayTasks.length-1?"none":"0.5px solid #f0f2f5"}}>
+                          <div style={{width:14,height:14,borderRadius:3,background:"#185FA5",display:"flex",alignItems:"center",justifyContent:"center",fontSize:9,color:"#fff",flexShrink:0,marginTop:1}}>&#10003;</div>
                           <div style={{fontSize:12,color:"#3a4a5a",lineHeight:1.4}}>{t}</div>
                         </div>
                       ))}
