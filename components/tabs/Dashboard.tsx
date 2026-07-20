@@ -132,6 +132,10 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const pomoRef = useRef<ReturnType<typeof setInterval>|null>(null);
   const osTbsRef = useRef<TimeBlock[]>([]);
   const pomoActiveRef = useRef(false);
+  const touchDragRef = useRef<{taskId:string;startX:number;startY:number;ghostEl?:HTMLDivElement}|null>(null);
+  const touchTimerRef = useRef<ReturnType<typeof setTimeout>|null>(null);
+  const touchStartRef = useRef<{x:number;y:number;taskId:string}|null>(null);
+  const moveTaskRef = useRef<((taskId:string,newDate?:string)=>void)|null>(null);
 
   // Panel item drag (OKR, Vitals, Crosshairs, Brewing)
   const panelDragSrc = useRef<{panel:string;idx:number}|null>(null);
@@ -140,6 +144,10 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   // New task system state
   const [weekOffset, setWeekOffset] = useState(0);
   const [dragOverZone, setDragOverZone] = useState<string|null>(null);
+  const [dragIdx, setDragIdx] = useState<number|null>(null);
+  const [dragOverIdx, setDragOverIdx] = useState<number|null>(null);
+  const [dragZone, setDragZone] = useState<string|null>(null);
+  const [touchDrag, setTouchDrag] = useState<{taskId:string;startX:number;startY:number;ghostEl?:HTMLDivElement}|null>(null);
   const [newTask, setNewTask] = useState("");
   const [newBacklogTask, setNewBacklogTask] = useState("");
 
@@ -302,6 +310,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
 
   osTbsRef.current = os.tbs;
   pomoActiveRef.current = pomoActive;
+  touchDragRef.current = touchDrag;
 
   // ── Computed values ──────────────────────────────────────────────────────
   const weekDates = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
@@ -349,6 +358,71 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
     return () => clearInterval(id);
   }, [cuEnabled, os.tasks]);
 
+  // ── Touch drag (iOS Safari pointer events) ───────────────────────────────
+  useEffect(() => {
+    const onMove = (e: PointerEvent) => {
+      if (touchStartRef.current) {
+        const dx = Math.abs(e.clientX - touchStartRef.current.x);
+        const dy = Math.abs(e.clientY - touchStartRef.current.y);
+        if (dx > 5 || dy > 5) {
+          if (touchTimerRef.current) { clearTimeout(touchTimerRef.current); touchTimerRef.current = null; }
+          touchStartRef.current = null;
+        }
+      }
+      const td = touchDragRef.current;
+      if (td?.ghostEl) {
+        td.ghostEl.style.left = `${e.clientX}px`;
+        td.ghostEl.style.top = `${e.clientY - 24}px`;
+      }
+    };
+    const onUp = (e: PointerEvent) => {
+      if (touchTimerRef.current) { clearTimeout(touchTimerRef.current); touchTimerRef.current = null; }
+      touchStartRef.current = null;
+      const td = touchDragRef.current;
+      if (!td) return;
+      if (td.ghostEl) td.ghostEl.remove();
+      const el = document.elementFromPoint(e.clientX, e.clientY);
+      const dropzone = el?.closest("[data-dropzone]");
+      if (dropzone && moveTaskRef.current) {
+        const zone = dropzone.getAttribute("data-dropzone")!;
+        const todayStr = new Date().toISOString().split("T")[0];
+        if (zone === "today") moveTaskRef.current(td.taskId, todayStr);
+        else if (zone === "backlog") moveTaskRef.current(td.taskId, undefined);
+        else if (zone.startsWith("week-")) moveTaskRef.current(td.taskId, zone.slice(5));
+      }
+      setTouchDrag(null);
+    };
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    return () => {
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+    };
+  }, []);
+
+  // ── Auto-archive done tasks at 3am Manila time ───────────────────────────
+  useEffect(() => {
+    const id = setInterval(() => {
+      const ph = new Date(new Date().toLocaleString("en-US", {timeZone: "Asia/Manila"}));
+      if (ph.getHours() !== 3 || ph.getMinutes() !== 0) return;
+      const yKey = new Date(Date.now() - 86400000).toISOString().split("T")[0];
+      const allTasks = os.tasks || [];
+      const toArchive = allTasks.filter(t => t.done && t.scheduledDate && t.scheduledDate <= yKey);
+      if (toArchive.length === 0) return;
+      const toArchiveIds = new Set(toArchive.map(t => t.id));
+      const newEntries: MITArchiveEntry[] = toArchive.map(t => ({
+        text: t.text,
+        doneAt: t.doneAt || Date.now(),
+        dayKey: t.scheduledDate!,
+      }));
+      const updatedArchive = [...newEntries, ...mitArchive].slice(0, 900);
+      setMitArchive(updatedArchive);
+      kvSet("mit:archive", updatedArchive);
+      setOS({ tasks: allTasks.filter(t => !toArchiveIds.has(t.id)) });
+    }, 60000);
+    return () => clearInterval(id);
+  }, [os.tasks, mitArchive]);
+
   const openCuPicker = async () => {
     setCuPicker(true); setCuLoading(true);
     try {
@@ -366,6 +440,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
       text: task.name,
       done: false,
       clickupId: task.id,
+      scheduledDate: today,
       createdAt: Date.now(),
     };
     setOS({tasks: [...(os.tasks||[]), taskItem]});
@@ -373,7 +448,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   };
 
   // ── Task functions ───────────────────────────────────────────────────────
-  const addTask = (text: string, date?: string) => {
+  const addTask = async (text: string, date?: string) => {
     const task: TaskItem = {
       id: Date.now().toString(36) + Math.random().toString(36).slice(2,5),
       text,
@@ -381,6 +456,13 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
       scheduledDate: date,
       createdAt: Date.now(),
     };
+    if (cuEnabled) {
+      try {
+        const res = await fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"create", name:text}) });
+        const data = await res.json();
+        if (data.taskId) task.clickupId = data.taskId;
+      } catch {}
+    }
     setOS({ tasks: [...tasks, task] });
   };
 
@@ -403,8 +485,14 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
     setNewBacklogTask("");
   };
 
-  const toggleTaskDone = (t: TaskItem) => {
-    setOS({ tasks: tasks.map(x => x.id===t.id ? {...x, done:!x.done, doneAt:!x.done?Date.now():undefined} : x) });
+  const toggleTaskDone = async (t: TaskItem) => {
+    const isDone = !t.done;
+    setOS({ tasks: tasks.map(x => x.id===t.id ? {...x, done:isDone, doneAt:isDone?Date.now():undefined} : x) });
+    if (t.clickupId && cuEnabled) {
+      try {
+        await fetch("/api/clickup-mit", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:isDone?"complete":"reopen", taskId:t.clickupId}) });
+      } catch {}
+    }
   };
 
   const deleteTask = (id: string) => {
@@ -424,6 +512,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
   const moveTask = (taskId: string, newDate?: string) => {
     setOS({ tasks: tasks.map(t => t.id===taskId ? {...t, scheduledDate:newDate, carriedOver:false} : t) });
   };
+  moveTaskRef.current = moveTask;
 
   // ── AI Insight ───────────────────────────────────────────────────────────
   const callAPI = async (system:string,user:string) => {
@@ -576,10 +665,24 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             </div>
 
             {/* Today tasks */}
-            <div style={{flex:1,overflowY:"auto",padding:"4px 10px"}}>
-              {todayTasks.length===0&&<div style={{fontSize:11,color:"#d0d8e0",textAlign:"center",padding:"12px 0"}}>No tasks today</div>}
-              {todayTasks.map(t=>(
-                <div key={t.id} className="task-row" style={{display:"flex",alignItems:"flex-start",gap:6,padding:"4px 0",borderBottom:"0.5px solid #f0f2f5"}}>
+            <div
+              data-dropzone="today"
+              style={{flex:1,overflowY:"auto",padding:"4px 10px",background:dragOverZone==="today"?"#f0f5ff":"transparent",transition:"background 0.15s"}}
+              onDragOver={e=>{e.preventDefault();setDragOverZone("today");}}
+              onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node))setDragOverZone(null);}}
+              onDrop={e=>{e.preventDefault();const tid=e.dataTransfer.getData("taskId");if(tid)moveTask(tid,today);setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}>
+              {todayTasks.length===0&&<div style={{fontSize:11,color:dragOverZone==="today"?"#185FA5":"#d0d8e0",textAlign:"center",padding:"12px 0"}}>{dragOverZone==="today"?"Drop to schedule today":"No tasks today"}</div>}
+              {todayTasks.map((t,ti)=>(
+                <div key={t.id} className="task-row"
+                  draggable={true}
+                  data-taskid={t.id}
+                  onDragStart={e=>{e.dataTransfer.setData("taskId",t.id);e.dataTransfer.setData("sourceZone","today");setDragZone("today");setDragIdx(ti);}}
+                  onDragEnd={()=>{setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}
+                  onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOverZone(null);setDragOverIdx(ti);}}
+                  onDragLeave={()=>setDragOverIdx(null)}
+                  onDrop={e=>{e.preventDefault();e.stopPropagation();const src=e.dataTransfer.getData("taskId");const sz=e.dataTransfer.getData("sourceZone");if(sz==="today"&&src!==t.id){const fi=todayTasks.findIndex(x=>x.id===src);if(fi!==-1&&fi!==ti){const re=reorderArr(todayTasks,fi,ti);const ids=new Set(re.map(x=>x.id));setOS({tasks:[...tasks.filter(x=>!ids.has(x.id)),...re]});}}else if(sz!=="today"&&src){moveTask(src,today);}setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}
+                  onPointerDown={e=>{if(e.pointerType==="mouse")return;touchStartRef.current={x:e.clientX,y:e.clientY,taskId:t.id};touchTimerRef.current=setTimeout(()=>{if(!touchStartRef.current)return;const ghost=document.createElement("div");ghost.style.cssText=`position:fixed;pointer-events:none;z-index:9999;opacity:0.85;background:#EBF3FC;border:1.5px solid #185FA5;border-radius:8px;padding:6px 10px;font-size:12px;color:#185FA5;font-family:'Plus Jakarta Sans',sans-serif;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;ghost.textContent=t.text;ghost.style.left=`${e.clientX}px`;ghost.style.top=`${e.clientY-24}px`;document.body.appendChild(ghost);setTouchDrag({taskId:t.id,startX:e.clientX,startY:e.clientY,ghostEl:ghost});touchStartRef.current=null;},300);}}
+                  style={{display:"flex",alignItems:"flex-start",gap:6,padding:"4px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"grab",background:dragZone==="today"&&dragOverIdx===ti&&dragIdx!==ti?"#EBF3FC":"transparent"}}>
                   <div onClick={()=>toggleTaskDone(t)}
                     style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${t.done?"#185FA5":"#d0d8e0"}`,background:t.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:8,color:"#fff"}}>
                     {t.done?"✓":""}
@@ -651,21 +754,32 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             <div style={{display:"grid",gridTemplateColumns:"repeat(7,1fr)",flex:1,overflow:"hidden"}}>
               {weekDates.map(day=>{
                 const dayTasks = tasks.filter(t=>t.scheduledDate===day.date);
+                const weekZone = `week-${day.date}`;
                 return (
                   <div key={day.date} style={{borderRight:"0.5px solid #f0f2f5",display:"flex",flexDirection:"column",overflow:"hidden"}}>
                     <div style={{padding:"5px 4px",textAlign:"center",background:day.isToday?"#EBF3FC":"transparent",borderBottom:"0.5px solid #f0f2f5",flexShrink:0}}>
                       <div style={{fontSize:9,fontWeight:600,color:day.isToday?"#185FA5":day.isPast?"#b0bec8":"#8a9ab0",fontFamily:"'DM Mono',monospace",textTransform:"uppercase",letterSpacing:"0.04em"}}>{day.dayName}</div>
                       <div style={{fontSize:14,fontWeight:day.isToday?700:400,color:day.isToday?"#185FA5":day.isPast?"#b0bec8":"#1a2332",lineHeight:1.2}}>{day.dateNum}</div>
                     </div>
-                    <div style={{flex:1,overflowY:"auto",padding:"3px 3px"}}>
+                    <div
+                      data-dropzone={weekZone}
+                      style={{flex:1,overflowY:"auto",padding:"3px 3px",background:dragOverZone===weekZone?"#f0f5ff":"transparent",transition:"background 0.15s"}}
+                      onDragOver={e=>{e.preventDefault();setDragOverZone(weekZone);}}
+                      onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node))setDragOverZone(null);}}
+                      onDrop={e=>{e.preventDefault();const tid=e.dataTransfer.getData("taskId");if(tid)moveTask(tid,day.date);setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}>
                       {dayTasks.map(t=>(
                         <div key={t.id}
+                          draggable={true}
+                          data-taskid={t.id}
+                          onDragStart={e=>{e.dataTransfer.setData("taskId",t.id);e.dataTransfer.setData("sourceZone",weekZone);setDragZone(weekZone);}}
+                          onDragEnd={()=>{setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}
                           onClick={()=>toggleTaskDone(t)}
-                          style={{fontSize:10,padding:"3px 5px",borderRadius:5,background:t.done?"#f0f2f5":"#f8f9fb",border:"0.5px solid #e2e6ea",marginBottom:2,color:t.done?"#b0bec8":"#1a2332",textDecoration:t.done?"line-through":"none",borderLeft:t.carriedOver?"2px solid #854F0B":"none",cursor:"pointer",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1.4}}>
+                          onPointerDown={e=>{if(e.pointerType==="mouse")return;touchStartRef.current={x:e.clientX,y:e.clientY,taskId:t.id};touchTimerRef.current=setTimeout(()=>{if(!touchStartRef.current)return;const ghost=document.createElement("div");ghost.style.cssText=`position:fixed;pointer-events:none;z-index:9999;opacity:0.85;background:#EBF3FC;border:1.5px solid #185FA5;border-radius:8px;padding:6px 10px;font-size:12px;color:#185FA5;font-family:'Plus Jakarta Sans',sans-serif;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;ghost.textContent=t.text;ghost.style.left=`${e.clientX}px`;ghost.style.top=`${e.clientY-24}px`;document.body.appendChild(ghost);setTouchDrag({taskId:t.id,startX:e.clientX,startY:e.clientY,ghostEl:ghost});touchStartRef.current=null;},300);}}
+                          style={{fontSize:10,padding:"3px 5px",borderRadius:5,background:t.done?"#f0f2f5":"#f8f9fb",border:"0.5px solid #e2e6ea",marginBottom:2,color:t.done?"#b0bec8":"#1a2332",textDecoration:t.done?"line-through":"none",borderLeft:t.carriedOver?"2px solid #854F0B":"none",cursor:"grab",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1.4}}>
                           {t.text.length>24?t.text.slice(0,24)+"...":t.text}
                         </div>
                       ))}
-                      {dayTasks.length===0&&<div style={{fontSize:9,color:"#e2e6ea",textAlign:"center",padding:"8px 0"}}>--</div>}
+                      {dayTasks.length===0&&<div style={{fontSize:9,color:dragOverZone===weekZone?"#185FA5":"#e2e6ea",textAlign:"center",padding:"8px 0"}}>{dragOverZone===weekZone?"Drop":"--"}</div>}
                     </div>
                   </div>
                 );
@@ -689,24 +803,40 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
             </div>
           </div>
           {!isCollapsed("backlog")&&<>
-            {backlogTasks.length===0&&<div style={{fontSize:12,color:"#b0bec8",textAlign:"center",padding:"12px 0"}}>No backlog tasks.</div>}
-            {backlogTasks.map(t=>(
-              <div key={t.id} className="task-row" style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 0",borderBottom:"0.5px solid #f0f2f5"}}>
-                <div onClick={()=>toggleTaskDone(t)}
-                  style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${t.done?"#185FA5":"#d0d8e0"}`,background:t.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:10,color:"#fff"}}>
-                  {t.done?"✓":""}
-                </div>
-                <div style={{flex:1,minWidth:0}}>
-                  <div style={{fontSize:13,color:t.done?"#b0bec8":"#3a4a5a",lineHeight:1.4,textDecoration:t.done?"line-through":"none"}}>{t.text}</div>
-                  <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
-                    {t.carriedOver&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:10,background:"#FFF8EC",color:"#854F0B",fontFamily:"'DM Mono',monospace"}}>Carried</span>}
-                    {t.clickupId&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"#F4F3FE",color:"#534AB7",fontFamily:"'DM Mono',monospace",fontWeight:600}}>CU</span>}
+            <div
+              data-dropzone="backlog"
+              style={{minHeight:40,background:dragOverZone==="backlog"?"#f0f5ff":"transparent",transition:"background 0.15s",borderRadius:6}}
+              onDragOver={e=>{e.preventDefault();setDragOverZone("backlog");}}
+              onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node))setDragOverZone(null);}}
+              onDrop={e=>{e.preventDefault();const tid=e.dataTransfer.getData("taskId");if(tid)moveTask(tid,undefined);setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}>
+              {backlogTasks.length===0&&<div style={{fontSize:12,color:dragOverZone==="backlog"?"#185FA5":"#b0bec8",textAlign:"center",padding:"12px 0"}}>{dragOverZone==="backlog"?"Drop to add to backlog":"No backlog tasks."}</div>}
+              {backlogTasks.map((t,bi)=>(
+                <div key={t.id} className="task-row"
+                  draggable={true}
+                  data-taskid={t.id}
+                  onDragStart={e=>{e.dataTransfer.setData("taskId",t.id);e.dataTransfer.setData("sourceZone","backlog");setDragZone("backlog");setDragIdx(bi);}}
+                  onDragEnd={()=>{setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}
+                  onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOverZone(null);setDragOverIdx(bi);}}
+                  onDragLeave={()=>setDragOverIdx(null)}
+                  onDrop={e=>{e.preventDefault();e.stopPropagation();const src=e.dataTransfer.getData("taskId");const sz=e.dataTransfer.getData("sourceZone");if(sz==="backlog"&&src!==t.id){const fi=backlogTasks.findIndex(x=>x.id===src);if(fi!==-1&&fi!==bi){const re=reorderArr(backlogTasks,fi,bi);const ids=new Set(re.map(x=>x.id));setOS({tasks:[...tasks.filter(x=>!ids.has(x.id)),...re]});}}else if(sz!=="backlog"&&src){moveTask(src,undefined);}setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}
+                  onPointerDown={e=>{if(e.pointerType==="mouse")return;touchStartRef.current={x:e.clientX,y:e.clientY,taskId:t.id};touchTimerRef.current=setTimeout(()=>{if(!touchStartRef.current)return;const ghost=document.createElement("div");ghost.style.cssText=`position:fixed;pointer-events:none;z-index:9999;opacity:0.85;background:#EBF3FC;border:1.5px solid #185FA5;border-radius:8px;padding:6px 10px;font-size:12px;color:#185FA5;font-family:'Plus Jakarta Sans',sans-serif;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;ghost.textContent=t.text;ghost.style.left=`${e.clientX}px`;ghost.style.top=`${e.clientY-24}px`;document.body.appendChild(ghost);setTouchDrag({taskId:t.id,startX:e.clientX,startY:e.clientY,ghostEl:ghost});touchStartRef.current=null;},300);}}
+                  style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"grab",background:dragZone==="backlog"&&dragOverIdx===bi&&dragIdx!==bi?"#EBF3FC":"transparent"}}>
+                  <div onClick={()=>toggleTaskDone(t)}
+                    style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${t.done?"#185FA5":"#d0d8e0"}`,background:t.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:10,color:"#fff"}}>
+                    {t.done?"✓":""}
                   </div>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontSize:13,color:t.done?"#b0bec8":"#3a4a5a",lineHeight:1.4,textDecoration:t.done?"line-through":"none"}}>{t.text}</div>
+                    <div style={{display:"flex",alignItems:"center",gap:4,marginTop:2,flexWrap:"wrap"}}>
+                      {t.carriedOver&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:10,background:"#FFF8EC",color:"#854F0B",fontFamily:"'DM Mono',monospace"}}>Carried</span>}
+                      {t.clickupId&&<span style={{fontSize:9,padding:"1px 5px",borderRadius:3,background:"#F4F3FE",color:"#534AB7",fontFamily:"'DM Mono',monospace",fontWeight:600}}>CU</span>}
+                    </div>
+                  </div>
+                  {t.done&&<button onClick={()=>archiveTask(t)} style={{fontSize:10,padding:"1px 6px",borderRadius:6,border:"0.5px solid #AFA9EC",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",flexShrink:0}}>Archive</button>}
+                  <div className="task-del del-btn" onClick={()=>deleteTask(t.id)}>✕</div>
                 </div>
-                {t.done&&<button onClick={()=>archiveTask(t)} style={{fontSize:10,padding:"1px 6px",borderRadius:6,border:"0.5px solid #AFA9EC",background:"#F4F3FE",color:"#534AB7",cursor:"pointer",flexShrink:0}}>Archive</button>}
-                <div className="task-del del-btn" onClick={()=>deleteTask(t.id)}>✕</div>
-              </div>
-            ))}
+              ))}
+            </div>
             <div style={{display:"flex",gap:6,marginTop:8}}>
               <input style={{...INP,flex:1,fontSize:13}} placeholder="Add task..." value={newBacklogTask}
                 onChange={e=>setNewBacklogTask(e.target.value)}
