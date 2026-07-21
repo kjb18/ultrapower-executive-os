@@ -362,6 +362,15 @@ textarea.form-input{resize:vertical;min-height:80px;line-height:1.5}
 
     <!-- CREATE VIEW -->
     <div id="view-create">
+      <!-- Quick template picker -->
+      <div id="template-picker-bar" style="display:flex;align-items:center;gap:10px;background:var(--white);border:1px solid var(--up-border);border-radius:var(--radius-sm);padding:10px 14px;margin-bottom:16px">
+        <label style="font-size:11px;font-weight:600;letter-spacing:0.06em;text-transform:uppercase;color:var(--up-gray);flex-shrink:0">Load Template</label>
+        <select id="template-picker-select" class="form-input" style="flex:1;min-width:220px;padding:7px 10px;font-size:13px;cursor:pointer" onchange="onTemplatePickerChange(this.value)">
+          <option value="">Select a template...</option>
+        </select>
+        <button class="btn btn-outline" style="padding:7px 14px;font-size:12px;flex-shrink:0" onclick="showView('templates')">Manage</button>
+      </div>
+
       <!-- Doc type tabs -->
       <div class="doc-tabs">
         <button class="doc-tab active" onclick="setDocType('quotation',this)">Quotation</button>
@@ -1993,6 +2002,7 @@ async function saveTemplate() {
   await kvSaveSettings();
   if (nameEl) nameEl.value = '';
   renderTemplatesView();
+  renderTemplatePicker();
   showToast('Template saved: ' + name, 'success');
 }
 
@@ -2015,6 +2025,7 @@ async function deleteTemplate(id) {
   _templates = _templates.filter(function(t) { return t.id !== id; });
   await kvSaveSettings();
   renderTemplatesView();
+  renderTemplatePicker();
 }
 
 function startRenameTemplate(id) {
@@ -2043,6 +2054,27 @@ async function finishRenameTemplate(id, newName) {
     await kvSaveSettings();
   }
   renderTemplatesView();
+  renderTemplatePicker();
+}
+
+function renderTemplatePicker() {
+  var select = document.getElementById('template-picker-select');
+  if (!select) return;
+  var sorted = _templates.slice().sort(function(a,b){ return (b.lastUsed||0)-(a.lastUsed||0); });
+  var docLabel = {quotation:'Quotation',po:'Purchase Order',rfq:'RFQ Response',invoice:'Invoice',dr:'Delivery Receipt'};
+  select.innerHTML = '<option value="">Select a template (' + sorted.length + ' saved)...</option>' +
+    sorted.map(function(tpl) {
+      var dl = docLabel[tpl.docType] || tpl.docType;
+      return '<option value="' + tpl.id + '">' + escHtml(tpl.name) + ' · ' + dl +
+        (tpl.clientName ? ' · ' + escHtml(tpl.clientName) : '') + '</option>';
+    }).join('');
+}
+
+function onTemplatePickerChange(idStr) {
+  if (!idStr) return;
+  loadTemplate(parseInt(idStr, 10));
+  var select = document.getElementById('template-picker-select');
+  if (select) select.value = '';
 }
 
 function renderTemplatesView() {
@@ -2353,7 +2385,7 @@ document.addEventListener('DOMContentLoaded', function() {
       }
     } catch(e) {}
   });
-  kvLoadSettings();
+  kvLoadSettings().then(renderTemplatePicker);
 });
 </script>
 </body>
