@@ -87,7 +87,12 @@ export default function Projects() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [isSaving, setIsSaving] = useState(false);
-  const [showNewProject, setShowNewProject] = useState(false);
+  const [showCapture, setShowCapture] = useState(false);
+  const [captureMode, setCaptureMode] = useState<"paste"|"manual">("paste");
+  const [captureText, setCaptureText] = useState("");
+  const [captureImage, setCaptureImage] = useState<string|null>(null);
+  const [extracting, setExtracting] = useState(false);
+  const [extracted, setExtracted] = useState<any>(null);
   const [showNewExpense, setShowNewExpense] = useState(false);
   const [filterStage, setFilterStage] = useState("All");
   const [filterClient, setFilterClient] = useState("");
@@ -198,6 +203,20 @@ export default function Projects() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [selectedProject?.id]);
 
+  useEffect(() => {
+    const quickItems = sessionStorage.getItem("quickSourceItems");
+    const quickProject = sessionStorage.getItem("quickSourceProject");
+    if (quickItems && quickProject === selectedProject?.id) {
+      try {
+        const items = JSON.parse(quickItems);
+        setQuickSourceItems(items);
+        setShowQuickSource(true);
+        sessionStorage.removeItem("quickSourceItems");
+        sessionStorage.removeItem("quickSourceProject");
+      } catch { /* ignore malformed sessionStorage data */ }
+    }
+  }, [selectedProject?.id]);
+
   const loadData = async () => {
     setLoading(true);
     try {
@@ -246,7 +265,7 @@ export default function Projects() {
     const proj: Project = { id:genId(), ...np, createdAt:new Date().toISOString(), updatedAt:new Date().toISOString() };
     await saveProject(proj);
     setNP({name:"",client:"",stage:"RFQ Received",vatType:"VAT Inclusive",rfqDate:new Date().toISOString().split("T")[0],notes:""});
-    setShowNewProject(false);
+    setShowCapture(false);
   };
 
   const saveExpense = async () => {
@@ -604,7 +623,7 @@ export default function Projects() {
                 {STAGES.map(s=><option key={s}>{s}</option>)}
               </select>
               <input style={{...S.inp,width:200}} placeholder="Filter by client..." value={filterClient} onChange={e=>setFilterClient(e.target.value)}/>
-              <button onClick={()=>setShowNewProject(s=>!s)} style={S.addBtn}>{showNewProject?"Cancel":"+ New Project"}</button>
+              <button onClick={()=>{setShowCapture(s=>!s);setCaptureMode("paste");}} style={S.addBtn}>{showCapture?"Cancel":"+ New Project"}</button>
               <button onClick={()=>{setShowArchived(s=>!s);setSelectedPreview(null);}} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:`0.5px solid ${showArchived?"#854F0B":"#e2e6ea"}`,background:showArchived?"#FFF8EC":"#f8f9fb",color:showArchived?"#854F0B":"#4a6a8a",cursor:"pointer"}}>
                 {showArchived?"← Active":"Show Archived"}{!showArchived&&` (${projects.filter(p=>p.archived).length})`}
               </button>
@@ -616,36 +635,381 @@ export default function Projects() {
               )}
             </div>
 
-            {showNewProject&&(
-              <div style={{...S.card,padding:18,marginBottom:14}}>
-                <div style={{fontSize:12,fontWeight:600,color:"#1a2332",marginBottom:14,textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>New Project</div>
-                <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:10,marginBottom:12}}>
+            {showCapture&&(
+              <div style={{...S.card,padding:0,marginBottom:14,overflow:"hidden"}}>
+                {/* Header */}
+                <div style={{padding:"14px 18px",borderBottom:"0.5px solid #e2e6ea",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
                   <div>
-                    <span style={S.lbl}>Project Name</span>
-                    <input style={S.inp} placeholder="e.g. PGPC Wireline Surveillance Apr 2026" value={np.name} onChange={e=>setNP(n=>({...n,name:e.target.value}))}/>
+                    <div style={{fontSize:14,fontWeight:600,color:"#1a2332"}}>New Project</div>
+                    <div style={{fontSize:11,color:"#8a9ab0"}}>Paste an RFQ screenshot or text to auto-fill</div>
                   </div>
-                  <div>
-                    <span style={S.lbl}>Client</span>
-                    <input style={S.inp} placeholder="e.g. PGPC" value={np.client} onChange={e=>setNP(n=>({...n,client:e.target.value}))}/>
-                  </div>
-                  <div>
-                    <span style={S.lbl}>Deadline</span>
-                    <input style={S.inp} type="date" value={np.rfqDate} onChange={e=>setNP(n=>({...n,rfqDate:e.target.value}))}/>
-                  </div>
-                  <div>
-                    <span style={S.lbl}>VAT Type</span>
-                    <select style={S.inp} value={np.vatType} onChange={e=>setNP(n=>({...n,vatType:e.target.value as VatType}))}>
-                      {VAT_TYPES.map(v=><option key={v}>{v}</option>)}
-                    </select>
-                  </div>
-                  <div style={{gridColumn:"span 2"}}>
-                    <span style={S.lbl}>Notes</span>
-                    <input style={S.inp} placeholder="Optional notes" value={np.notes} onChange={e=>setNP(n=>({...n,notes:e.target.value}))}/>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>setCaptureMode("paste")}
+                      style={{fontSize:12,padding:"5px 12px",borderRadius:20,
+                        border:`0.5px solid ${captureMode==="paste"?"#185FA5":"#e2e6ea"}`,
+                        background:captureMode==="paste"?"#EBF3FC":"#f8f9fb",
+                        color:captureMode==="paste"?"#185FA5":"#8a9ab0",cursor:"pointer",fontWeight:captureMode==="paste"?600:400}}>
+                      Quick Capture
+                    </button>
+                    <button onClick={()=>setCaptureMode("manual")}
+                      style={{fontSize:12,padding:"5px 12px",borderRadius:20,
+                        border:`0.5px solid ${captureMode==="manual"?"#185FA5":"#e2e6ea"}`,
+                        background:captureMode==="manual"?"#EBF3FC":"#f8f9fb",
+                        color:captureMode==="manual"?"#185FA5":"#8a9ab0",cursor:"pointer",fontWeight:captureMode==="manual"?600:400}}>
+                      Manual Entry
+                    </button>
+                    <button onClick={()=>{setShowCapture(false);setExtracted(null);setCaptureImage(null);setCaptureText("");}}
+                      style={{fontSize:14,color:"#b0bec8",background:"none",border:"none",cursor:"pointer"}}>✕</button>
                   </div>
                 </div>
-                <button onClick={createProject} disabled={saving} style={{...S.addBtn,background:"#1a2332",color:"#fff",borderColor:"#1a2332"}}>
-                  {saving?<Spinner/>:<span>Create Project</span>}
-                </button>
+
+                {/* Quick Capture mode -- paste zone */}
+                {captureMode==="paste"&&!extracted&&(
+                  <div style={{padding:18}}>
+                    <div
+                      onPaste={(e)=>{
+                        const items=e.clipboardData?.items;
+                        if(!items) return;
+                        for(let i=0;i<items.length;i++){
+                          if(items[i].type.startsWith("image/")){
+                            const file=items[i].getAsFile();
+                            if(file){
+                              const reader=new FileReader();
+                              reader.onload=(ev)=>setCaptureImage(ev.target?.result as string);
+                              reader.readAsDataURL(file);
+                              return;
+                            }
+                          }
+                        }
+                        const text=e.clipboardData.getData("text");
+                        if(text) setCaptureText(text);
+                      }}
+                      style={{border:"1.5px dashed #d0d8e0",borderRadius:9,padding:"28px 20px",
+                        background:captureImage?"#fff":"#fafbfc",textAlign:"center",cursor:"pointer",
+                        marginBottom:14,position:"relative"}}
+                      onClick={()=>{ if(!captureImage) document.getElementById("rfq-upload-input")?.click(); }}>
+
+                      <input id="rfq-upload-input" type="file" accept="image/*,.pdf" style={{display:"none"}}
+                        onChange={(e)=>{
+                          const file=e.target.files?.[0];
+                          if(file){
+                            const reader=new FileReader();
+                            reader.onload=(ev)=>setCaptureImage(ev.target?.result as string);
+                            reader.readAsDataURL(file);
+                          }
+                        }}/>
+
+                      {captureImage?(
+                        <div>
+                          <img src={captureImage} style={{maxWidth:"100%",maxHeight:300,borderRadius:8,marginBottom:10}} alt="RFQ"/>
+                          <div style={{display:"flex",gap:8,justifyContent:"center"}}>
+                            <button onClick={(e)=>{e.stopPropagation();setCaptureImage(null);}}
+                              style={{fontSize:12,padding:"5px 12px",borderRadius:7,border:"0.5px solid #f5c6c6",
+                                background:"#FEF0F0",color:"#A32D2D",cursor:"pointer"}}>Remove</button>
+                          </div>
+                        </div>
+                      ):(
+                        <>
+                          <div style={{fontSize:28,marginBottom:8}}>📋</div>
+                          <div style={{fontSize:14,fontWeight:500,color:"#1a2332",marginBottom:4}}>Paste RFQ screenshot here</div>
+                          <div style={{fontSize:12,color:"#b0bec8"}}>Ctrl+V to paste · or click to upload · PNG, JPG, PDF</div>
+                        </>
+                      )}
+                    </div>
+
+                    <div style={{marginBottom:14}}>
+                      <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",
+                        color:"#b0bec8",marginBottom:5,fontFamily:"'DM Mono',monospace"}}>Or paste RFQ text</div>
+                      <textarea value={captureText} onChange={e=>setCaptureText(e.target.value)}
+                        style={{width:"100%",minHeight:80,padding:"10px 12px",borderRadius:8,
+                          border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#1a2332",
+                          fontSize:13,resize:"vertical" as const,fontFamily:"inherit"}}
+                        placeholder="Paste the RFQ email text, Viber message, or any document text here..."/>
+                    </div>
+
+                    <button onClick={async ()=>{
+                      if(!captureImage&&!captureText.trim()){ alert("Please paste an image or text first."); return; }
+                      setExtracting(true);
+                      try {
+                        const res=await fetch("/api/extract",{
+                          method:"POST",headers:{"Content-Type":"application/json"},
+                          body:JSON.stringify({image:captureImage||undefined,text:captureText.trim()||undefined})
+                        });
+                        const data=await res.json();
+                        if(data.error){ alert("Extraction error: "+data.error); }
+                        else { setExtracted(data); }
+                      } catch(e){ alert("Error: "+String(e)); }
+                      setExtracting(false);
+                    }}
+                      disabled={extracting||(!captureImage&&!captureText.trim())}
+                      style={{width:"100%",padding:"12px",borderRadius:9,border:"none",
+                        background:extracting?"#b0bec8":"#185FA5",color:"#fff",fontSize:14,
+                        fontWeight:600,cursor:extracting?"not-allowed":"pointer",
+                        display:"flex",alignItems:"center",justifyContent:"center",gap:8}}>
+                      {extracting?(
+                        <><span style={{width:14,height:14,border:"2px solid rgba(255,255,255,0.3)",
+                          borderTopColor:"#fff",borderRadius:"50%",animation:"spin 0.7s linear infinite",
+                          display:"inline-block"}}/> Extracting details...</>
+                      ):"✦ Extract & Auto-fill"}
+                    </button>
+                  </div>
+                )}
+
+                {/* Extracted results -- review and confirm */}
+                {captureMode==="paste"&&extracted&&(
+                  <div style={{padding:18}}>
+                    <div style={{fontSize:12,fontWeight:600,color:"#3B6D11",marginBottom:12,
+                      display:"flex",alignItems:"center",gap:6}}>
+                      <span>✓ Details extracted</span>
+                      <span style={{fontSize:11,fontWeight:400,color:"#8a9ab0"}}>Review and edit before creating</span>
+                    </div>
+
+                    <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:14}}>
+                      <div style={{gridColumn:"span 2"}}>
+                        <span style={S.lbl}>Project Name</span>
+                        <input style={S.inp}
+                          value={np.name||((extracted.client?.name||"")+" "+(extracted.rfq?.subject||"")+" "+new Date().toLocaleDateString("en-PH",{month:"short",year:"numeric"}))}
+                          onChange={e=>setNP(n=>({...n,name:e.target.value}))}
+                          onFocus={e=>{if(!np.name) setNP(n=>({...n,name:e.target.value}));}}/>
+                        {extracted.confidence?.client==="low"&&<div style={{fontSize:10,color:"#854F0B",marginTop:2}}>⚠ Low confidence -- verify</div>}
+                      </div>
+
+                      <div>
+                        <span style={S.lbl}>Client</span>
+                        <input style={{...S.inp,background:extracted.client?.name?"#f0faf5":"#f8f9fb",
+                          borderColor:extracted.client?.name?"#3B6D1133":"#e2e6ea"}}
+                          value={np.client||extracted.client?.name||""}
+                          onChange={e=>setNP(n=>({...n,client:e.target.value}))}
+                          onFocus={e=>{if(!np.client&&extracted.client?.name) setNP(n=>({...n,client:extracted.client.name}));}}/>
+                      </div>
+
+                      <div>
+                        <span style={S.lbl}>Contact Person</span>
+                        <input style={{...S.inp,background:extracted.client?.contactPerson?"#f0faf5":"#f8f9fb"}}
+                          value={extracted.client?.contactPerson||""}
+                          onChange={e=>setExtracted((ex:any)=>({...ex,client:{...ex.client,contactPerson:e.target.value}}))}/>
+                      </div>
+
+                      <div>
+                        <span style={S.lbl}>RFQ Number</span>
+                        <input style={{...S.inp,background:extracted.rfq?.number?"#f0faf5":"#f8f9fb"}}
+                          value={extracted.rfq?.number||""}
+                          onChange={e=>setExtracted((ex:any)=>({...ex,rfq:{...ex.rfq,number:e.target.value}}))}/>
+                      </div>
+
+                      <div>
+                        <span style={S.lbl}>Deadline</span>
+                        <input style={S.inp} type="date"
+                          value={extracted.rfq?.deadline||""}
+                          onChange={e=>setExtracted((ex:any)=>({...ex,rfq:{...ex.rfq,deadline:e.target.value}}))}/>
+                        {extracted.confidence?.deadline==="low"&&<div style={{fontSize:10,color:"#854F0B",marginTop:2}}>⚠ Verify date</div>}
+                      </div>
+
+                      <div>
+                        <span style={S.lbl}>VAT Type</span>
+                        <select style={S.inp} value={np.vatType}
+                          onChange={e=>setNP(n=>({...n,vatType:e.target.value as VatType}))}>
+                          {VAT_TYPES.map(v=><option key={v}>{v}</option>)}
+                        </select>
+                      </div>
+
+                      <div>
+                        <span style={S.lbl}>Stage</span>
+                        <select style={S.inp} value={np.stage}
+                          onChange={e=>setNP(n=>({...n,stage:e.target.value as Stage}))}>
+                          {STAGES.map(s=><option key={s}>{s}</option>)}
+                        </select>
+                      </div>
+                    </div>
+
+                    {/* Extracted line items */}
+                    {extracted.items&&extracted.items.length>0&&(
+                      <div style={{marginBottom:14}}>
+                        <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",
+                          color:"#b0bec8",marginBottom:6,fontFamily:"'DM Mono',monospace"}}>
+                          Extracted Items ({extracted.items.length})
+                          {extracted.confidence?.items==="low"&&<span style={{color:"#854F0B",marginLeft:6}}>⚠ Verify</span>}
+                        </div>
+                        <div style={{border:"0.5px solid #e2e6ea",borderRadius:9,overflow:"hidden"}}>
+                          <table style={{width:"100%",borderCollapse:"collapse"}}>
+                            <thead>
+                              <tr style={{background:"#fafbfc"}}>
+                                {["Description","Qty","Unit","Client Price"].map(h=>(
+                                  <th key={h} style={{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"6px 10px",
+                                    textAlign:"left",borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase",
+                                    letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>{h}</th>
+                                ))}
+                              </tr>
+                            </thead>
+                            <tbody>
+                              {extracted.items.map((item:any,idx:number)=>(
+                                <tr key={idx} style={{background:idx%2===0?"#fff":"#fafbfc"}}>
+                                  <td style={{padding:"6px 10px",fontSize:12,color:"#1a2332"}}>{item.description}</td>
+                                  <td style={{padding:"6px 10px",fontSize:12,fontFamily:"'DM Mono',monospace"}}>{item.quantity}</td>
+                                  <td style={{padding:"6px 10px",fontSize:12,color:"#8a9ab0"}}>{item.unit}</td>
+                                  <td style={{padding:"6px 10px",fontSize:12,fontFamily:"'DM Mono',monospace",color:item.clientPrice?"#854F0B":"#d0d8e0"}}>
+                                    {item.clientPrice?`₱${Number(item.clientPrice).toLocaleString()}`:"—"}
+                                  </td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Terms if extracted */}
+                    {extracted.rfq?.terms&&(Object.values(extracted.rfq.terms).some((v:any)=>v))&&(
+                      <div style={{marginBottom:14,padding:"10px 14px",background:"#f8f9fb",borderRadius:9,border:"0.5px solid #e2e6ea"}}>
+                        <div style={{fontSize:10,fontWeight:600,letterSpacing:"0.1em",textTransform:"uppercase",
+                          color:"#b0bec8",marginBottom:6,fontFamily:"'DM Mono',monospace"}}>Extracted Terms</div>
+                        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:6,fontSize:12,color:"#4a6a8a"}}>
+                          {extracted.rfq.terms.delivery&&<div>Delivery: {extracted.rfq.terms.delivery}</div>}
+                          {extracted.rfq.terms.payment&&<div>Payment: {extracted.rfq.terms.payment}</div>}
+                          {extracted.rfq.terms.warranty&&<div>Warranty: {extracted.rfq.terms.warranty}</div>}
+                          {extracted.rfq.terms.validity&&<div>Validity: {extracted.rfq.terms.validity}</div>}
+                        </div>
+                      </div>
+                    )}
+
+                    {/* Notes */}
+                    {extracted.notes&&(
+                      <div style={{marginBottom:14,padding:"10px 14px",background:"#FFF8EC",borderRadius:9,border:"0.5px solid #854F0B33"}}>
+                        <div style={{fontSize:10,fontWeight:600,color:"#854F0B",marginBottom:4,fontFamily:"'DM Mono',monospace"}}>AI NOTES</div>
+                        <div style={{fontSize:12,color:"#854F0B",lineHeight:1.5}}>{extracted.notes}</div>
+                      </div>
+                    )}
+
+                    {/* Action buttons */}
+                    <div style={{display:"flex",gap:8}}>
+                      <button onClick={async ()=>{
+                        const projectName=np.name||((extracted.client?.name||"Unknown")+" "+(extracted.rfq?.subject||"Project")+" "+new Date().toLocaleDateString("en-PH",{month:"short",year:"numeric"}));
+                        const proj: Project = {
+                          ...np,
+                          id:genId(),
+                          name:projectName,
+                          client:np.client||extracted.client?.name||"",
+                          stage:np.stage||"RFQ Received",
+                          vatType:np.vatType||"VAT Inclusive",
+                          rfqNumber:extracted.rfq?.number||"",
+                          rfqSubject:extracted.rfq?.subject||"",
+                          rfqDeadline:extracted.rfq?.deadline||"",
+                          rfqContactPersonName:extracted.client?.contactPerson||"",
+                          rfqLineItems:extracted.items?.map((item:any,i:number)=>({
+                            id:"ext-"+i,
+                            description:item.description,
+                            quantity:item.quantity||0,
+                            unit:item.unit||"pcs",
+                            unitPrice:0,
+                            total:0,
+                          }))||[],
+                          rfqDocument:captureImage||undefined,
+                          rfqDocumentName:captureImage?"RFQ Screenshot":undefined,
+                          notes:extracted.notes||"",
+                          createdAt:new Date().toISOString(),
+                          updatedAt:new Date().toISOString(),
+                        };
+                        await saveProject(proj);
+                        setShowCapture(false);
+                        setExtracted(null);
+                        setCaptureImage(null);
+                        setCaptureText("");
+                        setNP({name:"",client:"",stage:"RFQ Received",vatType:"VAT Inclusive",rfqDate:new Date().toISOString().split("T")[0],notes:""});
+
+                        if(extracted.items&&extracted.items.length>0){
+                          sessionStorage.setItem("quickSourceItems",JSON.stringify(
+                            extracted.items.slice(0,5).map((item:any)=>({
+                              name:item.description,
+                              quantity:String(item.quantity||""),
+                              specs:item.unit||""
+                            }))
+                          ));
+                          sessionStorage.setItem("quickSourceProject",proj.id);
+                          setSelectedProject(proj);
+                          setView("detail" as any);
+                        }
+                      }}
+                        style={{flex:1,padding:"12px",borderRadius:9,border:"none",
+                          background:"#185FA5",color:"#fff",fontSize:14,fontWeight:600,cursor:"pointer"}}>
+                        Create Project & Start Sourcing
+                      </button>
+
+                      <button onClick={async ()=>{
+                        const projectName=np.name||((extracted.client?.name||"Unknown")+" "+(extracted.rfq?.subject||"Project")+" "+new Date().toLocaleDateString("en-PH",{month:"short",year:"numeric"}));
+                        const proj: Project = {
+                          ...np,
+                          id:genId(),
+                          name:projectName,
+                          client:np.client||extracted.client?.name||"",
+                          stage:np.stage||"RFQ Received",
+                          vatType:np.vatType||"VAT Inclusive",
+                          rfqNumber:extracted.rfq?.number||"",
+                          rfqSubject:extracted.rfq?.subject||"",
+                          rfqDeadline:extracted.rfq?.deadline||"",
+                          rfqContactPersonName:extracted.client?.contactPerson||"",
+                          rfqLineItems:extracted.items?.map((item:any,i:number)=>({
+                            id:"ext-"+i,
+                            description:item.description,
+                            quantity:item.quantity||0,
+                            unit:item.unit||"pcs",
+                            unitPrice:0,
+                            total:0,
+                          }))||[],
+                          rfqDocument:captureImage||undefined,
+                          rfqDocumentName:captureImage?"RFQ Screenshot":undefined,
+                          notes:extracted.notes||"",
+                          createdAt:new Date().toISOString(),
+                          updatedAt:new Date().toISOString(),
+                        };
+                        await saveProject(proj);
+                        setShowCapture(false);
+                        setExtracted(null);
+                        setCaptureImage(null);
+                        setCaptureText("");
+                        setNP({name:"",client:"",stage:"RFQ Received",vatType:"VAT Inclusive",rfqDate:new Date().toISOString().split("T")[0],notes:""});
+                        setSelectedProject(proj);
+                        setView("detail" as any);
+                      }}
+                        style={{padding:"12px 20px",borderRadius:9,border:"0.5px solid #e2e6ea",
+                          background:"#f8f9fb",color:"#4a6a8a",fontSize:14,cursor:"pointer"}}>
+                        Create Only
+                      </button>
+                    </div>
+                  </div>
+                )}
+
+                {/* Manual Entry mode -- existing new project form */}
+                {captureMode==="manual"&&(
+                  <div style={{padding:18}}>
+                    <div style={{display:"grid",gridTemplateColumns:"repeat(auto-fit,minmax(200px,1fr))",gap:10,marginBottom:12}}>
+                      <div>
+                        <span style={S.lbl}>Project Name</span>
+                        <input style={S.inp} placeholder="e.g. PGPC Wireline Surveillance Apr 2026" value={np.name} onChange={e=>setNP(n=>({...n,name:e.target.value}))}/>
+                      </div>
+                      <div>
+                        <span style={S.lbl}>Client</span>
+                        <input style={S.inp} placeholder="e.g. PGPC" value={np.client} onChange={e=>setNP(n=>({...n,client:e.target.value}))}/>
+                      </div>
+                      <div>
+                        <span style={S.lbl}>Deadline</span>
+                        <input style={S.inp} type="date" value={np.rfqDate} onChange={e=>setNP(n=>({...n,rfqDate:e.target.value}))}/>
+                      </div>
+                      <div>
+                        <span style={S.lbl}>VAT Type</span>
+                        <select style={S.inp} value={np.vatType} onChange={e=>setNP(n=>({...n,vatType:e.target.value as VatType}))}>
+                          {VAT_TYPES.map(v=><option key={v}>{v}</option>)}
+                        </select>
+                      </div>
+                      <div style={{gridColumn:"span 2"}}>
+                        <span style={S.lbl}>Notes</span>
+                        <input style={S.inp} placeholder="Optional notes" value={np.notes} onChange={e=>setNP(n=>({...n,notes:e.target.value}))}/>
+                      </div>
+                    </div>
+                    <button onClick={createProject} disabled={saving} style={{...S.addBtn,background:"#1a2332",color:"#fff",borderColor:"#1a2332"}}>
+                      {saving?<Spinner/>:<span>Create Project</span>}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 
