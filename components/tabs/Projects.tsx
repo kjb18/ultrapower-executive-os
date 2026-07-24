@@ -53,8 +53,7 @@ interface LocalLineItem { id:string; description:string; quantity:number; unit:s
 interface CatalogProduct { id:string; code:string; description:string; unit:string; standardPrice:number; category:string; }
 interface CatalogSupplier { id:string; name:string; contactPerson:string; email:string; phone:string; categories:string[]; }
 interface LocalCRMContact { id:number; name:string; company:string; email?:string; phone?:string; role?:string; }
-interface QSSupplier { name:string; type:string; price_range:string; unit:string; stock?:string; lead_time:string; moq:string; certifications?:string; import_notes?:string; notes?:string; url?:string; }
-interface QSResult { name:string; summary:string; local_available:boolean; local_suppliers:QSSupplier[]; international_suppliers:QSSupplier[]; recommendation:string; quotation_hint:string; }
+interface SourcingResultItem { itemName:string; result:string; loading:boolean; error?:string; }
 interface CRMRFQRecord { id:number; rfqNumber:string; client:string; subject:string; dateSubmitted:string; deadline:string; status:string; notes:string; projectId?:string; documents?:CRMDoc[]; archived?:boolean; lineItems?:LocalLineItem[]; contactPersonId?:number; contactPersonName?:string; }
 interface CRMPORecord { id:number; poNumber:string; client:string; items:string; value:string; dateReceived:string; expectedDelivery:string; supplierStatus:string; status:string; notes:string; projectId?:string; documents?:CRMDoc[]; archived?:boolean; }
 interface CRMSPORecord { id:number; poNumber:string; supplierId?:string; supplierName:string; projectId?:string; totalAmount:number; expectedDelivery:string; status:string; archived?:boolean; items?:LocalLineItem[]; }
@@ -64,6 +63,98 @@ interface SourcingSession { id:string; query?:string; subject?:string; date?:str
 function genId() { return `${Date.now()}-${Math.random().toString(36).slice(2,7)}`; }
 function fmt(n?:number) { return n!==undefined ? `₱${n.toLocaleString("en-PH",{minimumFractionDigits:2,maximumFractionDigits:2})}` : "—"; }
 function daysSince(dateStr:string) { return Math.floor((Date.now()-new Date(dateStr).getTime())/(1000*60*60*24)); }
+
+interface SourcingSectionBlock { number:string; title:string; body:string; }
+
+// Splits a Sourcing Central response into its numbered sections (1. Description ... 8. Flags).
+// Freeform LLM markdown -- this is a best-effort heuristic parse, not a strict grammar.
+function parseSourcingSections(text:string): SourcingSectionBlock[] {
+  const lines = text.split("\n");
+  const headerRe = /^#{0,4}\s*\*{0,2}(\d{1,2})[\.\)]\s*\*{0,2}(.+?)\*{0,2}\s*$/;
+  const sections: SourcingSectionBlock[] = [];
+  let current: SourcingSectionBlock|null = null;
+  for (const line of lines) {
+    const m = line.match(headerRe);
+    const num = m ? Number(m[1]) : NaN;
+    if (m && num>=1 && num<=8) {
+      if (current) sections.push(current);
+      current = { number:m[1], title:m[2].replace(/\*/g,"").trim(), body:"" };
+    } else if (current) {
+      current.body += line + "\n";
+    } else if (line.trim()) {
+      if (!sections.length) current = { number:"0", title:"", body:line+"\n" };
+    }
+  }
+  if (current) sections.push(current);
+  return sections;
+}
+
+function splitTableRow(line:string): string[] {
+  const parts = line.split("|").map(s=>s.trim());
+  if (parts.length && parts[0]==="") parts.shift();
+  if (parts.length && parts[parts.length-1]==="") parts.pop();
+  return parts;
+}
+
+function parseMarkdownTable(block:string): { headers:string[]; rows:string[][] } | null {
+  const lines = block.split("\n").map(l=>l.trim()).filter(l=>l.startsWith("|"));
+  if (lines.length < 2) return null;
+  const headers = splitTableRow(lines[0]);
+  const rows = lines.slice(2)
+    .map(splitTableRow)
+    .filter(r => r.length>0 && !r.every(c=>/^:?-+:?$/.test(c)));
+  if (!headers.length) return null;
+  return { headers, rows };
+}
+
+// Splits an "Outreach emails" section body into per-audience blocks (local / international / China-Alibaba)
+// by looking for short heading-like lines mentioning those audiences.
+function splitEmailBlocks(body:string): { label:string; text:string }[] {
+  const lines = body.split("\n");
+  const audienceRe = /(local|philippine)|(international|oem)|(china|alibaba)/i;
+  const blocks: { label:string; text:string }[] = [];
+  let current: { label:string; text:string } | null = null;
+  for (const line of lines) {
+    const stripped = line.replace(/[*#]/g,"").trim();
+    const looksLikeHeading = stripped.length>0 && stripped.length<80 && audienceRe.test(stripped)
+      && !/^dear|^subject:|^to whom|^re:/i.test(stripped);
+    if (looksLikeHeading) {
+      if (current) blocks.push(current);
+      const label = /china|alibaba/i.test(stripped) ? "China / Alibaba Suppliers"
+        : /international|oem/i.test(stripped) ? "International / OEM Suppliers"
+        : "Local Philippine Suppliers";
+      current = { label, text:"" };
+    } else if (current) {
+      current.text += line + "\n";
+    }
+  }
+  if (current) blocks.push(current);
+  if (!blocks.length && body.trim()) blocks.push({ label:"Outreach Email", text:body });
+  return blocks.map(b=>({ label:b.label, text:b.text.trim() })).filter(b=>b.text);
+}
+
+function countSourcingSuppliers(text:string): number {
+  const sections = parseSourcingSections(text);
+  let count = 0;
+  for (const sec of sections) {
+    if (sec.number==="3"||sec.number==="4"||sec.number==="5") {
+      const blocks = sec.body.split(/\n\s*\n/);
+      for (const block of blocks) {
+        const table = parseMarkdownTable(block);
+        if (table) count += table.rows.length;
+      }
+    }
+  }
+  return count;
+}
+
+function extractSourcingEmailsText(text:string): string {
+  const sections = parseSourcingSections(text);
+  const emailSection = sections.find(s=>s.number==="7"||/outreach|email/i.test(s.title));
+  if (!emailSection) return "";
+  const emails = splitEmailBlocks(emailSection.body);
+  return emails.map(e=>`${e.label}\n\n${e.text}`).join("\n\n---\n\n");
+}
 
 const Spinner = () => <span style={{width:14,height:14,border:"2px solid #e2e6ea",borderTopColor:"#185FA5",borderRadius:"50%",animation:"spin 0.7s linear infinite",display:"inline-block"}}/>;
 
@@ -114,18 +205,20 @@ export default function Projects() {
   const [showLinkSPO, setShowLinkSPO] = useState(false);
   const [showNewRFQ, setShowNewRFQ] = useState(false);
   const [showNewSPO, setShowNewSPO] = useState(false);
-  const [showQuickSource, setShowQuickSource] = useState(false);
+  const [showSourcing, setShowSourcing] = useState(false);
   const [catalogProducts, setCatalogProducts] = useState<CatalogProduct[]>([]);
   const [catalogSuppliers, setCatalogSuppliers] = useState<CatalogSupplier[]>([]);
   const [newRFQForm, setNewRFQForm] = useState({subject:"",deadline:"",status:"Pending",notes:"",contactPersonName:"",lineItems:[] as LocalLineItem[]});
   const [newSPOForm, setNewSPOForm] = useState({supplierName:"",supplierId:"",expectedDelivery:"",status:"Draft",notes:"",items:[] as LocalLineItem[]});
-  const [quickSourceItems, setQuickSourceItems] = useState([{name:"",quantity:"1",specs:""}]);
-  const [quickSourceResults, setQuickSourceResults] = useState<QSResult[]>([]);
-  const [quickSourceLoading, setQuickSourceLoading] = useState(false);
-  const [quickSourceSessionName, setQuickSourceSessionName] = useState("");
-  const [quickSourceSaved, setQuickSourceSaved] = useState(false);
-  const [qsExpandedItem, setQsExpandedItem] = useState<number|null>(null);
-  const [qsWebSearch, setQsWebSearch] = useState(true);
+  const [sourcingMode, setSourcingMode] = useState<"auto"|"manual">("manual");
+  const [sourcingItems, setSourcingItems] = useState<{name:string;quantity:string;specs:string;checked:boolean}[]>([{name:"",quantity:"1",specs:"",checked:true}]);
+  const [sourcingResults, setSourcingResults] = useState<SourcingResultItem[]>([]);
+  const [sourcingSessionName, setSourcingSessionName] = useState("");
+  const [sourcingRunning, setSourcingRunning] = useState(false);
+  const [sourcingProgress, setSourcingProgress] = useState({current:0,total:0});
+  const [sourcingExpandedItem, setSourcingExpandedItem] = useState<number|null>(null);
+  const [sourcingSaved, setSourcingSaved] = useState(false);
+  const [copyToast, setCopyToast] = useState<string|null>(null);
 
   // Quotation overlay
   const [showQuotationOverlay, setShowQuotationOverlay] = useState(false);
@@ -175,10 +268,15 @@ export default function Projects() {
     setAssetTab("overview");
     setShowQuotationOverlay(false); setQuotationOverlayUrl("");
     setShowLinkRFQ(false); setShowLinkPO(false); setShowLinkSourcing(false); setShowLinkSPO(false);
-    setShowNewRFQ(false); setShowNewSPO(false); setShowQuickSource(false);
-    setQuickSourceResults([]); setQuickSourceSaved(false); setQsExpandedItem(null);
-    setQuickSourceItems([{name:"",quantity:"1",specs:""}]);
-    setQuickSourceSessionName(selectedProject.name);
+    setShowNewRFQ(false); setShowNewSPO(false); setShowSourcing(false);
+    setSourcingResults([]); setSourcingSaved(false); setSourcingExpandedItem(null);
+    setSourcingRunning(false); setSourcingProgress({current:0,total:0});
+    const hasLineItems = (selectedProject.rfqLineItems||[]).length > 0;
+    setSourcingMode(hasLineItems ? "auto" : "manual");
+    setSourcingItems(hasLineItems
+      ? (selectedProject.rfqLineItems||[]).map(li=>({name:li.description,quantity:String(li.quantity||""),specs:li.unit||"",checked:true}))
+      : [{name:"",quantity:"1",specs:"",checked:true}]);
+    setSourcingSessionName(selectedProject.name);
     setNewRFQForm({subject:"",deadline:"",status:"Pending",notes:"",contactPersonName:"",lineItems:[]});
     setNewSPOForm({supplierName:"",supplierId:"",expectedDelivery:"",status:"Draft",notes:"",items:[]});
     const doFetch = async () => {
@@ -207,13 +305,11 @@ export default function Projects() {
     const quickItems = sessionStorage.getItem("quickSourceItems");
     const quickProject = sessionStorage.getItem("quickSourceProject");
     if (quickItems && quickProject === selectedProject?.id) {
-      try {
-        const items = JSON.parse(quickItems);
-        setQuickSourceItems(items);
-        setShowQuickSource(true);
-        sessionStorage.removeItem("quickSourceItems");
-        sessionStorage.removeItem("quickSourceProject");
-      } catch { /* ignore malformed sessionStorage data */ }
+      // The project's rfqLineItems (set during Quick Capture) already populate sourcingItems
+      // via the reset effect above -- just open the panel.
+      setShowSourcing(true);
+      sessionStorage.removeItem("quickSourceItems");
+      sessionStorage.removeItem("quickSourceProject");
     }
   }, [selectedProject?.id]);
 
@@ -396,55 +492,70 @@ export default function Projects() {
     setSaving(false);
   };
 
-  const runQuickSource = async () => {
-    const validItems=quickSourceItems.filter(i=>i.name.trim());
-    if(!validItems.length) return;
-    setQuickSourceLoading(true); setQuickSourceResults([]); setQuickSourceSaved(false);
-    try {
-      const res=await fetch("/api/sourcing",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({items:validItems.map(i=>({name:i.name,quantity:i.quantity,specs:i.specs})),useWebSearch:qsWebSearch})});
-      const data=await res.json();
-      setQuickSourceResults(data.items||[]);
-      if((data.items||[]).length>0) setQsExpandedItem(0);
-    } catch(e){console.error(e);}
-    setQuickSourceLoading(false);
-  };
-
-  const saveQuickSourceSession = async () => {
-    if(!quickSourceResults.length||!selectedProject) return;
-    try {
-      const history=await kvGet<SourcingSession[]>("sourcing:history")||[];
-      const session:SourcingSession={
-        id:genId(),
-        query:quickSourceSessionName||selectedProject.name,
-        subject:quickSourceSessionName||selectedProject.name,
-        date:new Date().toISOString().split("T")[0],
-        projectId:selectedProject.id,
-        items:quickSourceResults as unknown,
-        searched_at:new Date().toISOString(),
-      };
-      const updated=[session,...history].slice(0,20);
-      await kvSet("sourcing:history",updated); setAllSourcing(updated); setQuickSourceSaved(true);
-    } catch(e){console.error(e);}
-  };
-
   const debouncedSaveNotes = useDebounce((notes: string) => {
     if (!selectedProject) return;
     saveProject({ ...selectedProject, notes });
   }, 1200);
 
-  const exportQuickSourceCSV = () => {
-    if(!quickSourceResults.length) return;
-    const rows:string[][]=[["Item","Summary","Local Available","Supplier","Type","Price Range","Unit","Lead Time","MOQ","Notes"]];
-    quickSourceResults.forEach(r=>{
-      const allS=[...(r.local_suppliers||[]),...(r.international_suppliers||[])];
-      if(!allS.length){rows.push([r.name,r.summary,r.local_available?"Yes":"No","","","","","","",""]);return;}
-      allS.forEach(s=>rows.push([r.name,r.summary,r.local_available?"Yes":"No",s.name,s.type,s.price_range,s.unit,s.lead_time,s.moq,s.notes||""]));
-    });
-    const csv=rows.map(r=>r.map(c=>`"${c}"`).join(",")).join("\n");
-    const a=document.createElement("a");
-    a.href=URL.createObjectURL(new Blob([csv],{type:"text/csv"}));
-    a.download=`QuickSource_${selectedProject?.name||"export"}_${new Date().toISOString().split("T")[0]}.csv`;
-    a.click();
+  const showCopyToast = (msg:string) => {
+    setCopyToast(msg);
+    setTimeout(()=>setCopyToast(null), 2000);
+  };
+
+  const copyToClipboard = (text:string, msg:string) => {
+    navigator.clipboard.writeText(text);
+    showCopyToast(msg);
+  };
+
+  // Sequential -- items are sourced one at a time (not in parallel) to avoid rate limits,
+  // and so each card can render its result as soon as it completes.
+  const runSourcing = async () => {
+    const checked = sourcingMode==="auto" ? sourcingItems.filter(i=>i.checked) : sourcingItems.filter(i=>i.name.trim());
+    if(!checked.length) return;
+    setSourcingRunning(true);
+    setSourcingSaved(false);
+    setSourcingExpandedItem(null);
+    setSourcingResults(checked.map(i=>({itemName:i.name,result:"",loading:true})));
+    setSourcingProgress({current:0,total:checked.length});
+
+    for (let i=0;i<checked.length;i++) {
+      const item = checked[i];
+      const idx = i;
+      setSourcingProgress({current:idx+1,total:checked.length});
+      try {
+        const res = await fetch("/api/sourcing",{
+          method:"POST",headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({items:[{name:item.name,quantity:item.quantity,specs:item.specs}],useWebSearch:true,mode:"central"}),
+        });
+        const data = await res.json();
+        const text: string|undefined = data.items?.[0]?.result;
+        setSourcingResults(prev=>prev.map((r,ri)=>ri===idx?{itemName:item.name,result:text||"No result returned.",loading:false}:r));
+      } catch(e) {
+        setSourcingResults(prev=>prev.map((r,ri)=>ri===idx?{itemName:item.name,result:"",loading:false,error:String(e)}:r));
+      }
+      if (idx===0) setSourcingExpandedItem(0);
+    }
+    setSourcingRunning(false);
+  };
+
+  const saveSourcingToProject = async () => {
+    if(!selectedProject||!sourcingResults.length||sourcingResults.some(r=>r.loading)) return;
+    try {
+      const history = await kvGet<SourcingSession[]>("sourcing:history")||[];
+      const session: SourcingSession = {
+        id: genId(),
+        query: sourcingSessionName||selectedProject.name,
+        subject: sourcingSessionName||selectedProject.name,
+        date: new Date().toISOString().split("T")[0],
+        projectId: selectedProject.id,
+        status: "Sourcing",
+        items: sourcingResults.map(r=>({name:r.itemName,result:r.result})),
+        searched_at: new Date().toISOString(),
+      };
+      const updated=[session,...history].slice(0,20);
+      await kvSet("sourcing:history",updated); setAllSourcing(updated); setSourcingSaved(true);
+      showCopyToast("Sourcing session saved to project");
+    } catch(e){console.error(e);}
   };
 
   const QUOT_STATUS_C: Record<string,{bg:string;fg:string}> = {
@@ -496,6 +607,8 @@ export default function Projects() {
     pill:(bg:string,fg:string):React.CSSProperties=>({fontSize:10,padding:"2px 8px",borderRadius:20,background:bg,color:fg,fontWeight:600,fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap",display:"inline-block"}),
     tabBtn:(a:boolean):React.CSSProperties=>({padding:"8px 16px",border:"none",background:"none",cursor:"pointer",fontSize:13,color:a?"#185FA5":"#8a9ab0",borderBottom:`2px solid ${a?"#185FA5":"transparent"}`,fontWeight:a?600:400}),
     addBtn:{fontSize:13,padding:"7px 14px",borderRadius:8,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600} as React.CSSProperties,
+    th:{fontSize:10,fontWeight:600,color:"#b0bec8",padding:"6px 10px",textAlign:"left" as const,borderBottom:"0.5px solid #f0f2f5",textTransform:"uppercase" as const,letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",whiteSpace:"nowrap" as const} as React.CSSProperties,
+    td:{padding:"6px 10px",fontSize:12,color:"#1a2332",borderBottom:"0.5px solid #f0f2f5",verticalAlign:"top" as const} as React.CSSProperties,
   };
 
   // P&L computed values (from plFields local state)
@@ -534,9 +647,75 @@ export default function Projects() {
     }
   };
 
+  // Renders a Sourcing Central text response as structured cards: numbered sections with
+  // bordered headers, markdown tables rendered as real HTML tables, and the outreach emails
+  // section split into per-audience copyable blocks.
+  const renderSourcingResult = (text: string, keyPrefix: string) => {
+    const sections = parseSourcingSections(text);
+    return (
+      <div>
+        {sections.map((sec, si) => {
+          const isEmailSection = sec.number==="7" || /outreach|email/i.test(sec.title);
+          if (isEmailSection) {
+            const emails = splitEmailBlocks(sec.body);
+            return (
+              <div key={`${keyPrefix}-sec-${si}`} style={{marginBottom:14}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#1a2332",paddingBottom:6,marginBottom:10,borderBottom:"1px solid #e2e6ea"}}>
+                  {sec.number!=="0"?`${sec.number}. `:""}{sec.title||"Outreach Emails"}
+                </div>
+                {emails.length===0&&<div style={{fontSize:12,color:"#b0bec8"}}>No emails parsed from this section.</div>}
+                {emails.map((em,ei)=>(
+                  <div key={ei} style={{border:"0.5px solid #e2e6ea",borderRadius:9,marginBottom:8,overflow:"hidden"}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",padding:"8px 12px",background:"#f8f9fb",borderBottom:"0.5px solid #e2e6ea"}}>
+                      <span style={{fontSize:12,fontWeight:600,color:"#185FA5"}}>{em.label}</span>
+                      <button onClick={()=>copyToClipboard(em.text,"Email copied to clipboard")} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer"}}>Copy Email</button>
+                    </div>
+                    <pre style={{margin:0,padding:"10px 12px",fontSize:12,color:"#1a2332",whiteSpace:"pre-wrap" as const,fontFamily:"'Plus Jakarta Sans',sans-serif",lineHeight:1.6}}>{em.text}</pre>
+                  </div>
+                ))}
+              </div>
+            );
+          }
+          const blocks = sec.body.split(/\n\s*\n/).map(b=>b.trim()).filter(Boolean);
+          return (
+            <div key={`${keyPrefix}-sec-${si}`} style={{marginBottom:14}}>
+              {sec.title&&(
+                <div style={{fontSize:12,fontWeight:600,color:"#1a2332",paddingBottom:6,marginBottom:10,borderBottom:"1px solid #e2e6ea"}}>
+                  {sec.number!=="0"?`${sec.number}. `:""}{sec.title}
+                </div>
+              )}
+              {blocks.map((block,bi)=>{
+                const table = parseMarkdownTable(block);
+                if (table) {
+                  return (
+                    <div key={bi} style={{overflowX:"auto",marginBottom:10,border:"0.5px solid #e2e6ea",borderRadius:9}}>
+                      <table style={{width:"100%",borderCollapse:"collapse"}}>
+                        <thead><tr style={{background:"#fafbfc"}}>{table.headers.map((h,hi)=><th key={hi} style={S.th}>{h}</th>)}</tr></thead>
+                        <tbody>{table.rows.map((row,ri)=>(
+                          <tr key={ri} style={{background:ri%2===0?"#fff":"#fafbfc"}}>{row.map((c,ci)=><td key={ci} style={S.td}>{c}</td>)}</tr>
+                        ))}</tbody>
+                      </table>
+                    </div>
+                  );
+                }
+                return <div key={bi} style={{fontSize:12,color:"#4a6a8a",lineHeight:1.6,marginBottom:8,whiteSpace:"pre-wrap" as const}}>{block}</div>;
+              })}
+            </div>
+          );
+        })}
+      </div>
+    );
+  };
+
   return (
     <div style={{flex:1,overflow:"auto"}}>
       <style>{`@keyframes spin{to{transform:rotate(360deg)}} @keyframes pulse{0%,100%{opacity:1}50%{opacity:0.4}}`}</style>
+
+      {copyToast&&(
+        <div style={{position:"fixed",bottom:24,right:24,background:"#1a2332",color:"#fff",padding:"10px 18px",borderRadius:9,fontSize:13,zIndex:999,boxShadow:"0 4px 16px rgba(0,0,0,0.2)"}}>
+          {copyToast}
+        </div>
+      )}
 
       {/* Header */}
       <div style={{background:"#fff",borderBottom:"0.5px solid #e2e6ea",padding:"0 20px",display:"flex",alignItems:"center",justifyContent:"space-between",height:56,position:"sticky",top:0,zIndex:5}}>
@@ -1189,17 +1368,17 @@ export default function Projects() {
 
             {/* Action bar */}
             <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap" as const}}>
-              <button onClick={()=>{setShowNewRFQ(s=>!s);setShowNewSPO(false);setShowQuickSource(false);}}
+              <button onClick={()=>{setShowNewRFQ(s=>!s);setShowNewSPO(false);setShowSourcing(false);}}
                 style={{...S.addBtn,background:showNewRFQ?"#1a2332":"#EBF3FC",color:showNewRFQ?"#fff":"#185FA5",borderColor:showNewRFQ?"#1a2332":"#185FA5"}}>
                 {showNewRFQ?"✕ Cancel":"+ New RFQ"}
               </button>
-              <button onClick={()=>{setShowNewSPO(s=>!s);setShowNewRFQ(false);setShowQuickSource(false);}}
+              <button onClick={()=>{setShowNewSPO(s=>!s);setShowNewRFQ(false);setShowSourcing(false);}}
                 style={{...S.addBtn,background:showNewSPO?"#1a2332":"#FFF8EC",color:showNewSPO?"#fff":"#854F0B",borderColor:showNewSPO?"#1a2332":"#854F0B"}}>
                 {showNewSPO?"✕ Cancel":"+ New Supplier PO"}
               </button>
-              <button onClick={()=>{setShowQuickSource(s=>!s);setShowNewRFQ(false);setShowNewSPO(false);}}
-                style={{...S.addBtn,background:showQuickSource?"#1a2332":"#f0faf5",color:showQuickSource?"#fff":"#3B6D11",borderColor:showQuickSource?"#1a2332":"#3B6D11"}}>
-                {showQuickSource?"✕ Cancel":"⚡ Quick Source"}
+              <button onClick={()=>{setShowSourcing(s=>!s);setShowNewRFQ(false);setShowNewSPO(false);}}
+                style={{...S.addBtn,background:showSourcing?"#1a2332":"#f0faf5",color:showSourcing?"#fff":"#3B6D11",borderColor:showSourcing?"#1a2332":"#3B6D11"}}>
+                {showSourcing?"✕ Cancel":"⚡ Source Items"}
               </button>
             </div>
 
@@ -1331,94 +1510,134 @@ export default function Projects() {
               </div>
             )}
 
-            {/* Quick Source panel */}
-            {showQuickSource&&(
+            {/* Sourcing Central panel */}
+            {showSourcing&&(
               <div style={{...S.card,padding:16,marginBottom:12,border:"0.5px solid #3B6D11"}}>
-                <div style={{fontSize:12,fontWeight:600,color:"#3B6D11",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>⚡ Quick Source</div>
-                <div style={{display:"flex",gap:10,marginBottom:12,flexWrap:"wrap" as const}}>
-                  <div style={{flex:1,minWidth:200}}>
-                    <span style={S.lbl}>Session Name</span>
-                    <input style={S.inp} value={quickSourceSessionName} onChange={e=>setQuickSourceSessionName(e.target.value)} placeholder="Name for saving to Sourcing"/>
-                  </div>
-                  <div style={{display:"flex",alignItems:"center",gap:8,paddingTop:20}}>
-                    <input type="checkbox" id="qs-web" checked={qsWebSearch} onChange={e=>setQsWebSearch(e.target.checked)}/>
-                    <label htmlFor="qs-web" style={{fontSize:12,color:"#4a6a8a",cursor:"pointer"}}>Web search</label>
+                <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:12,flexWrap:"wrap" as const,gap:8}}>
+                  <div style={{fontSize:12,fontWeight:600,color:"#3B6D11",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace"}}>⚡ Sourcing Central</div>
+                  <div style={{display:"flex",gap:6}}>
+                    <button onClick={()=>setSourcingMode("auto")} disabled={!(selectedProject.rfqLineItems||[]).length}
+                      style={{fontSize:11,padding:"4px 10px",borderRadius:20,
+                        border:`0.5px solid ${sourcingMode==="auto"?"#3B6D11":"#e2e6ea"}`,
+                        background:sourcingMode==="auto"?"#f0faf5":"#f8f9fb",
+                        color:!(selectedProject.rfqLineItems||[]).length?"#d0d8e0":sourcingMode==="auto"?"#3B6D11":"#8a9ab0",
+                        cursor:(selectedProject.rfqLineItems||[]).length?"pointer":"not-allowed",fontWeight:sourcingMode==="auto"?600:400}}>
+                      From RFQ Items
+                    </button>
+                    <button onClick={()=>setSourcingMode("manual")}
+                      style={{fontSize:11,padding:"4px 10px",borderRadius:20,
+                        border:`0.5px solid ${sourcingMode==="manual"?"#3B6D11":"#e2e6ea"}`,
+                        background:sourcingMode==="manual"?"#f0faf5":"#f8f9fb",
+                        color:sourcingMode==="manual"?"#3B6D11":"#8a9ab0",cursor:"pointer",fontWeight:sourcingMode==="manual"?600:400}}>
+                      Manual Entry
+                    </button>
                   </div>
                 </div>
+
                 <div style={{marginBottom:12}}>
-                  <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
-                    <span style={S.lbl}>Items to Source (max 5)</span>
-                    <button onClick={()=>setQuickSourceItems(prev=>prev.length<5?[...prev,{name:"",quantity:"1",specs:""}]:prev)} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #3B6D11",background:"#f0faf5",color:"#3B6D11",cursor:"pointer"}}>+ Item</button>
-                  </div>
-                  {quickSourceItems.map((item,idx)=>(
-                    <div key={idx} style={{display:"grid",gridTemplateColumns:"2fr 1fr 3fr auto",gap:6,marginBottom:6,alignItems:"center"}}>
-                      <input style={S.inp} placeholder="Item name" value={item.name} onChange={e=>setQuickSourceItems(prev=>prev.map((x,i)=>i===idx?{...x,name:e.target.value}:x))}/>
-                      <input style={S.inp} placeholder="Qty" value={item.quantity} onChange={e=>setQuickSourceItems(prev=>prev.map((x,i)=>i===idx?{...x,quantity:e.target.value}:x))}/>
-                      <input style={S.inp} placeholder="Specs (optional)" value={item.specs} onChange={e=>setQuickSourceItems(prev=>prev.map((x,i)=>i===idx?{...x,specs:e.target.value}:x))}/>
-                      {quickSourceItems.length>1&&<button onClick={()=>setQuickSourceItems(prev=>prev.filter((_,i)=>i!==idx))} style={{color:"#d0d8e0",background:"none",border:"none",cursor:"pointer",fontSize:16,padding:"0 4px"}}>✕</button>}
-                    </div>
-                  ))}
+                  <span style={S.lbl}>Session Name</span>
+                  <input style={S.inp} value={sourcingSessionName} onChange={e=>setSourcingSessionName(e.target.value)} placeholder="Name for saving to Sourcing"/>
                 </div>
-                <button onClick={runQuickSource} disabled={quickSourceLoading||!quickSourceItems.some(i=>i.name.trim())} style={{...S.addBtn,background:"#3B6D11",color:"#fff",borderColor:"#3B6D11",marginBottom:14,opacity:!quickSourceItems.some(i=>i.name.trim())?0.5:1}}>
-                  {quickSourceLoading?<><Spinner/>&nbsp;Sourcing...</>:<span>Run Quick Source</span>}
+
+                {sourcingMode==="auto"?(
+                  <div style={{marginBottom:12}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                      <span style={S.lbl}>RFQ Line Items -- select to source ({sourcingItems.filter(i=>i.checked).length} selected)</span>
+                      <button onClick={()=>setSourcingItems(prev=>{const allChecked=prev.every(p=>p.checked);return prev.map(x=>({...x,checked:!allChecked}));})}
+                        style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #3B6D11",background:"#f0faf5",color:"#3B6D11",cursor:"pointer"}}>
+                        {sourcingItems.every(i=>i.checked)?"Deselect All":"Select All"}
+                      </button>
+                    </div>
+                    <div style={{border:"0.5px solid #e2e6ea",borderRadius:9,overflow:"hidden"}}>
+                      <table style={{width:"100%",borderCollapse:"collapse"}}>
+                        <thead><tr style={{background:"#fafbfc"}}>
+                          <th style={{...S.th,width:36}}></th>
+                          <th style={S.th}>Description</th>
+                          <th style={S.th}>Qty</th>
+                          <th style={S.th}>Unit</th>
+                        </tr></thead>
+                        <tbody>
+                          {sourcingItems.map((item,idx)=>(
+                            <tr key={idx} style={{background:idx%2===0?"#fff":"#fafbfc"}}>
+                              <td style={S.td}><input type="checkbox" checked={item.checked} onChange={e=>setSourcingItems(prev=>prev.map((x,i)=>i===idx?{...x,checked:e.target.checked}:x))}/></td>
+                              <td style={S.td}>{item.name}</td>
+                              <td style={S.td}>{item.quantity}</td>
+                              <td style={S.td}>{item.specs}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                ):(
+                  <div style={{marginBottom:12}}>
+                    <div style={{display:"flex",alignItems:"center",justifyContent:"space-between",marginBottom:6}}>
+                      <span style={S.lbl}>Items to Source (max 5)</span>
+                      <button onClick={()=>setSourcingItems(prev=>prev.length<5?[...prev,{name:"",quantity:"1",specs:"",checked:true}]:prev)} style={{fontSize:11,padding:"3px 9px",borderRadius:6,border:"0.5px solid #3B6D11",background:"#f0faf5",color:"#3B6D11",cursor:"pointer"}}>+ Item</button>
+                    </div>
+                    {sourcingItems.map((item,idx)=>(
+                      <div key={idx} style={{display:"grid",gridTemplateColumns:"2fr 1fr 3fr auto",gap:6,marginBottom:6,alignItems:"center"}}>
+                        <input style={S.inp} placeholder="Item name" value={item.name} onChange={e=>setSourcingItems(prev=>prev.map((x,i)=>i===idx?{...x,name:e.target.value}:x))}/>
+                        <input style={S.inp} placeholder="Qty" value={item.quantity} onChange={e=>setSourcingItems(prev=>prev.map((x,i)=>i===idx?{...x,quantity:e.target.value}:x))}/>
+                        <input style={S.inp} placeholder="Specs (optional)" value={item.specs} onChange={e=>setSourcingItems(prev=>prev.map((x,i)=>i===idx?{...x,specs:e.target.value}:x))}/>
+                        {sourcingItems.length>1&&<button onClick={()=>setSourcingItems(prev=>prev.filter((_,i)=>i!==idx))} style={{color:"#d0d8e0",background:"none",border:"none",cursor:"pointer",fontSize:16,padding:"0 4px"}}>✕</button>}
+                      </div>
+                    ))}
+                  </div>
+                )}
+
+                <button onClick={runSourcing}
+                  disabled={sourcingRunning||!(sourcingMode==="auto"?sourcingItems.some(i=>i.checked):sourcingItems.some(i=>i.name.trim()))}
+                  style={{...S.addBtn,background:"#3B6D11",color:"#fff",borderColor:"#3B6D11",marginBottom:14,
+                    opacity:(sourcingRunning||!(sourcingMode==="auto"?sourcingItems.some(i=>i.checked):sourcingItems.some(i=>i.name.trim())))?0.5:1}}>
+                  {sourcingRunning?<><Spinner/>&nbsp;Sourcing item {sourcingProgress.current} of {sourcingProgress.total}...</>:<span>Source Selected Items</span>}
                 </button>
-                {quickSourceResults.length>0&&(
+
+                {sourcingRunning&&sourcingProgress.total>0&&(
+                  <div style={{marginBottom:14}}>
+                    <div style={{height:6,borderRadius:3,background:"#f0f2f5",overflow:"hidden"}}>
+                      <div style={{height:"100%",width:`${(sourcingProgress.current/sourcingProgress.total)*100}%`,background:"#3B6D11",transition:"width 0.3s ease"}}/>
+                    </div>
+                  </div>
+                )}
+
+                {sourcingResults.length>0&&(
                   <div>
                     <div style={{fontSize:11,fontWeight:600,color:"#b0bec8",textTransform:"uppercase",letterSpacing:"0.1em",fontFamily:"'DM Mono',monospace",marginBottom:8}}>Results</div>
-                    {quickSourceResults.map((r,idx)=>(
-                      <div key={idx} style={{border:"0.5px solid #e2e6ea",borderRadius:10,marginBottom:8,overflow:"hidden"}}>
-                        <button onClick={()=>setQsExpandedItem(qsExpandedItem===idx?null:idx)} style={{width:"100%",background:"#f8f9fb",border:"none",cursor:"pointer",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",textAlign:"left" as const}}>
+                    {sourcingResults.map((r,idx)=>(
+                      <div key={idx} style={{border:"0.5px solid #e2e6ea",borderRadius:10,marginBottom:10,overflow:"hidden"}}>
+                        <button onClick={()=>setSourcingExpandedItem(sourcingExpandedItem===idx?null:idx)} style={{width:"100%",background:"#f8f9fb",border:"none",cursor:"pointer",padding:"10px 14px",display:"flex",alignItems:"center",justifyContent:"space-between",textAlign:"left" as const}}>
                           <div style={{display:"flex",alignItems:"center",gap:8}}>
-                            <span style={{fontSize:13,fontWeight:600,color:"#1a2332"}}>{r.name}</span>
-                            <span style={{fontSize:10,padding:"1px 7px",borderRadius:10,fontFamily:"'DM Mono',monospace",fontWeight:600,...(r.local_available?{background:"#f0faf5",color:"#3B6D11"}:{background:"#f0f2f5",color:"#8a9ab0"})}}>
-                              {r.local_available?"Local Available":"Import"}
-                            </span>
+                            <span style={{fontSize:13,fontWeight:600,color:"#1a2332"}}>{r.itemName}</span>
+                            {r.loading?<Spinner/>:r.error?(
+                              <span style={{fontSize:10,padding:"1px 7px",borderRadius:10,background:"#FEF0F0",color:"#A32D2D",fontWeight:600,fontFamily:"'DM Mono',monospace"}}>Error</span>
+                            ):(
+                              <span style={{fontSize:10,padding:"1px 7px",borderRadius:10,background:"#f0faf5",color:"#3B6D11",fontWeight:600,fontFamily:"'DM Mono',monospace"}}>{countSourcingSuppliers(r.result)} suppliers found</span>
+                            )}
                           </div>
-                          <span style={{color:"#b0bec8",fontSize:12}}>{qsExpandedItem===idx?"▲":"▼"}</span>
+                          <span style={{color:"#b0bec8",fontSize:12}}>{sourcingExpandedItem===idx?"▲":"▼"}</span>
                         </button>
-                        {qsExpandedItem===idx&&(
-                          <div style={{padding:"12px 14px"}}>
-                            <div style={{fontSize:12,color:"#4a6a8a",marginBottom:10,lineHeight:1.5}}>{r.summary}</div>
-                            {r.local_suppliers?.length>0&&(
-                              <div style={{marginBottom:10}}>
-                                <div style={{fontSize:10,fontWeight:600,color:"#3B6D11",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:5}}>Local Suppliers</div>
-                                {r.local_suppliers.map((s,si)=>(
-                                  <div key={si} style={{fontSize:12,padding:"7px 10px",borderRadius:7,background:"#f0faf5",marginBottom:4}}>
-                                    <div style={{fontWeight:600,color:"#1a2332"}}>{s.name} <span style={{fontWeight:400,color:"#8a9ab0"}}>({s.type})</span></div>
-                                    <div style={{color:"#4a6a8a",marginTop:2}}>{s.price_range} / {s.unit} &middot; Lead: {s.lead_time} &middot; MOQ: {s.moq}</div>
-                                    {s.notes&&<div style={{color:"#8a9ab0",marginTop:2,fontSize:11}}>{s.notes}</div>}
-                                  </div>
-                                ))}
+                        {sourcingExpandedItem===idx&&(
+                          <div style={{padding:"14px"}}>
+                            {r.loading?(
+                              <div style={{display:"flex",alignItems:"center",gap:8,color:"#8a9ab0",fontSize:13,padding:"10px 0"}}><Spinner/> Sourcing this item...</div>
+                            ):r.error?(
+                              <div style={{color:"#A32D2D",fontSize:12}}>{r.error}</div>
+                            ):(<>
+                              {renderSourcingResult(r.result,`sourcing-${idx}`)}
+                              <div style={{display:"flex",gap:8,marginTop:8,flexWrap:"wrap" as const}}>
+                                <button onClick={()=>copyToClipboard(r.result,"Result copied to clipboard")} style={{...S.addBtn,background:"#f0faf5",color:"#3B6D11",borderColor:"#3B6D11"}}>Copy All</button>
+                                <button onClick={()=>copyToClipboard(extractSourcingEmailsText(r.result),"Emails copied to clipboard")} style={{...S.addBtn,background:"#EBF3FC",color:"#185FA5",borderColor:"#185FA5"}}>Copy Emails</button>
                               </div>
-                            )}
-                            {r.international_suppliers?.length>0&&(
-                              <div style={{marginBottom:10}}>
-                                <div style={{fontSize:10,fontWeight:600,color:"#185FA5",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:5}}>International Suppliers</div>
-                                {r.international_suppliers.map((s,si)=>(
-                                  <div key={si} style={{fontSize:12,padding:"7px 10px",borderRadius:7,background:"#EBF3FC",marginBottom:4}}>
-                                    <div style={{fontWeight:600,color:"#1a2332"}}>{s.name} <span style={{fontWeight:400,color:"#8a9ab0"}}>({s.type})</span></div>
-                                    <div style={{color:"#4a6a8a",marginTop:2}}>{s.price_range} / {s.unit} &middot; Lead: {s.lead_time} &middot; MOQ: {s.moq}</div>
-                                    {s.import_notes&&<div style={{color:"#854F0B",marginTop:2,fontSize:11}}>{s.import_notes}</div>}
-                                  </div>
-                                ))}
-                              </div>
-                            )}
-                            <div style={{padding:"8px 10px",background:"#f4f3fe",borderRadius:7,fontSize:12,color:"#534AB7",marginBottom:8}}>
-                              <span style={{fontWeight:600}}>Recommendation: </span>{r.recommendation}
-                            </div>
-                            <div style={{padding:"8px 10px",background:"#FFF8EC",borderRadius:7,fontSize:12,color:"#854F0B"}}>
-                              <span style={{fontWeight:600}}>Quotation Hint: </span>{r.quotation_hint}
-                            </div>
+                            </>)}
                           </div>
                         )}
                       </div>
                     ))}
-                    <div style={{display:"flex",gap:8,marginTop:10}}>
-                      <button onClick={exportQuickSourceCSV} style={{...S.addBtn,background:"#f0faf5",color:"#3B6D11",borderColor:"#3B6D11"}}>↓ Export CSV</button>
-                      <button onClick={saveQuickSourceSession} disabled={quickSourceSaved} style={{...S.addBtn,background:quickSourceSaved?"#f0f2f5":"#EBF3FC",color:quickSourceSaved?"#8a9ab0":"#185FA5",borderColor:quickSourceSaved?"#e2e6ea":"#185FA5"}}>
-                        {quickSourceSaved?"Saved to Sourcing":"Save to Sourcing"}
-                      </button>
-                    </div>
+                    <button onClick={saveSourcingToProject} disabled={sourcingSaved||sourcingRunning||sourcingResults.some(r=>r.loading)}
+                      style={{...S.addBtn,background:sourcingSaved?"#f0f2f5":"#EBF3FC",color:sourcingSaved?"#8a9ab0":"#185FA5",borderColor:sourcingSaved?"#e2e6ea":"#185FA5"}}>
+                      {sourcingSaved?"Saved to Sourcing":"Save to Project"}
+                    </button>
                   </div>
                 )}
               </div>
