@@ -611,6 +611,8 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
         .ch-row:hover{background:#fafbfc}
         .task-row:hover .task-del{opacity:1}
         .task-del{opacity:0;transition:opacity 0.1s}
+        .task-grabbing{cursor:grabbing !important}
+        .task-dragging *{user-select:none !important}
       `}</style>
 
       {/* Topbar */}
@@ -673,7 +675,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
               onDrop={e=>{e.preventDefault();const tid=e.dataTransfer.getData("taskId");if(tid)moveTask(tid,today);setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}>
               {todayTasks.length===0&&<div style={{fontSize:11,color:dragOverZone==="today"?"#185FA5":"#d0d8e0",textAlign:"center",padding:"12px 0"}}>{dragOverZone==="today"?"Drop to schedule today":"No tasks today"}</div>}
               {todayTasks.map((t,ti)=>(
-                <div key={t.id} className="task-row"
+                <div key={t.id} className={dragZone==="today"&&dragIdx===ti?"task-row task-grabbing task-dragging":"task-row"}
                   draggable={true}
                   data-taskid={t.id}
                   onDragStart={e=>{e.dataTransfer.setData("taskId",t.id);e.dataTransfer.setData("sourceZone","today");setDragZone("today");setDragIdx(ti);}}
@@ -682,7 +684,8 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                   onDragLeave={()=>setDragOverIdx(null)}
                   onDrop={e=>{e.preventDefault();e.stopPropagation();const src=e.dataTransfer.getData("taskId");const sz=e.dataTransfer.getData("sourceZone");if(sz==="today"&&src!==t.id){const fi=todayTasks.findIndex(x=>x.id===src);if(fi!==-1&&fi!==ti){const re=reorderArr(todayTasks,fi,ti);const ids=new Set(re.map(x=>x.id));setOS({tasks:[...tasks.filter(x=>!ids.has(x.id)),...re]});}}else if(sz!=="today"&&src){moveTask(src,today);}setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}
                   onPointerDown={e=>{if(e.pointerType==="mouse")return;touchStartRef.current={x:e.clientX,y:e.clientY,taskId:t.id};touchTimerRef.current=setTimeout(()=>{if(!touchStartRef.current)return;const ghost=document.createElement("div");ghost.style.cssText=`position:fixed;pointer-events:none;z-index:9999;opacity:0.85;background:#EBF3FC;border:1.5px solid #185FA5;border-radius:8px;padding:6px 10px;font-size:12px;color:#185FA5;font-family:'Plus Jakarta Sans',sans-serif;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;ghost.textContent=t.text;ghost.style.left=`${e.clientX}px`;ghost.style.top=`${e.clientY-24}px`;document.body.appendChild(ghost);setTouchDrag({taskId:t.id,startX:e.clientX,startY:e.clientY,ghostEl:ghost});touchStartRef.current=null;},300);}}
-                  style={{display:"flex",alignItems:"flex-start",gap:6,padding:"4px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"grab",background:dragZone==="today"&&dragOverIdx===ti&&dragIdx!==ti?"#EBF3FC":"transparent"}}>
+                  style={{display:"flex",alignItems:"flex-start",gap:6,padding:"4px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"grab",opacity:dragZone==="today"&&dragIdx===ti?0.4:1,borderTop:dragZone==="today"&&dragOverIdx===ti&&dragIdx!==ti?"2px solid #185FA5":"none"}}>
+                  <span style={{fontSize:11,color:"#d0d8e0",cursor:"grab",padding:"0 3px",flexShrink:0,userSelect:"none",marginTop:2}}>⠿</span>
                   <div onClick={()=>toggleTaskDone(t)}
                     style={{width:14,height:14,borderRadius:3,border:`1.5px solid ${t.done?"#185FA5":"#d0d8e0"}`,background:t.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:8,color:"#fff"}}>
                     {t.done?"✓":""}
@@ -767,16 +770,21 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                       onDragOver={e=>{e.preventDefault();setDragOverZone(weekZone);}}
                       onDragLeave={e=>{if(!e.currentTarget.contains(e.relatedTarget as Node))setDragOverZone(null);}}
                       onDrop={e=>{e.preventDefault();const tid=e.dataTransfer.getData("taskId");if(tid)moveTask(tid,day.date);setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}>
-                      {dayTasks.map(t=>(
+                      {dayTasks.map((t,di)=>(
                         <div key={t.id}
+                          className={dragZone===weekZone&&dragIdx===di?"task-grabbing task-dragging":undefined}
                           draggable={true}
                           data-taskid={t.id}
-                          onDragStart={e=>{e.dataTransfer.setData("taskId",t.id);e.dataTransfer.setData("sourceZone",weekZone);setDragZone(weekZone);}}
+                          onDragStart={e=>{e.dataTransfer.setData("taskId",t.id);e.dataTransfer.setData("sourceZone",weekZone);setDragZone(weekZone);setDragIdx(di);}}
                           onDragEnd={()=>{setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}
+                          onDragOver={e=>{e.preventDefault();e.stopPropagation();setDragOverZone(null);setDragOverIdx(di);}}
+                          onDragLeave={()=>setDragOverIdx(null)}
+                          onDrop={e=>{e.preventDefault();e.stopPropagation();const src=e.dataTransfer.getData("taskId");const sz=e.dataTransfer.getData("sourceZone");if(sz===weekZone&&src!==t.id){const fi=dayTasks.findIndex(x=>x.id===src);if(fi!==-1&&fi!==di){const re=reorderArr(dayTasks,fi,di);const ids=new Set(re.map(x=>x.id));setOS({tasks:[...tasks.filter(x=>!ids.has(x.id)),...re]});}}else if(sz!==weekZone&&src){moveTask(src,day.date);}setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}
                           onClick={()=>toggleTaskDone(t)}
                           onPointerDown={e=>{if(e.pointerType==="mouse")return;touchStartRef.current={x:e.clientX,y:e.clientY,taskId:t.id};touchTimerRef.current=setTimeout(()=>{if(!touchStartRef.current)return;const ghost=document.createElement("div");ghost.style.cssText=`position:fixed;pointer-events:none;z-index:9999;opacity:0.85;background:#EBF3FC;border:1.5px solid #185FA5;border-radius:8px;padding:6px 10px;font-size:12px;color:#185FA5;font-family:'Plus Jakarta Sans',sans-serif;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;ghost.textContent=t.text;ghost.style.left=`${e.clientX}px`;ghost.style.top=`${e.clientY-24}px`;document.body.appendChild(ghost);setTouchDrag({taskId:t.id,startX:e.clientX,startY:e.clientY,ghostEl:ghost});touchStartRef.current=null;},300);}}
-                          style={{fontSize:10,padding:"3px 5px",borderRadius:5,background:t.done?"#f0f2f5":"#f8f9fb",border:"0.5px solid #e2e6ea",marginBottom:2,color:t.done?"#b0bec8":"#1a2332",textDecoration:t.done?"line-through":"none",borderLeft:t.carriedOver?"2px solid #854F0B":"none",cursor:"grab",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap",lineHeight:1.4}}>
-                          {t.text.length>24?t.text.slice(0,24)+"...":t.text}
+                          style={{display:"flex",alignItems:"center",fontSize:10,padding:"3px 5px",borderRadius:5,background:t.done?"#f0f2f5":"#f8f9fb",border:"0.5px solid #e2e6ea",marginBottom:2,color:t.done?"#b0bec8":"#1a2332",textDecoration:t.done?"line-through":"none",borderLeft:t.carriedOver?"2px solid #854F0B":"none",cursor:"grab",overflow:"hidden",opacity:dragZone===weekZone&&dragIdx===di?0.4:1,borderTop:dragZone===weekZone&&dragOverIdx===di&&dragIdx!==di?"2px solid #185FA5":"none"}}>
+                          <span onClick={e=>e.stopPropagation()} style={{fontSize:10,color:"#d0d8e0",cursor:"grab",padding:"0 2px 0 0",flexShrink:0,userSelect:"none"}}>⠿</span>
+                          <span style={{overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{t.text.length>24?t.text.slice(0,24)+"...":t.text}</span>
                         </div>
                       ))}
                       {dayTasks.length===0&&<div style={{fontSize:9,color:dragOverZone===weekZone?"#185FA5":"#e2e6ea",textAlign:"center",padding:"8px 0"}}>{dragOverZone===weekZone?"Drop":"--"}</div>}
@@ -811,7 +819,7 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
               onDrop={e=>{e.preventDefault();const tid=e.dataTransfer.getData("taskId");if(tid)moveTask(tid,undefined);setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}>
               {backlogTasks.length===0&&<div style={{fontSize:12,color:dragOverZone==="backlog"?"#185FA5":"#b0bec8",textAlign:"center",padding:"12px 0"}}>{dragOverZone==="backlog"?"Drop to add to backlog":"No backlog tasks."}</div>}
               {backlogTasks.map((t,bi)=>(
-                <div key={t.id} className="task-row"
+                <div key={t.id} className={dragZone==="backlog"&&dragIdx===bi?"task-row task-grabbing task-dragging":"task-row"}
                   draggable={true}
                   data-taskid={t.id}
                   onDragStart={e=>{e.dataTransfer.setData("taskId",t.id);e.dataTransfer.setData("sourceZone","backlog");setDragZone("backlog");setDragIdx(bi);}}
@@ -820,7 +828,8 @@ export default function Dashboard({ onNavigate }: { onNavigate?: (tab: TabId) =>
                   onDragLeave={()=>setDragOverIdx(null)}
                   onDrop={e=>{e.preventDefault();e.stopPropagation();const src=e.dataTransfer.getData("taskId");const sz=e.dataTransfer.getData("sourceZone");if(sz==="backlog"&&src!==t.id){const fi=backlogTasks.findIndex(x=>x.id===src);if(fi!==-1&&fi!==bi){const re=reorderArr(backlogTasks,fi,bi);const ids=new Set(re.map(x=>x.id));setOS({tasks:[...tasks.filter(x=>!ids.has(x.id)),...re]});}}else if(sz!=="backlog"&&src){moveTask(src,undefined);}setDragOverZone(null);setDragIdx(null);setDragOverIdx(null);setDragZone(null);}}
                   onPointerDown={e=>{if(e.pointerType==="mouse")return;touchStartRef.current={x:e.clientX,y:e.clientY,taskId:t.id};touchTimerRef.current=setTimeout(()=>{if(!touchStartRef.current)return;const ghost=document.createElement("div");ghost.style.cssText=`position:fixed;pointer-events:none;z-index:9999;opacity:0.85;background:#EBF3FC;border:1.5px solid #185FA5;border-radius:8px;padding:6px 10px;font-size:12px;color:#185FA5;font-family:'Plus Jakarta Sans',sans-serif;max-width:220px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;`;ghost.textContent=t.text;ghost.style.left=`${e.clientX}px`;ghost.style.top=`${e.clientY-24}px`;document.body.appendChild(ghost);setTouchDrag({taskId:t.id,startX:e.clientX,startY:e.clientY,ghostEl:ghost});touchStartRef.current=null;},300);}}
-                  style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"grab",background:dragZone==="backlog"&&dragOverIdx===bi&&dragIdx!==bi?"#EBF3FC":"transparent"}}>
+                  style={{display:"flex",alignItems:"flex-start",gap:8,padding:"6px 0",borderBottom:"0.5px solid #f0f2f5",cursor:"grab",opacity:dragZone==="backlog"&&dragIdx===bi?0.4:1,borderTop:dragZone==="backlog"&&dragOverIdx===bi&&dragIdx!==bi?"2px solid #185FA5":"none"}}>
+                  <span style={{fontSize:11,color:"#d0d8e0",cursor:"grab",padding:"0 3px",flexShrink:0,userSelect:"none",marginTop:2}}>⠿</span>
                   <div onClick={()=>toggleTaskDone(t)}
                     style={{width:16,height:16,borderRadius:4,border:`1.5px solid ${t.done?"#185FA5":"#d0d8e0"}`,background:t.done?"#185FA5":"#fff",flexShrink:0,marginTop:2,display:"flex",alignItems:"center",justifyContent:"center",cursor:"pointer",fontSize:10,color:"#fff"}}>
                     {t.done?"✓":""}
