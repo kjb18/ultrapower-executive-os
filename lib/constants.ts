@@ -379,4 +379,6 @@ export interface Project {
   rfqDocumentName?: string;
   quotations?: Quotation[];
   archived?: boolean;
+  supplierQuoteImage?: string;
+  supplierQuoteName?: string;
 }

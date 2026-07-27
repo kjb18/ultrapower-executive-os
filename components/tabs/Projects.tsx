@@ -40,6 +40,7 @@ interface Project {
   rfqSubject?:string; rfqContactPersonId?:number; rfqContactPersonName?:string;
   rfqLineItems?:LocalLineItem[];
   quotations?:Quotation[];
+  supplierQuoteImage?:string; supplierQuoteName?:string;
   createdAt:string; updatedAt:string;
 }
 interface Expense {
@@ -224,6 +225,16 @@ export default function Projects() {
   const [showQuotationOverlay, setShowQuotationOverlay] = useState(false);
   const [quotationOverlayUrl, setQuotationOverlayUrl] = useState("");
 
+  // Quotation Generator (chat-based)
+  const [showQuotGen, setShowQuotGen] = useState(false);
+  const [quotGenMessages, setQuotGenMessages] = useState<Array<{role:"user"|"assistant"; text:string; image?:string}>>([]);
+  const [quotGenInput, setQuotGenInput] = useState("");
+  const [quotGenImage, setQuotGenImage] = useState<string|null>(null);
+  const [quotGenLoading, setQuotGenLoading] = useState(false);
+  const [quotGenData, setQuotGenData] = useState<any>(null);
+  const [quotGenSupplierDoc, setQuotGenSupplierDoc] = useState<string|null>(null);
+  const [quotGenSaved, setQuotGenSaved] = useState(false);
+
   // Inline project name edit
   const [editingName, setEditingName] = useState(false);
   const [nameInput, setNameInput] = useState("");
@@ -271,6 +282,8 @@ export default function Projects() {
     setShowNewRFQ(false); setShowNewSPO(false); setShowSourcing(false);
     setSourcingResults([]); setSourcingSaved(false); setSourcingExpandedItem(null);
     setSourcingRunning(false); setSourcingProgress({current:0,total:0});
+    setShowQuotGen(false); setQuotGenMessages([]); setQuotGenInput(""); setQuotGenImage(null);
+    setQuotGenData(null); setQuotGenSupplierDoc(selectedProject.supplierQuoteImage||null); setQuotGenSaved(false);
     const hasLineItems = (selectedProject.rfqLineItems||[]).length > 0;
     setSourcingMode(hasLineItems ? "auto" : "manual");
     setSourcingItems(hasLineItems
@@ -556,6 +569,196 @@ export default function Projects() {
       await kvSet("sourcing:history",updated); setAllSourcing(updated); setSourcingSaved(true);
       showCopyToast("Sourcing session saved to project");
     } catch(e){console.error(e);}
+  };
+
+  // Quotation Generator -- chat-based markup and revision
+  const handleQuotGenFile = (file: File) => {
+    const reader = new FileReader();
+    reader.onload = ev => setQuotGenImage(ev.target?.result as string);
+    reader.readAsDataURL(file);
+  };
+
+  const handleQuotGenPaste = (e: React.ClipboardEvent) => {
+    const items = e.clipboardData?.items;
+    if (!items) return;
+    for (let i=0;i<items.length;i++) {
+      if (items[i].type.startsWith("image/")) {
+        const file = items[i].getAsFile();
+        if (file) { handleQuotGenFile(file); e.preventDefault(); return; }
+      }
+    }
+  };
+
+  const sendQuotGenMessage = async () => {
+    if (!selectedProject || (!quotGenInput.trim() && !quotGenImage)) return;
+
+    const userMsg = { role:"user" as const, text:quotGenInput.trim(), image:quotGenImage||undefined };
+
+    if (quotGenImage && !quotGenSupplierDoc) {
+      setQuotGenSupplierDoc(quotGenImage);
+      saveProject({...selectedProject, supplierQuoteImage:quotGenImage, supplierQuoteName:"Supplier Quote"});
+    }
+
+    const updatedMessages = [...quotGenMessages, userMsg];
+    setQuotGenMessages(updatedMessages);
+    setQuotGenInput("");
+    setQuotGenImage(null);
+    setQuotGenLoading(true);
+
+    try {
+      const projectContext = `Client: ${selectedProject.client||""}
+Subject: ${selectedProject.rfqSubject||selectedProject.name||""}
+Contact: ${selectedProject.rfqContactPersonName||""}
+VAT Type: ${selectedProject.vatType||"VAT Inclusive"}
+Existing line items: ${JSON.stringify(selectedProject.rfqLineItems||[])}
+Current quotation data: ${quotGenData ? JSON.stringify(quotGenData) : "None yet"}`;
+
+      const res = await fetch("/api/quotation-gen", {
+        method:"POST", headers:{"Content-Type":"application/json"},
+        body: JSON.stringify({ messages: updatedMessages, projectContext }),
+      });
+      const data = await res.json();
+
+      if (data.error) {
+        setQuotGenMessages(prev=>[...prev,{role:"assistant" as const,text:"Error: "+data.error}]);
+      } else {
+        const assistantMsg = {
+          role:"assistant" as const,
+          text: data.conversation + (data.quotationData ? "\n---QUOTATION_DATA---\n"+JSON.stringify(data.quotationData) : ""),
+        };
+        setQuotGenMessages(prev=>[...prev, assistantMsg]);
+        if (data.quotationData) { setQuotGenData(data.quotationData); setQuotGenSaved(false); }
+      }
+    } catch(e) {
+      setQuotGenMessages(prev=>[...prev,{role:"assistant" as const,text:"Connection error: "+String(e)}]);
+    }
+    setQuotGenLoading(false);
+  };
+
+  // Clean HTML for the saved/exported quotation record -- no supplier cost references
+  const generateCleanQuotationHTML = (): string => {
+    if (!quotGenData || !selectedProject) return "";
+
+    const items = (quotGenData.lineItems || []).map((item: any, i: number) => `
+      <tr>
+        <td style="padding:5pt 8pt;border-bottom:0.5px solid #e0e0e0;font-size:9pt">${i+1}</td>
+        <td style="padding:5pt 8pt;border-bottom:0.5px solid #e0e0e0;font-size:9pt">${item.description}</td>
+        <td style="padding:5pt 8pt;border-bottom:0.5px solid #e0e0e0;font-size:9pt">${item.unit}</td>
+        <td style="padding:5pt 8pt;border-bottom:0.5px solid #e0e0e0;font-size:9pt;text-align:center">${item.quantity}</td>
+        <td style="padding:5pt 8pt;border-bottom:0.5px solid #e0e0e0;font-size:9pt;text-align:right">Php ${Number(item.unitPrice).toLocaleString("en-PH",{minimumFractionDigits:2})}</td>
+        <td style="padding:5pt 8pt;border-bottom:0.5px solid #e0e0e0;font-size:9pt;text-align:right">Php ${Number(item.total).toLocaleString("en-PH",{minimumFractionDigits:2})}</td>
+      </tr>
+    `).join("");
+
+    return `<!DOCTYPE html><html><head><meta charset="UTF-8">
+    <style>
+      body{font-family:Arial,sans-serif;margin:2cm;color:#1a1a2e;font-size:10pt}
+      .header{display:flex;justify-content:space-between;align-items:flex-start;margin-bottom:20pt;border-bottom:2px solid #185FA5;padding-bottom:10pt}
+      .company{font-size:18pt;font-weight:bold;color:#185FA5}
+      table{width:100%;border-collapse:collapse;margin-bottom:12pt}
+      th{background:#185FA5;color:white;padding:6pt 8pt;text-align:left;font-size:9pt}
+      .terms-box{border:0.5px solid #e0e0e0;border-radius:4pt;padding:10pt;margin-bottom:14pt}
+      .footer{margin-top:20pt;border-top:0.5px solid #e0e0e0;padding-top:8pt;font-size:8pt;color:#999;text-align:center}
+    </style></head><body>
+    <div class="header">
+      <div>
+        <div class="company">ULTRA POWER</div>
+        <div style="font-size:9pt;color:#666">Ultra Power Industrial Resources, Inc.</div>
+        <div style="font-size:8pt;color:#999">Unit 105 Teylan Building, 6917 Washington St., Makati City</div>
+        <div style="font-size:8pt;color:#999">Tel: (632) 846 5880 &middot; TIN: 238-917-595-000</div>
+      </div>
+      <div style="text-align:right">
+        <div style="font-size:14pt;font-weight:bold">QUOTATION</div>
+        <div style="font-size:9pt;color:#666">${new Date().toLocaleDateString("en-PH",{year:"numeric",month:"long",day:"numeric"})}</div>
+      </div>
+    </div>
+    <div style="margin-bottom:16pt">
+      <div style="font-size:8pt;text-transform:uppercase;letter-spacing:0.05em;color:#999;margin-bottom:2pt">SUBMITTED TO</div>
+      <div style="font-weight:bold;font-size:11pt">${selectedProject.client}</div>
+      ${selectedProject.rfqContactPersonName ? `<div style="font-size:9pt;color:#666">Attention: ${selectedProject.rfqContactPersonName}</div>` : ""}
+    </div>
+    <div style="background:#EBF3FC;border-left:3px solid #185FA5;padding:8pt 10pt;margin-bottom:14pt;font-weight:600">
+      Subject: ${selectedProject.rfqSubject || selectedProject.name}
+    </div>
+    <p>Dear Sir/Ma'am,</p>
+    <p>We are pleased to submit our best price for the supply of the following:</p>
+    <table>
+      <thead><tr>
+        <th style="width:5%">#</th><th style="width:40%">Description</th><th style="width:10%">Unit</th>
+        <th style="width:10%;text-align:center">Qty</th><th style="width:17.5%;text-align:right">Unit Price</th>
+        <th style="width:17.5%;text-align:right">Total Price</th>
+      </tr></thead>
+      <tbody>${items}</tbody>
+      <tfoot>
+        <tr><td colspan="5" style="text-align:right;font-weight:bold;padding:6pt 8pt;border-top:2px solid #185FA5">SUBTOTAL</td>
+          <td style="text-align:right;font-weight:bold;padding:6pt 8pt;border-top:2px solid #185FA5">Php ${Number(quotGenData.subtotal).toLocaleString("en-PH",{minimumFractionDigits:2})}</td></tr>
+        ${quotGenData.vatAmount > 0 ? `<tr><td colspan="5" style="text-align:right;padding:4pt 8pt">VAT (12%)</td>
+          <td style="text-align:right;padding:4pt 8pt">Php ${Number(quotGenData.vatAmount).toLocaleString("en-PH",{minimumFractionDigits:2})}</td></tr>` : ""}
+        <tr><td colspan="5" style="text-align:right;font-weight:bold;padding:6pt 8pt;font-size:11pt">GRAND TOTAL</td>
+          <td style="text-align:right;font-weight:bold;padding:6pt 8pt;color:#185FA5;font-size:11pt">Php ${Number(quotGenData.grandTotal).toLocaleString("en-PH",{minimumFractionDigits:2})}</td></tr>
+      </tfoot>
+    </table>
+    <div class="terms-box">
+      <div style="font-size:8pt;text-transform:uppercase;letter-spacing:0.05em;color:#999;margin-bottom:6pt">Terms &amp; Conditions</div>
+      <table style="margin:0;border:none">
+        ${quotGenData.terms?.delivery ? `<tr><td style="border:none;padding:2pt 0;font-weight:bold;width:120pt">Delivery:</td><td style="border:none;padding:2pt 0">${quotGenData.terms.delivery}</td></tr>` : ""}
+        ${quotGenData.terms?.validity ? `<tr><td style="border:none;padding:2pt 0;font-weight:bold">Validity:</td><td style="border:none;padding:2pt 0">${quotGenData.terms.validity}</td></tr>` : ""}
+        ${quotGenData.terms?.warranty ? `<tr><td style="border:none;padding:2pt 0;font-weight:bold">Warranty:</td><td style="border:none;padding:2pt 0">${quotGenData.terms.warranty}</td></tr>` : ""}
+        ${quotGenData.terms?.payment ? `<tr><td style="border:none;padding:2pt 0;font-weight:bold">Payment:</td><td style="border:none;padding:2pt 0">${quotGenData.terms.payment}</td></tr>` : ""}
+      </table>
+    </div>
+    <div style="margin-top:20pt">
+      <div style="margin-top:30pt;border-top:1px solid #1a1a2e;width:180pt;padding-top:4pt">
+        <div style="font-weight:bold">Alexander H. Banares</div>
+        <div style="font-size:9pt;color:#666">General Sales Manager</div>
+      </div>
+    </div>
+    <div class="footer">Unit 105 Teylan Building, 6917 Washington St., Makati City 1230 &middot; Tel: (632) 846 5880</div>
+    </body></html>`;
+  };
+
+  const saveQuotGenAsQuotation = async () => {
+    if (!selectedProject || !quotGenData) return;
+    setQuotGenLoading(true);
+    try {
+      const docNumber = await generateDocNum("QUOT");
+      const quotation: Quotation = {
+        id: genId(),
+        version: (selectedProject.quotations?.length || 0) + 1,
+        docNumber,
+        dateCreated: new Date().toISOString(),
+        status: "Draft",
+        lineItems: (quotGenData.lineItems || []).map((item: any, i: number) => ({
+          id: "qg-"+i,
+          description: item.description,
+          quantity: item.quantity,
+          unit: item.unit,
+          unitPrice: item.unitPrice,
+          total: item.total,
+        })),
+        totalAmount: quotGenData.subtotal,
+        vatType: selectedProject.vatType || "VAT Inclusive",
+        vatAmount: quotGenData.vatAmount || 0,
+        grandTotal: quotGenData.grandTotal,
+        notes: quotGenData.notes || "",
+        html: generateCleanQuotationHTML(),
+        salutation: "Dear Sir/Ma'am,",
+        validity: quotGenData.terms?.validity || "",
+        delivery: quotGenData.terms?.delivery || "",
+        warranty: quotGenData.terms?.warranty || "",
+        paymentTerms: quotGenData.terms?.payment || "",
+      };
+      const res = await fetch("/api/projects", { method:"POST", headers:{"Content-Type":"application/json"}, body:JSON.stringify({action:"saveQuotation", projectId:selectedProject.id, quotation}) });
+      const data = await res.json();
+      if (data.project) {
+        setSelectedProject(data.project);
+        setProjects(prev=>prev.map(p=>p.id===selectedProject.id ? data.project : p));
+        showCopyToast(`Quotation Rev ${data.project.quotations?.length || quotation.version} saved`);
+        setQuotGenSaved(true);
+        setShowQuotGen(false);
+      }
+    } catch(e) { console.error(e); }
+    setQuotGenLoading(false);
   };
 
   const QUOT_STATUS_C: Record<string,{bg:string;fg:string}> = {
@@ -1368,17 +1571,21 @@ export default function Projects() {
 
             {/* Action bar */}
             <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap" as const}}>
-              <button onClick={()=>{setShowNewRFQ(s=>!s);setShowNewSPO(false);setShowSourcing(false);}}
+              <button onClick={()=>{setShowNewRFQ(s=>!s);setShowNewSPO(false);setShowSourcing(false);setShowQuotGen(false);}}
                 style={{...S.addBtn,background:showNewRFQ?"#1a2332":"#EBF3FC",color:showNewRFQ?"#fff":"#185FA5",borderColor:showNewRFQ?"#1a2332":"#185FA5"}}>
                 {showNewRFQ?"✕ Cancel":"+ New RFQ"}
               </button>
-              <button onClick={()=>{setShowNewSPO(s=>!s);setShowNewRFQ(false);setShowSourcing(false);}}
+              <button onClick={()=>{setShowNewSPO(s=>!s);setShowNewRFQ(false);setShowSourcing(false);setShowQuotGen(false);}}
                 style={{...S.addBtn,background:showNewSPO?"#1a2332":"#FFF8EC",color:showNewSPO?"#fff":"#854F0B",borderColor:showNewSPO?"#1a2332":"#854F0B"}}>
                 {showNewSPO?"✕ Cancel":"+ New Supplier PO"}
               </button>
-              <button onClick={()=>{setShowSourcing(s=>!s);setShowNewRFQ(false);setShowNewSPO(false);}}
+              <button onClick={()=>{setShowSourcing(s=>!s);setShowNewRFQ(false);setShowNewSPO(false);setShowQuotGen(false);}}
                 style={{...S.addBtn,background:showSourcing?"#1a2332":"#f0faf5",color:showSourcing?"#fff":"#3B6D11",borderColor:showSourcing?"#1a2332":"#3B6D11"}}>
                 {showSourcing?"✕ Cancel":"⚡ Source Items"}
+              </button>
+              <button onClick={()=>{setShowQuotGen(s=>!s);setShowNewRFQ(false);setShowNewSPO(false);setShowSourcing(false);}}
+                style={{...S.addBtn,background:showQuotGen?"#1a2332":"#F4F3FE",color:showQuotGen?"#fff":"#534AB7",borderColor:showQuotGen?"#1a2332":"#534AB7"}}>
+                {showQuotGen?"✕ Cancel":"📄 Generate Quotation"}
               </button>
             </div>
 
@@ -1640,6 +1847,138 @@ export default function Projects() {
                     </button>
                   </div>
                 )}
+              </div>
+            )}
+
+            {/* Quotation Generator panel */}
+            {showQuotGen&&(
+              <div style={{...S.card,padding:16,marginBottom:12,border:"0.5px solid #534AB7"}}>
+                <div style={{fontSize:12,fontWeight:600,color:"#534AB7",textTransform:"uppercase",letterSpacing:"0.08em",fontFamily:"'DM Mono',monospace",marginBottom:12}}>📄 Quotation Generator</div>
+                <div style={{display:"flex",gap:16,alignItems:"flex-start",flexWrap:"wrap" as const}}>
+
+                  {/* LEFT: Chat */}
+                  <div style={{width:"55%",minWidth:320,flex:"1 1 320px",display:"flex",flexDirection:"column" as const,gap:8}} onPaste={handleQuotGenPaste}>
+                    <div style={{border:"0.5px solid #e2e6ea",borderRadius:10,background:"#fafbfc",padding:10,minHeight:220,maxHeight:420,overflowY:"auto" as const,display:"flex",flexDirection:"column" as const,gap:8}}>
+                      {quotGenMessages.length===0&&(
+                        <div style={{fontSize:12,color:"#8a9ab0",padding:"16px 10px",textAlign:"center" as const,lineHeight:1.5}}>
+                          Upload your supplier quotation and tell me your instructions. Example: Mark up 40%, delivery 30 days, add 12% VAT
+                        </div>
+                      )}
+                      {quotGenMessages.map((m,mi)=>{
+                        const hasQuotData = m.role==="assistant" && m.text.includes("---QUOTATION_DATA---");
+                        const shownText = hasQuotData ? m.text.split("---QUOTATION_DATA---")[0].trim() : m.text;
+                        return (
+                          <div key={mi} style={{display:"flex",flexDirection:"column" as const,alignItems:m.role==="user"?"flex-end":"flex-start"}}>
+                            <div style={{maxWidth:"85%",padding:"8px 12px",borderRadius:10,fontSize:13,lineHeight:1.4,whiteSpace:"pre-wrap" as const,
+                              background:m.role==="user"?"#185FA5":"#fff",color:m.role==="user"?"#fff":"#1a2332",
+                              border:m.role==="user"?"none":"0.5px solid #e2e6ea"}}>
+                              {shownText}
+                              {m.image&&<img src={m.image} alt="supplier quote" style={{display:"block",maxWidth:160,borderRadius:6,marginTop:6}}/>}
+                            </div>
+                            {hasQuotData&&<span style={{fontSize:10,color:"#3B6D11",fontWeight:600,marginTop:3,fontFamily:"'DM Mono',monospace"}}>Quotation updated ✓</span>}
+                          </div>
+                        );
+                      })}
+                      {quotGenLoading&&<div style={{display:"flex",alignItems:"center",gap:6,fontSize:12,color:"#8a9ab0"}}><Spinner/> Thinking...</div>}
+                    </div>
+
+                    {quotGenImage&&(
+                      <div style={{display:"flex",alignItems:"center",gap:8,padding:"6px 10px",border:"0.5px solid #e2e6ea",borderRadius:8,background:"#f8f9fb"}}>
+                        <img src={quotGenImage} alt="attached" style={{width:32,height:32,objectFit:"cover" as const,borderRadius:5}}/>
+                        <span style={{fontSize:11,color:"#4a6a8a",flex:1}}>Supplier quote attached</span>
+                        <button onClick={()=>setQuotGenImage(null)} style={{fontSize:12,color:"#A32D2D",background:"none",border:"none",cursor:"pointer"}}>✕</button>
+                      </div>
+                    )}
+
+                    <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                      <input type="file" accept="image/*,.pdf" style={{display:"none"}} id="quot-gen-upload"
+                        onChange={e=>{const f=e.target.files?.[0];if(f)handleQuotGenFile(f);}}/>
+                      <button onClick={()=>document.getElementById("quot-gen-upload")?.click()}
+                        title="Paste or upload supplier quote"
+                        style={{fontSize:14,padding:"8px 10px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer",flexShrink:0}}>📎</button>
+                      <input style={{...S.inp,flex:1}} placeholder="Type instructions... e.g. Mark up 40%, delivery 30 days"
+                        value={quotGenInput} onChange={e=>setQuotGenInput(e.target.value)}
+                        onPaste={handleQuotGenPaste}
+                        onKeyDown={e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendQuotGenMessage();}}}/>
+                      <button onClick={sendQuotGenMessage} disabled={quotGenLoading||(!quotGenInput.trim()&&!quotGenImage)}
+                        style={{...S.addBtn,background:"#534AB7",color:"#fff",borderColor:"#534AB7",opacity:quotGenLoading||(!quotGenInput.trim()&&!quotGenImage)?0.5:1,flexShrink:0}}>
+                        {quotGenLoading?<Spinner/>:"Send"}
+                      </button>
+                    </div>
+                  </div>
+
+                  {/* RIGHT: Live preview */}
+                  <div style={{width:"45%",minWidth:280,flex:"1 1 280px"}}>
+                    <div style={{...S.card,padding:16}}>
+                      {!quotGenData?(
+                        <div style={{fontSize:12,color:"#b0bec8",textAlign:"center" as const,padding:"40px 10px"}}>Your quotation will appear here after the first generation</div>
+                      ):(
+                        <div style={{fontSize:12}}>
+                          <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",borderBottom:"2px solid #185FA5",paddingBottom:8,marginBottom:10}}>
+                            <div>
+                              <div style={{fontSize:15,fontWeight:700,color:"#185FA5"}}>ULTRA POWER</div>
+                              <div style={{fontSize:10,color:"#8a9ab0"}}>Unit 105 Teylan Building, 6917 Washington St., Makati City</div>
+                            </div>
+                            <div style={{fontSize:13,fontWeight:700,color:"#1a2332"}}>QUOTATION</div>
+                          </div>
+                          <div style={{marginBottom:8}}>
+                            <div style={{fontWeight:600,color:"#1a2332"}}>{selectedProject?.client}</div>
+                            {selectedProject?.rfqContactPersonName&&<div style={{fontSize:11,color:"#8a9ab0"}}>Attn: {selectedProject.rfqContactPersonName}</div>}
+                            <div style={{fontSize:11,color:"#4a6a8a",marginTop:2}}>{selectedProject?.rfqSubject||selectedProject?.name}</div>
+                          </div>
+                          <table style={{width:"100%",borderCollapse:"collapse",fontSize:11,marginBottom:8}}>
+                            <thead><tr style={{background:"#f8f9fb"}}>
+                              {["#","Description","Unit","Qty","Unit Price (PHP)","Total (PHP)"].map(h=><th key={h} style={{padding:"4px 6px",textAlign:"left",fontSize:9,color:"#b0bec8",fontFamily:"'DM Mono',monospace",textTransform:"uppercase"}}>{h}</th>)}
+                            </tr></thead>
+                            <tbody>
+                              {(quotGenData.lineItems||[]).map((item:any,i:number)=>(
+                                <tr key={i}>
+                                  <td style={{...S.td,fontSize:11}}>{i+1}</td>
+                                  <td style={{...S.td,fontSize:11}}>{item.description}</td>
+                                  <td style={{...S.td,fontSize:11}}>{item.unit}</td>
+                                  <td style={{...S.td,fontSize:11}}>{item.quantity}</td>
+                                  <td style={{...S.td,fontSize:11}}>
+                                    {fmt(item.unitPrice)}
+                                    {item.supplierPrice!==undefined&&<div style={{fontSize:9,color:"#b0bec8"}}>(Cost: {fmt(item.supplierPrice)})</div>}
+                                  </td>
+                                  <td style={{...S.td,fontSize:11,fontWeight:600}}>{fmt(item.total)}</td>
+                                </tr>
+                              ))}
+                            </tbody>
+                          </table>
+                          <div style={{textAlign:"right" as const,fontSize:11,color:"#4a6a8a"}}>Subtotal: {fmt(quotGenData.subtotal)}</div>
+                          {quotGenData.vatAmount>0&&<div style={{textAlign:"right" as const,fontSize:11,color:"#4a6a8a"}}>VAT: {fmt(quotGenData.vatAmount)}</div>}
+                          <div style={{textAlign:"right" as const,fontSize:14,fontWeight:700,color:"#185FA5",marginBottom:10}}>Grand Total: {fmt(quotGenData.grandTotal)}</div>
+                          <div style={{border:"0.5px solid #e2e6ea",borderRadius:8,padding:10,fontSize:11,color:"#4a6a8a",lineHeight:1.6}}>
+                            {quotGenData.terms?.delivery&&<div><b>Delivery:</b> {quotGenData.terms.delivery}</div>}
+                            {quotGenData.terms?.validity&&<div><b>Validity:</b> {quotGenData.terms.validity}</div>}
+                            {quotGenData.terms?.warranty&&<div><b>Warranty:</b> {quotGenData.terms.warranty}</div>}
+                            {quotGenData.terms?.payment&&<div><b>Payment:</b> {quotGenData.terms.payment}</div>}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+
+                    {quotGenData&&selectedProject&&(
+                      <div style={{display:"flex",gap:6,marginTop:10,flexWrap:"wrap" as const}}>
+                        <button onClick={saveQuotGenAsQuotation} disabled={quotGenLoading}
+                          style={{...S.addBtn,background:quotGenSaved?"#f0f2f5":"#534AB7",color:quotGenSaved?"#8a9ab0":"#fff",borderColor:quotGenSaved?"#e2e6ea":"#534AB7"}}>
+                          {quotGenSaved?"Saved":"Save as Quotation"}
+                        </button>
+                        <button onClick={async()=>{
+                          const dn=await generateDocNum("QUOT");
+                          const url=`/tools/docmaker.html?client=${encodeURIComponent(selectedProject.client)}&subject=${encodeURIComponent(selectedProject.rfqSubject||selectedProject.name)}&rfq=${encodeURIComponent(selectedProject.rfqNumber||"")}&docnum=${encodeURIComponent(dn)}&projectId=${encodeURIComponent(selectedProject.id)}&mode=quotation`;
+                          setQuotationOverlayUrl(url); setShowQuotationOverlay(true); document.body.style.overflow="hidden";
+                        }} style={{...S.addBtn,background:"#f8f9fb",color:"#4a6a8a",borderColor:"#e2e6ea"}}>Open in Document Maker</button>
+                        <button onClick={()=>{
+                          const html=generateCleanQuotationHTML();
+                          const w=window.open("","_blank");
+                          if(w){w.document.write(html);w.document.close();w.focus();w.print();}
+                        }} style={{...S.addBtn,background:"#f8f9fb",color:"#4a6a8a",borderColor:"#e2e6ea"}}>Export</button>
+                      </div>
+                    )}
+                  </div>
+                </div>
               </div>
             )}
 
