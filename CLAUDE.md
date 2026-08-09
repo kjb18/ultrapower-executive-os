@@ -62,6 +62,8 @@ app/
     images/route.ts        — Royalty-free image search, max 2 web searches
     projects/route.ts      — Projects + Expenses CRUD, syncs to KV and Google Sheets
     sheets/route.ts        — Google Sheets JWT auth and write layer
+    docnum/route.ts        — Sequential document number generator (RFQ, PO, INV, DR, QUOT, SPO)
+    mcp/route.ts            — MCP server exposing OS tools to Claude.ai (see MCP Server section below)
 components/
   Shell.tsx               — Main app shell, tab routing
   Sidebar.tsx             — Navigation sidebar, exports TabId type
@@ -192,6 +194,28 @@ Two routes handle ClickUp:
 MIT tasks are created in a dedicated "Executive MITs" list. The list is auto-created on first use inside the first available Space.
 
 The Dashboard polls ClickUp every 2 minutes for completion status of linked MITs.
+
+---
+
+## MCP Server (/api/mcp)
+
+/api/mcp implements a Streamable HTTP MCP (Model Context Protocol) server so any Claude.ai chat thread can call Executive OS functionality directly, without copy-pasting JSON through the Import panel. Connect it in Claude.ai under Settings > Connectors > Add custom connector, using the full URL: https://ultrapower-executive-os-vgrr.vercel.app/api/mcp
+
+**Transport:** POST handles JSON-RPC 2.0 (`initialize`, `tools/list`, `tools/call`, `ping`; notifications like `notifications/initialized` return HTTP 202 with no body, per JSON-RPC semantics). GET returns basic server info, not a live SSE stream.
+
+**No authentication.** This route has no auth check, matching every other route in this app. Unlike the rest of the app, it is a self-describing, write-capable API meant to be called by Claude.ai's infrastructure from any chat thread you connect it to. Anyone who obtains the Vercel URL could read or write project, quotation, expense, and client data through it with no login. This was a deliberate tradeoff to keep setup frictionless, not an oversight, if that tradeoff ever needs revisiting, add a shared-secret header check (Claude.ai's custom connector settings support a custom header) backed by an `MCP_SECRET` env var.
+
+**Tools exposed:**
+- `get_projects` — list projects, filterable by client, stage, archived status
+- `get_project_detail` — full project record by ID or fuzzy name match, including quotations
+- `create_project` — create a new project (RFQ stage by default)
+- `update_project` — patch fields on an existing project, recomputes grossProfit/grossMarginPct
+- `save_quotation` — save a quotation to a project; version and doc number are server-assigned
+- `save_sourcing_session` — save a sourcing session, optionally linked to a project
+- `get_product_catalog` / `get_suppliers` — read the catalog KV (catalog:products, catalog:suppliers)
+- `save_expense` — save an expense, optionally linked to a project
+
+**Implementation rule:** tool handlers that write project/quotation/expense data proxy through the existing /api/projects and /api/docnum routes (internal fetch to APP_URL) rather than writing to Redis directly. This keeps Google Sheets sync and financial rollup logic (COGS/shipping/margin recalculation on expense save) in one place instead of duplicating it. Only read-only tools and save_sourcing_session (no Sheets sync exists for sourcing history) touch Redis directly. If you add a new write tool here, proxy it through the matching action in /api/projects rather than reimplementing the write.
 
 ---
 
