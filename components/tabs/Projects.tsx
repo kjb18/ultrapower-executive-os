@@ -191,6 +191,14 @@ export default function Projects() {
   const [showArchived, setShowArchived] = useState(false);
   const [expenseTab, setExpenseTab] = useState<"project"|"opex">("project");
 
+  // Import panel -- paste JSON from other Claude chat threads
+  const [showImport, setShowImport] = useState(false);
+  const [importText, setImportText] = useState("");
+  const [importType, setImportType] = useState<"auto"|"sourcing"|"quotation"|"project">("auto");
+  const [importParsed, setImportParsed] = useState<any>(null);
+  const [importError, setImportError] = useState("");
+  const [importProjectId, setImportProjectId] = useState("");
+
   // Reports state
   const _phNow = new Date(new Date().toLocaleString("en-US",{timeZone:"Asia/Manila"}));
   const [rptMonth, setRptMonth] = useState(_phNow.getMonth()+1);
@@ -570,6 +578,213 @@ export default function Projects() {
       showCopyToast("Sourcing session saved to project");
     } catch(e){console.error(e);}
   };
+
+  // Import panel -- accepts JSON pasted from other Claude chat threads. Freeform LLM output
+  // means field names vary between threads, so this normalizes several known shapes.
+  function parseImportData() {
+    if (!importText.trim()) { setImportError("Please paste JSON data first."); return; }
+
+    let parsed: any;
+    try {
+      let cleaned = importText.trim();
+      cleaned = cleaned.replace(/^```json?\s*/i, "").replace(/\s*```\s*$/i, "").trim();
+      parsed = JSON.parse(cleaned);
+    } catch {
+      const match = importText.match(/\{[\s\S]*\}/);
+      if (match) {
+        try { parsed = JSON.parse(match[0]); }
+        catch { setImportError("Could not parse JSON. Make sure you copied the complete JSON output."); return; }
+      } else {
+        setImportError("No JSON data found. Paste the JSON output from your Claude chat."); return;
+      }
+    }
+
+    // Unwrap common nesting shapes
+    if (parsed.quotation && typeof parsed.quotation === "object") parsed = { ...parsed, ...parsed.quotation };
+    if (parsed.project && typeof parsed.project === "object") parsed = { ...parsed, ...parsed.project };
+
+    // Normalize alternate field names for quotations
+    if (!parsed.lineItems && Array.isArray(parsed.items) && (parsed.items[0]?.unitPrice !== undefined || parsed.items[0]?.total !== undefined || parsed.items[0]?.price !== undefined)) {
+      parsed = { ...parsed, lineItems: parsed.items };
+    }
+    if (parsed.grand_total !== undefined && parsed.grandTotal === undefined) parsed = { ...parsed, grandTotal: parsed.grand_total };
+    if (parsed.total !== undefined && parsed.grandTotal === undefined && parsed.subtotal === undefined) parsed = { ...parsed, grandTotal: parsed.total };
+
+    // Normalize alternate field names for sourcing
+    if (!parsed.items && Array.isArray(parsed.results)) parsed = { ...parsed, items: parsed.results };
+    if (!parsed.items && Array.isArray(parsed.sourcingResults)) parsed = { ...parsed, items: parsed.sourcingResults };
+
+    // /api/extract shape: { client, rfq, items }
+    if (parsed.client && typeof parsed.client === "object" && parsed.rfq && parsed.items) {
+      parsed = {
+        name: (parsed.client.name||"") + " " + (parsed.rfq.subject||""),
+        client: parsed.client.name,
+        contactPerson: parsed.client.contactPerson,
+        rfqNumber: parsed.rfq.number,
+        subject: parsed.rfq.subject,
+        deadline: parsed.rfq.deadline,
+        items: parsed.items,
+        notes: parsed.notes,
+      };
+    }
+
+    // Auto-detect type
+    let detectedType: "quotation"|"sourcing"|"project" = importType !== "auto" ? importType : "project";
+
+    if (importType === "auto") {
+      if (parsed.lineItems && (parsed.subtotal !== undefined || parsed.grandTotal !== undefined)) {
+        detectedType = "quotation";
+      } else if (parsed.suppliers || (parsed.items && parsed.items[0]?.suppliers)) {
+        detectedType = "sourcing";
+      } else if (parsed.name || parsed.client) {
+        detectedType = "project";
+      } else if (parsed.items && parsed.items[0]?.description) {
+        if (parsed.items[0]?.unitPrice || parsed.items[0]?.total) {
+          detectedType = "quotation";
+        } else {
+          detectedType = "project";
+        }
+      }
+    }
+
+    setImportParsed({ detectedType, data: parsed });
+  }
+
+  async function executeImport() {
+    if (!importParsed) return;
+    const { detectedType, data } = importParsed;
+
+    try {
+      if (detectedType === "quotation") {
+        let projectId = importProjectId;
+
+        if (!projectId || projectId === "__new__") {
+          const proj: Project = {
+            id: genId(),
+            name: (data.client || "Imported") + " Quotation " + new Date().toLocaleDateString("en-PH",{month:"short",year:"numeric"}),
+            client: data.client || "Unknown",
+            stage: "RFQ Submitted",
+            vatType: (data.vatType as VatType) || "VAT Inclusive",
+            rfqDate: new Date().toISOString().split("T")[0],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          await saveProject(proj);
+          projectId = proj.id;
+        }
+
+        const docNumber = await generateDocNum("QUOT");
+
+        const quotation: Quotation = {
+          id: genId(),
+          version: 1,
+          docNumber,
+          dateCreated: new Date().toISOString(),
+          status: "Draft",
+          lineItems: (data.lineItems || data.items || []).map((item: any, i: number) => ({
+            id: "imp-"+i,
+            description: item.description || item.name || "",
+            quantity: item.quantity || item.qty || 0,
+            unit: item.unit || "pcs",
+            unitPrice: item.unitPrice || item.unit_price || item.price || 0,
+            total: item.total || (item.quantity||0) * (item.unitPrice||0),
+          })),
+          totalAmount: data.subtotal || 0,
+          vatType: (data.vatType as VatType) || "VAT Inclusive",
+          vatAmount: data.vatAmount || 0,
+          grandTotal: data.grandTotal || data.subtotal || 0,
+          notes: data.notes || "",
+          html: "",
+          salutation: "Dear Sir/Ma'am,",
+          validity: data.terms?.validity || data.validity || "",
+          delivery: data.terms?.delivery || data.delivery || "",
+          warranty: data.terms?.warranty || data.warranty || "",
+          paymentTerms: data.terms?.payment || data.paymentTerms || "",
+        };
+
+        await fetch("/api/projects", {
+          method:"POST", headers:{"Content-Type":"application/json"},
+          body:JSON.stringify({action:"saveQuotation", projectId, quotation})
+        });
+
+        await loadData();
+        alert("Quotation imported successfully. Doc #: " + docNumber);
+
+      } else if (detectedType === "sourcing") {
+        let projectId = importProjectId;
+
+        if (!projectId || projectId === "__new__") {
+          const proj: Project = {
+            id: genId(),
+            name: "Sourcing Import " + new Date().toLocaleDateString("en-PH",{month:"short",year:"numeric"}),
+            client: data.client || "Various",
+            stage: "Sourcing",
+            vatType: "VAT Inclusive",
+            rfqDate: new Date().toISOString().split("T")[0],
+            createdAt: new Date().toISOString(),
+            updatedAt: new Date().toISOString(),
+          };
+          await saveProject(proj);
+          projectId = proj.id;
+        }
+
+        const history = await kvGet<SourcingSession[]>("sourcing:history") || [];
+        const session: SourcingSession = {
+          id: genId(),
+          query: data.sessionName || data.name || "Imported Session",
+          subject: data.sessionName || data.name || "Imported Session",
+          date: new Date().toISOString().split("T")[0],
+          projectId,
+          status: "Sourcing",
+          items: data.items || [],
+          searched_at: new Date().toISOString(),
+        };
+        const updated = [session, ...history].slice(0,20);
+        await kvSet("sourcing:history", updated);
+        setAllSourcing(updated);
+
+        await loadData();
+        alert("Sourcing session imported and linked to project.");
+
+      } else if (detectedType === "project") {
+        const proj: Project = {
+          id: genId(),
+          name: data.name || data.projectName || ((data.client||"Unknown") + " " + new Date().toLocaleDateString("en-PH",{month:"short",year:"numeric"})),
+          client: data.client || "",
+          stage: (data.stage as Stage) || "RFQ Received",
+          vatType: (data.vatType as VatType) || "VAT Inclusive",
+          rfqDate: new Date().toISOString().split("T")[0],
+          rfqNumber: data.rfqNumber || "",
+          rfqSubject: data.subject || data.rfqSubject || "",
+          rfqDeadline: data.deadline || data.rfqDeadline || "",
+          rfqContactPersonName: data.contactPerson || data.contact || "",
+          rfqLineItems: (data.items || data.lineItems || []).map((item: any, i: number) => ({
+            id: "imp-"+i,
+            description: item.description || item.name || "",
+            quantity: item.quantity || item.qty || 0,
+            unit: item.unit || "pcs",
+            unitPrice: item.unitPrice || item.price || 0,
+            total: item.total || 0,
+          })),
+          notes: data.notes || "",
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        };
+        await saveProject(proj);
+        await loadData();
+        alert("Project created: " + proj.name);
+      }
+
+      setShowImport(false);
+      setImportParsed(null);
+      setImportText("");
+      setImportError("");
+      setImportProjectId("");
+
+    } catch (e) {
+      alert("Import error: " + String(e));
+    }
+  }
 
   // Quotation Generator -- chat-based markup and revision
   const handleQuotGenFile = (file: File) => {
@@ -1010,6 +1225,11 @@ Current quotation data: ${quotGenData ? JSON.stringify(quotGenData) : "None yet"
                 {showArchived?"← Active":"Show Archived"}{!showArchived&&` (${projects.filter(p=>p.archived).length})`}
               </button>
               <button onClick={loadData} style={{fontSize:13,padding:"7px 12px",borderRadius:8,border:"0.5px solid #e2e6ea",background:"#f8f9fb",color:"#4a6a8a",cursor:"pointer"}}>↺ Refresh</button>
+              <button onClick={() => setShowImport(true)}
+                style={{fontSize:13, padding:"7px 14px", borderRadius:8, border:"0.5px solid #534AB7",
+                  background:"#F4F3FE", color:"#534AB7", cursor:"pointer", fontWeight:600}}>
+                📥 Import
+              </button>
               {(filterStage==="Follow Up"||filterStage==="Overdue Payment")&&(
                 <button onClick={()=>setFilterStage("All")} style={{fontSize:12,padding:"5px 12px",borderRadius:20,border:"0.5px solid #185FA5",background:"#EBF3FC",color:"#185FA5",cursor:"pointer",fontWeight:600}}>
                   × Clear filter: {filterStage}
@@ -2856,6 +3076,139 @@ Current quotation data: ${quotGenData ? JSON.stringify(quotGenData) : "None yet"
             <button onClick={()=>{setShowQuotationOverlay(false);setQuotationOverlayUrl("");document.body.style.overflow="";}} style={{fontSize:13,color:"rgba(255,255,255,0.8)",background:"rgba(255,255,255,0.1)",border:"none",padding:"6px 14px",borderRadius:7,cursor:"pointer"}}>✕ Close</button>
           </div>
           <iframe src={quotationOverlayUrl} style={{width:"100%",height:"calc(100vh - 52px)",border:"none",background:"#fff"}}/>
+        </div>
+      )}
+
+      {/* Import panel -- paste JSON from other Claude chat threads */}
+      {showImport && (
+        <div style={{position:"fixed", inset:0, zIndex:150, display:"flex", alignItems:"center", justifyContent:"center"}}>
+          <div style={{position:"absolute", inset:0, background:"rgba(0,0,0,0.3)"}} onClick={() => {setShowImport(false);setImportParsed(null);setImportText("");setImportError("");}}/>
+          <div style={{position:"relative", background:"#fff", borderRadius:14, width:600, maxWidth:"90vw", maxHeight:"85vh", display:"flex", flexDirection:"column", boxShadow:"0 8px 32px rgba(0,0,0,0.18)"}}>
+
+            <div style={{padding:"16px 20px", borderBottom:"0.5px solid #e2e6ea", display:"flex", alignItems:"center", justifyContent:"space-between"}}>
+              <div>
+                <div style={{fontSize:15, fontWeight:600, color:"#1a2332"}}>Import Data</div>
+                <div style={{fontSize:12, color:"#8a9ab0"}}>Paste JSON from Claude chat threads</div>
+              </div>
+              <button onClick={() => {setShowImport(false);setImportParsed(null);setImportText("");setImportError("");}}
+                style={{fontSize:16, color:"#b0bec8", background:"none", border:"none", cursor:"pointer"}}>✕</button>
+            </div>
+
+            <div style={{flex:1, overflow:"auto", padding:20}}>
+
+              <div style={{display:"flex", gap:6, marginBottom:14}}>
+                {(["auto","project","quotation","sourcing"] as const).map(t => (
+                  <button key={t} onClick={() => setImportType(t)}
+                    style={{fontSize:12, padding:"5px 12px", borderRadius:20,
+                      border:`0.5px solid ${importType===t?"#185FA5":"#e2e6ea"}`,
+                      background:importType===t?"#EBF3FC":"#f8f9fb",
+                      color:importType===t?"#185FA5":"#8a9ab0", cursor:"pointer",
+                      fontWeight:importType===t?600:400, textTransform:"capitalize"}}>
+                    {t==="auto"?"Auto-detect":t}
+                  </button>
+                ))}
+              </div>
+
+              <div style={{marginBottom:14}}>
+                <div style={{fontSize:10, fontWeight:600, letterSpacing:"0.1em", textTransform:"uppercase",
+                  color:"#b0bec8", marginBottom:5, fontFamily:"'DM Mono',monospace"}}>Paste JSON data</div>
+                <textarea value={importText} onChange={e => {setImportText(e.target.value); setImportError(""); setImportParsed(null);}}
+                  style={{width:"100%", minHeight:160, padding:"12px", borderRadius:9, border:"0.5px solid #e2e6ea",
+                    background:"#f8f9fb", color:"#1a2332", fontSize:12, fontFamily:"'DM Mono',monospace",
+                    resize:"vertical"}}
+                  placeholder={'Paste the JSON output from your Claude chat here.\n\nExamples of what you can paste:\n\nSourcing results:\n{"items": [...], "suppliers": [...]}\n\nQuotation data:\n{"lineItems": [...], "subtotal": 50000, "grandTotal": 56000}\n\nProject data:\n{"name": "PGPC Wireline...", "client": "PGPC", "items": [...]}'}/>
+              </div>
+
+              <button onClick={() => parseImportData()}
+                style={{width:"100%", padding:"10px", borderRadius:9, border:"0.5px solid #185FA5",
+                  background:"#EBF3FC", color:"#185FA5", fontSize:13, fontWeight:600, cursor:"pointer",
+                  marginBottom:14}}>
+                Parse & Preview
+              </button>
+
+              {importError && (
+                <div style={{padding:"10px 14px", borderRadius:9, background:"#FEF0F0", border:"0.5px solid #f5c6c6",
+                  color:"#A32D2D", fontSize:12, marginBottom:14}}>
+                  {importError}
+                </div>
+              )}
+
+              {importParsed && (
+                <div style={{marginBottom:14}}>
+                  <div style={{fontSize:12, fontWeight:600, color:"#3B6D11", marginBottom:10, display:"flex", alignItems:"center", gap:6}}>
+                    ✓ Data parsed successfully · Type: {importParsed.detectedType}
+                  </div>
+
+                  <div style={{marginBottom:12}}>
+                    <div style={{fontSize:10, fontWeight:600, letterSpacing:"0.1em", textTransform:"uppercase",
+                      color:"#b0bec8", marginBottom:5, fontFamily:"'DM Mono',monospace"}}>Link to Project</div>
+                    <select style={{width:"100%", fontSize:13, padding:"8px 10px", borderRadius:8,
+                      border:"0.5px solid #e2e6ea", background:"#f8f9fb", color:"#1a2332"}}
+                      value={importProjectId} onChange={e => setImportProjectId(e.target.value)}>
+                      <option value="">— Create new project —</option>
+                      {projects.filter(p => !p.archived && !["Closed","Lost","No Offer"].includes(p.stage)).map(p => (
+                        <option key={p.id} value={p.id}>{p.name} · {p.client}</option>
+                      ))}
+                    </select>
+                  </div>
+
+                  {importParsed.detectedType === "quotation" && importParsed.data.lineItems && (
+                    <div style={{border:"0.5px solid #e2e6ea", borderRadius:9, overflow:"hidden", marginBottom:12}}>
+                      <div style={{padding:"8px 12px", background:"#fafbfc", fontSize:10, fontWeight:600,
+                        color:"#b0bec8", textTransform:"uppercase", letterSpacing:"0.08em", fontFamily:"'DM Mono',monospace"}}>
+                        Quotation · {importParsed.data.lineItems.length} items · Grand Total: ₱{Number(importParsed.data.grandTotal||0).toLocaleString()}
+                      </div>
+                      <table style={{width:"100%", borderCollapse:"collapse"}}>
+                        <thead><tr style={{background:"#fafbfc"}}>
+                          {["Description","Qty","Unit","Unit Price","Total"].map(h => (
+                            <th key={h} style={{fontSize:9, fontWeight:600, color:"#b0bec8", padding:"5px 8px",
+                              textAlign:"left", borderBottom:"0.5px solid #f0f2f5"}}>{h}</th>
+                          ))}
+                        </tr></thead>
+                        <tbody>
+                          {importParsed.data.lineItems.map((item: any, i: number) => (
+                            <tr key={i} style={{background:i%2===0?"#fff":"#fafbfc"}}>
+                              <td style={{padding:"5px 8px", fontSize:11}}>{item.description}</td>
+                              <td style={{padding:"5px 8px", fontSize:11, fontFamily:"'DM Mono',monospace"}}>{item.quantity}</td>
+                              <td style={{padding:"5px 8px", fontSize:11}}>{item.unit}</td>
+                              <td style={{padding:"5px 8px", fontSize:11, fontFamily:"'DM Mono',monospace"}}>₱{Number(item.unitPrice||0).toLocaleString()}</td>
+                              <td style={{padding:"5px 8px", fontSize:11, fontFamily:"'DM Mono',monospace"}}>₱{Number(item.total||0).toLocaleString()}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  )}
+
+                  {importParsed.detectedType === "sourcing" && (
+                    <div style={{padding:"10px 14px", background:"#f8f9fb", borderRadius:9, border:"0.5px solid #e2e6ea", marginBottom:12}}>
+                      <div style={{fontSize:12, color:"#4a6a8a"}}>
+                        Sourcing session with {importParsed.data.items?.length || 0} items.
+                        Will be saved to sourcing history linked to the selected project.
+                      </div>
+                    </div>
+                  )}
+
+                  {importParsed.detectedType === "project" && (
+                    <div style={{padding:"10px 14px", background:"#f8f9fb", borderRadius:9, border:"0.5px solid #e2e6ea", marginBottom:12}}>
+                      <div style={{fontSize:12, color:"#4a6a8a"}}>
+                        New project: {importParsed.data.name || importParsed.data.client || "Untitled"}
+                        {importParsed.data.items?.length > 0 && ` · ${importParsed.data.items.length} line items`}
+                      </div>
+                    </div>
+                  )}
+
+                  <button onClick={() => executeImport()}
+                    style={{width:"100%", padding:"12px", borderRadius:9, border:"none",
+                      background:"#185FA5", color:"#fff", fontSize:14, fontWeight:600, cursor:"pointer"}}>
+                    {importProjectId
+                      ? `Import to "${projects.find(p=>p.id===importProjectId)?.name || "Project"}"`
+                      : "Import & Create New Project"}
+                  </button>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       )}
     </div>
